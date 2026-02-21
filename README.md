@@ -18,6 +18,11 @@ Basic things work well, but some functionality is lightly tested. There might be
 
 ## Installation
 
+with pypi:
+```bash
+pip install nl-clicalc
+```
+
 ```bash
 pip install -e .
 ```
