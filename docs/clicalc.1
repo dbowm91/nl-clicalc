@@ -1,0 +1,162 @@
+# calc(1) -- Natural language math calculator
+
+## NAME
+
+calc - Natural language math expression calculator
+
+## SYNOPSIS
+
+`calc` \[*OPTIONS*] \[*EXPRESSION*]
+
+`calc` `-i`
+
+`echo "5 + 3" | calc` `-e`
+
+## DESCRIPTION
+
+calc is a command-line calculator that accepts natural language expressions and converts them into mathematical operations. It supports unit conversions, scientific functions, physical constants, and more.
+
+## OPTIONS
+
+`-h`, `--help`
+: Show help message and available operators.
+
+`-v`, `--version`
+: Show version information.
+
+`-e`, `--expression`
+: Evaluate a single expression. In quiet mode by default (output only the result).
+
+`-q`, `--quiet`
+: Suppress the expression in output, showing only the result.
+
+`-s`, `--show`
+: Show the expression in output (useful with `-e`).
+
+`--json`
+: Output result as JSON.
+
+`-i`, `--interactive`
+: Start interactive REPL mode.
+
+## EXAMPLES
+
+Basic arithmetic:
+```
+$ calc "five plus two"
+5+2 -> 7
+```
+
+Complex expressions:
+```
+$ calc "(twenty + five) * 3"
+(20+5)*3 -> 75
+```
+
+Unit conversions:
+```
+$ calc "30m + 100ft"
+30*m+100*ft -> 60.48 m
+```
+
+Trigonometric functions:
+```
+$ calc "sin of 3.14159"
+math.sin(3.14159) -> 2.65e-06
+```
+
+Physical constants:
+```
+$ calc "5 times avogadro"
+5*na -> 3.01e+24
+```
+
+Pipe input:
+```
+$ echo "5 + 3" | calc -e
+8
+```
+
+Interactive mode:
+```
+$ calc -i
+>>> five plus two
+5+2 -> 7
+>>> quit
+```
+
+## FEATURES
+
+- **Natural Language Input**: Write math expressions in plain English
+- **Unit Conversions**: Convert between metric and imperial units
+- **Scientific Functions**: Trigonometric, logarithmic, and other functions
+- **Physical Constants**: Avogadro, Planck, Boltzmann, speed of light, etc.
+- **Safe Evaluation**: AST-based parsing (no `eval()`)
+- **Pure Python**: No external dependencies
+
+## SUPPORTED OPERATIONS
+
+### Arithmetic
+`+`, `-`, `*`, `/`, `**`
+
+### Functions
+Trig: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`
+
+Math: `sqrt`, `log`, `log10`, `exp`, `abs`, `floor`, `ceil`, `round`
+
+Combinatorics: `factorial`, `gcd`, `lcm`, `perm`, `comb`
+
+Statistics: `mean`, `median`, `mode`, `std`, `variance`
+
+### Units
+Length: m, km, cm, mm, in, ft, yd, mi
+
+Time: s, ms, min, h, d, wk, yr
+
+Data: B, KB, MB, GB, TB
+
+Mass: kg, g, mg, lb, oz
+
+### Constants
+`pi`, `e`, `tau`, `i`, `avogadro`, `planck`, `boltzmann`, `c` (speed of light)
+
+## PYTHON API
+
+```python
+from nl_clicalc import evaluate, evaluate_raw
+
+result = evaluate("5+3")           # 8
+result = evaluate_raw("five plus 3")  # 8
+```
+
+## FILES
+
+`clicalc_config.py`
+: Optional user configuration file for custom constants and functions.
+
+## EXIT STATUS
+
+0
+: Success.
+
+1
+: Invalid expression.
+
+2
+: Input too long.
+
+## BUGS
+
+Report bugs at https://github.com/dbowman91/nl-clicalc/issues
+
+## AUTHOR
+
+CliCalc Contributors
+
+## LICENSE
+
+MIT License
+
+## SEE ALSO
+
+python(1), bc(1), expr(1)

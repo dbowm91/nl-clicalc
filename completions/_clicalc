@@ -1,0 +1,71 @@
+#compdef clicalc calc
+
+_clicalc() {
+    local -a options
+    options=(
+        '(-h --help)'{-h,--help}'[Show help message]'
+        '(-v --version)'{-v,--version}'[Show version information]'
+        '(-e --expression)'{-e,--expression}'[Evaluate a single expression]'
+        '(-q --quiet)'{-q,--quiet}'[Suppress expression in output]'
+        '(-s --show)'{-s,--show}'[Show expression in output]'
+        '--json[Output result as JSON]'
+        '(-i --interactive)'{-i,--interactive}'[Start interactive REPL mode]'
+    )
+
+    local -a functions
+    functions=(
+        'sin:sine function'
+        'cos:cosine function'
+        'tan:tangent function'
+        'asin:arcsine function'
+        'acos:arccosine function'
+        'atan:arctangent function'
+        'sqrt:square root'
+        'log:natural logarithm'
+        'log10:base-10 logarithm'
+        'exp:exponential function'
+        'abs:absolute value'
+        'floor:floor function'
+        'ceil:ceiling function'
+        'round:round to nearest integer'
+        'factorial:factorial function'
+        'gcd:greatest common divisor'
+        'lcm:least common multiple'
+        'mean:arithmetic mean'
+        'median:median value'
+        'mode:most frequent value'
+        'std:standard deviation'
+        'variance:variance'
+    )
+
+    local -a constants
+    constants=(
+        'pi:mathematical constant π'
+        'e:Euler'"'"'s number'
+        'tau:2π'
+        'i:imaginary unit'
+        'avogadro:Avogadro constant'
+        'planck:Planck constant'
+        'boltzmann:Boltzmann constant'
+        'c:speed of light'
+    )
+
+    if [[ ${words[CURRENT]} == -* ]]; then
+        _describe 'option' options
+        return
+    fi
+
+    case ${words[CURRENT-1]} in
+        -e|--expression)
+            _describe 'function' functions
+            _describe 'constant' constants
+            return
+            ;;
+    esac
+
+    _describe 'option' options
+    _describe 'function' functions
+    _describe 'constant' constants
+}
+
+_clicalc

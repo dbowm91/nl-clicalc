@@ -1,0 +1,234 @@
+# Security
+
+nl-clicalc is designed with security as a priority. This page covers security features and best practices.
+
+## AST-Based Evaluation
+
+nl-clicalc uses Abstract Syntax Tree (AST) parsing instead of Python's `eval()`. This provides:
+
+- **No arbitrary code execution** - Users cannot execute Python code
+- **Controlled function access** - Only whitelisted functions can be called
+- **Safe constant evaluation** - Constants are validated before use
+- **No system access** - No access to files, network, or system resources
+
+## Blocked Operations
+
+The following are blocked for security:
+
+### Code Execution
+
+```python
+import os                  # Blocked
+__import__('os')           # Blocked
+eval('code')               # Blocked
+exec('code')               # Blocked
+compile('code', ...)       # Blocked
+```
+
+### Attribute Access
+
+```python
+().__class__               # Blocked
+obj.__bases__              # Blocked
+obj.__subclasses__()       # Blocked
+```
+
+### File Operations
+
+```python
+open('/etc/passwd')        # Blocked
+os.system('ls')            # Blocked
+subprocess.call(...)       # Blocked
+```
+
+### Comprehensions
+
+```python
+[x for x in y]             # Blocked
+{x for x in y}             # Blocked
+{x: y for x in z}          # Blocked
+```
+
+### Other
+
+```python
+lambda x: x                # Blocked
+x if y else z              # Blocked
+x < y                      # Blocked
+x and y                    # Blocked
+x[0]                       # Blocked
+```
+
+## Input Limits
+
+Protection against DoS attacks:
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `MAX_INPUT_LENGTH` | 10,000 | Maximum input length |
+| `MAX_NESTING_DEPTH` | 100 | Maximum parentheses depth |
+| `MAX_EXPONENT` | 10,000 | Maximum exponent value |
+| `MAX_FACTORIAL` | 1,000 | Maximum factorial input |
+| `MAX_RESULT_VALUE` | 1e308 | Maximum result value |
+
+## Timeout Protection
+
+For untrusted input, use timeout:
+
+```python
+from nl_clicalc import evaluate_with_timeout, TimeoutError
+
+try:
+    result = evaluate_with_timeout("2**1000000", timeout=1.0)
+except TimeoutError:
+    print("Evaluation timed out")
+```
+
+## Web Application Security
+
+### Safe Functions
+
+All these functions are safe for untrusted input:
+
+```python
+evaluate()                 # Safe
+evaluate_raw()             # Safe
+evaluate_cached()          # Safe
+evaluate_async()           # Safe
+evaluate_with_timeout()    # Safe (recommended)
+PyCalcApp.calculate()      # Safe
+```
+
+### Example: Secure Endpoint
+
+```python
+from nl_clicalc import PyCalcApp, EvaluationError, TimeoutError
+
+app = PyCalcApp()
+
+def handle_user_input(expression: str):
+    """Safely evaluate user-provided expression."""
+    try:
+        result = app.calculate(expression)
+        return {"success": True, "result": str(result)}
+    except EvaluationError as e:
+        return {"success": False, "error": str(e)}
+    except TimeoutError:
+        return {"success": False, "error": "Timeout"}
+```
+
+### Register Functions Safely
+
+Only register functions during initialization:
+
+```python
+from nl_clicalc import register_function
+
+# Safe: Register during startup
+def my_safe_function(x):
+    return x * 2
+
+register_function("safe_double", my_safe_function)
+
+# Dangerous: Never register from user input
+# register_function(user_name, user_func)  # NEVER DO THIS
+```
+
+## Configuration Security
+
+### Config File Warning
+
+`clicalc_config.py` is imported from the working directory:
+
+```python
+# In production, this file should:
+# 1. Not be user-writable
+# 2. Only contain trusted code
+# 3. Be reviewed for security
+```
+
+### Disable Config Loading
+
+In high-security environments, avoid config loading:
+
+```python
+# Don't call load_user_config()
+from nl_clicalc import PyCalcApp
+
+app = PyCalcApp()
+# Manually configure instead
+app.register_constant("safe_const", 42)
+```
+
+## Security Best Practices
+
+### 1. Always Use Timeouts
+
+```python
+from nl_clicalc import evaluate_with_timeout
+
+result = evaluate_with_timeout(user_input, timeout=1.0)
+```
+
+### 2. Validate Input
+
+```python
+def validate_input(expr: str) -> str:
+    if len(expr) > 10000:
+        raise ValueError("Input too long")
+    if "import" in expr.lower():
+        raise ValueError("Invalid input")
+    return expr.strip()
+```
+
+### 3. Use Instance Isolation
+
+```python
+from nl_clicalc import PyCalcApp
+
+# Each user/tenant gets isolated instance
+app = PyCalcApp()
+```
+
+### 4. Rate Limit
+
+```python
+from functools import wraps
+from time import time
+
+def rate_limit(max_per_minute: int):
+    # Implement rate limiting
+    pass
+```
+
+### 5. Log Errors
+
+```python
+import logging
+
+def safe_evaluate(expr: str):
+    try:
+        result = evaluate_with_timeout(expr)
+        logging.info(f"Evaluated: {expr[:50]}")
+        return result
+    except Exception as e:
+        logging.warning(f"Error: {e}")
+        raise
+```
+
+## Security Audit
+
+nl-clicalc follows these security principles:
+
+1. **Principle of Least Privilege**: Only necessary operations allowed
+2. **Defense in Depth**: Multiple layers of protection
+3. **Fail Secure**: Errors result in safe failures
+4. **No eval()**: AST-based parsing prevents code injection
+
+## Reporting Vulnerabilities
+
+See [SECURITY.md](https://github.com/dbowman91/nl-clicalc/blob/main/SECURITY.md) for:
+
+- How to report vulnerabilities
+- Response timeline
+- Disclosure policy
