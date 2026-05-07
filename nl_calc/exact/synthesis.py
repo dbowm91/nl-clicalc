@@ -531,7 +531,7 @@ def inspect_text(
             warnings.append({
                 "severity": "warning",
                 "kind": "invisible_character",
-                "message": f"Text contains {inv['name']} at index {inv['index']}.",
+                "message": f"Text contains {inv['name']} at index {inv['index']}.\n    {inv['codepoint']}",
             })
     if metrics["unicode_risks"]["contains_bidi_controls"]:
         warnings.append({
