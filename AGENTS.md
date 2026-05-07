@@ -1,0 +1,180 @@
+# AGENTS.md
+
+## Overview
+`nl-clicalc` is a natural language math expression calculator that uses only Python's standard library. It parses math expressions in English (like "five plus three") and converts them to numeric results, with support for unit conversions.
+
+## Architecture
+
+### Build Process
+The codebase is designed to be assembled into a **single self-contained Python script** for portability:
+
+1. **`build_single.py`** - Combines modules into `nl_calc.py`:
+   - `units.py` - Unit definitions and conversion factors
+   - `evaluator.py` - AST-based expression evaluation
+   - `normalize.py` - Natural language processing
+   - `__main__.py` - CLI entry point
+
+2. **`install.py`** - Calls `build_single.py` then installs the result to `~/.local/bin/calc`
+
+**Critical:** When modifying the codebase, ensure changes work with `build_single.py` assembling everything into one file. All code must be in one of the four core modules.
+
+### Processing Pipeline
+Understanding the two evaluation paths is critical:
+
+1. **`run()` (full pipeline)** - `normalize.py` processes input first, then passes to evaluator:
+   ```
+   Input → Normalization → Tokenization → Unit Conversion → Evaluation → Result
+   ```
+   - Handles natural language ("five plus three")
+   - Handles unit syntax ("30m + 100ft")
+   - Uses `evaluate()` internally after normalization
+
+2. **`evaluate()` (direct AST)** - Skips normalization, directly parses via Python AST:
+   ```
+   Input → Python AST Parse → Evaluation → Result
+   ```
+   - Expects valid Python syntax
+   - Does NOT handle NL input
+   - Does NOT handle unit suffixes like "km" or "m"
+
+**Example of what each handles:**
+```python
+run("five plus three", NORMALIZE, PATTERNS)  # ✓ Works
+run("30m + 100ft", NORMALIZE, PATTERNS)      # ✓ Works
+evaluate("5 + 3")                            # ✓ Works
+evaluate("five plus three")                    # ✗ Fails (invalid Python)
+evaluate("1km in m")                          # ✗ Fails (invalid Python)
+```
+
+### Core Modules
+
+| Module | Purpose |
+|--------|---------|
+| `nl_calc/normalize.py` | NL tokenization, number word conversion, expression normalization |
+| `nl_calc/evaluator.py` | AST parsing and evaluation, mathematical operations |
+| `nl_calc/units.py` | Unit definitions, conversion factors, temperature conversions |
+| `nl_calc/__main__.py` | CLI interface |
+
+### Key Data Structures
+
+- **`NUMBER_WORDS`** - Dictionary mapping number values to word variants ("one", "five", etc.)
+- **`OPERATOR_CONVERSIONS`** - Maps operator words to symbols ("plus" → "+")
+- **`UNIT_BASE`** - Base units and their conversion factors
+- **`UNIT_CONVERSIONS`** - Cached pairwise conversion factors
+
+## Guardrails
+
+### Dependencies
+- **Standard library only** - No external packages allowed
+- All imports must be from: `argparse`, `os`, `sys`, `re`, `math`, `ast`, `functools`, `typing`, `stat`, `shutil`, `subprocess`, `traceback`
+
+### Typing
+- Use type annotations for function signatures
+- Use `Mapping[str, Pattern]` from `typing` for pattern collections
+- Return types must be declared
+
+### Testing
+- All tests must pass (`python -m pytest tests/`)
+- New tests must use the correct API:
+  - For NL/unit functionality → use `run()` or test through CLI
+  - For pure math expressions → use `evaluate()`
+- 177 tests currently pass
+
+### Code Style
+- Follow existing patterns in the codebase
+- Use `lru_cache` for expensive operations that can be memoized
+- All code must work when inlined by `build_single.py`
+
+## Working with Tests
+
+### Current Test Structure
+```
+tests/
+├── conftest.py           # Shared fixtures
+├── test_clicalc.py       # Original functional tests (95 tests)
+├── test_security_fuzz.py # Security tests (22 tests)
+├── test_tokenization.py  # Tokenization edge cases (54 tests)
+├── test_math_identities.py # Mathematical laws verification (28 tests)
+```
+
+### API Mismatch - Critical Learning
+Many initial test attempts failed because I used `evaluate()` for features that require normalization:
+
+- `evaluate("five plus three")` → Fails (invalid Python syntax)
+- `evaluate("1km in m")` → Fails (invalid Python syntax)
+- `evaluate("30m + 100ft")` → Fails (invalid Python syntax)
+
+These work through `run()` because normalization converts NL to Python first.
+
+**When writing tests:**
+1. For mathematical operations (`5+3`, `2**10`) → `evaluate()`
+2. For natural language (`"five plus three"`) → Use CLI or `run()`
+3. For unit conversions with operators → Use CLI or `run()`
+4. Direct unit suffix parsing (`"1km"`) does not work with `evaluate()`
+
+### Helper Patterns
+```python
+def get_value(result):
+    """Extract numeric value from result, handling UnitValue."""
+    if isinstance(result, UnitValue):
+        return result.value
+    return result
+
+def val(expr):
+    """Evaluate and extract value, handling UnitValue."""
+    result = evaluate(expr)
+    if isinstance(result, UnitValue):
+        return result.value
+    return result
+```
+
+## Common Patterns
+
+### Adding a New Math Function
+1. Add to `FUNCTION_MAPPINGS` in `normalize.py`
+2. Implement in `evaluator.py`
+3. Add test in `test_clicalc.py`
+
+### Adding a New Unit
+1. Add to appropriate category in `UNIT_BASE` in `units.py`
+2. Rebuild `UNIT_CONVERSIONS` cache (automatic)
+3. Add test via CLI or `run()`
+
+### Adding Number Word Support
+1. Add word to `NUMBER_WORDS` in `normalize.py`
+2. The normalization pipeline handles word-to-number conversion
+
+## File Locations
+
+- **CLI entry**: `nl_calc/__main__.py`
+- **Normalize functions**: `nl_calc/normalize.py` (lines 500-650)
+- **Evaluator functions**: `nl_calc/evaluator.py`
+- **Unit definitions**: `nl_calc/units.py` (lines 145-600)
+- **Tests**: `tests/`
+- **Build script**: `build_single.py`
+- **Install script**: `install.py`
+
+## Debugging Tips
+
+### Checking what `evaluate()` returns
+```python
+from nl_calc import evaluate, UnitValue
+result = evaluate("5 + 3")
+print(f"Type: {type(result)}, Value: {result}")
+if isinstance(result, UnitValue):
+    print(f"Unit: {result.unit}, Value: {result.value}")
+```
+
+### Checking normalization
+```python
+from nl_calc.normalize import normalize, NORMALIZE, PATTERNS
+normalized = normalize("five plus three", NORMALIZE, PATTERNS)
+print(f"Normalized: {normalized}")  # Should show "5+3"
+```
+
+### Checking unit conversion
+```python
+from nl_calc.units import get_conversion_factor
+factor = get_conversion_factor("km", "m")
+print(f"km to m factor: {factor}")  # Should be 1000.0
+```
