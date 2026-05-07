@@ -92,12 +92,58 @@ calc -i
 | Option | Description |
 |--------|-------------|
 | `-h`, `--help` | Show help and available operators |
+| `--usage` | Show full usage information and examples |
 | `-v`, `--version` | Show version information |
 | `-e`, `--expression` | Evaluate a single expression (quiet mode by default) |
 | `-q`, `--quiet` | Suppress expression in output |
 | `-s`, `--show` | Show expression in output (useful with `-e`) |
 | `--json` | Output result as JSON |
 | `-i`, `--interactive` | Start interactive REPL mode |
+| `--mcp` | Run as MCP server for exact text tools |
+
+### CLI Text Tools
+
+nl-clicalc includes text inspection tools for detecting hidden characters and testing patterns:
+
+```bash
+# Inspect text for hidden characters/confusables
+calc inspect "hello"
+# ✓ No hidden characters
+
+calc inspect "pаypal"  # Cyrillic 'а' (U+0430) looks like Latin 'a'
+# ✗ CONFUSABLE: Text contains confusable character 'а' (looks like 'a') at index 1.
+
+# Count character frequency
+calc count "hello" l
+# 'l' appears 3 time(s) in "hello"
+
+# Test regex patterns
+calc regex "^\d+$" "12345"
+# ✓ Match: '12345'
+```
+
+### MCP Server Mode
+
+nl-clicalc can run as an MCP server, exposing exact text tools to AI agents:
+
+```bash
+calc --mcp
+```
+
+Available MCP tools:
+
+| Tool | Description |
+|------|-------------|
+| `math_eval` | Evaluate math expressions |
+| `text_measure` | Text metrics (UTF-8 bytes, codepoints, words, lines) |
+| `text_equal` | String comparison with normalization options |
+| `text_diff_explain` | Explain differences between strings |
+| `text_inspect` | Hidden characters, confusables, mixed scripts |
+| `text_count` | Character counting and frequency |
+| `validate_brackets` | Bracket pair matching |
+| `validate_json` | JSON parsing validation |
+| `validate_regex` | Regex pattern testing |
+| `list_compare` | List comparison |
 
 ### As a Python Module
 
