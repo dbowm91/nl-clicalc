@@ -219,51 +219,83 @@ nl-clicalc supports unit conversions across multiple categories.
 
 ## Usage
 
-### Basic Conversion
+### Conversion Patterns
+
+**"X in Y" pattern** - Convert a value to a different unit:
 
 ```bash
-calc "100ft in meters"
-# 30.48 m
-
-calc "5km to miles"
-# 3.107 mi
+calc "100ft in meters"    # 30.48 m
+calc "5km to miles"        # 3.107 mi
+calc "1GB in MB"           # 1024 MB
+calc "100C in F"          # 212 F
 ```
 
-### Arithmetic with Units
+**Direct arithmetic** - Units are combined automatically:
 
 ```bash
-calc "30m + 100ft"
-# 60.48 m
-
-calc "1GB - 512MB"
-# 512 MB
-
-calc "2h + 30min"
-# 2.5 h
+calc "30m + 100ft"         # 60.48 m (feet converted to meters)
+calc "1GB - 512MB"         # 512 MB
+calc "2h + 30min"          # 2.5 h
+calc "100km / 2h"          # 50 km/h
+calc "60mi / h"            # 60 mi/h
 ```
 
-### Unit Division
+**Understanding unit handling:**
 
 ```bash
-calc "100km / 2h"
-# 50 km/h
+# Numbers directly followed by units get multiplied
+calc "30m"                 # 30*m (30 meters)
+calc "5km"                 # 5*km (5 kilometers)
 
-calc "60mi / h"
-# 60 mi/h
+# During arithmetic, incompatible units are converted to match
+calc "30m + 100ft"         # 30*m + 100*ft -> 60.48 m
 ```
 
-### Temperature
+### Unit Categories
+
+Units must be from the same category for addition/subtraction:
+
+| Category | Units |
+|----------|-------|
+| Length | m, km, cm, mm, ft, in, mi, etc. |
+| Time | s, ms, min, h, d, wk, yr |
+| Mass | kg, g, mg, lb, oz, ton |
+| Volume | L, mL, gal, qt, pt, cup |
+| Data | B, KB, MB, GB, TB, PB |
+| Speed | m/s, km/h, mph, kn |
+| etc. |
+
+**Incompatible units cannot be added:**
 
 ```bash
-calc "temp(100C, F)"
+calc "30m + 5kg"          # Error - length + mass incompatible
+```
+
+### Temperature Conversions
+
+Use the `temp()` function with three arguments: `temp(value, from_unit, to_unit)`
+
+```bash
+calc "temp(100, C, F)"
 # 212 F
 
-calc "temp(32F, C)"
+calc "temp(32, F, C)"
 # 0 C
 
-calc "temp(0C, K)"
+calc "temp(0, C, K)"
 # 273.15 K
+
+calc "temp(212, F, C)"
+# 100 C
 ```
+
+**Common conversions:**
+
+| From | To | Formula |
+|------|----|---------|
+| Celsius | Fahrenheit | `temp(x, C, F)` → x * 1.8 + 32 |
+| Fahrenheit | Celsius | `temp(x, F, C)` → (x - 32) / 1.8 |
+| Celsius | Kelvin | `temp(x, C, K)` → x + 273.15 |
 
 ## Python API
 
@@ -274,16 +306,46 @@ from nl_clicalc import evaluate_raw, UnitValue, get_conversion_factor
 result = evaluate_raw("30m + 100ft")
 print(result)  # 60.48 m
 
-# Get conversion factor
+# Work with UnitValue results
+result = evaluate_raw("30m + 100ft")
+if isinstance(result, UnitValue):
+    print(f"Value: {result.value}, Unit: {result.unit}")
+
+# Get conversion factor between any two units
 factor = get_conversion_factor("ft", "m")
-print(factor)  # 0.3048
+print(f"1 foot = {factor} meters")  # 0.3048
 
-# Check if unit
+factor = get_conversion_factor("km", "mi")
+print(f"1 km = {factor} miles")  # 0.621371
+
+# Check if text is a recognized unit
 from nl_clicalc import is_unit
-print(is_unit("m"))   # True
-print(is_unit("xyz")) # False
+print(is_unit("m"))     # True
+print(is_unit("kg"))    # True
+print(is_unit("xyz"))   # False
 
-# List all units
+# List all supported units
 from nl_clicalc import get_all_units
 units = get_all_units()
+print(f"Total units supported: {len(units)}")  # ~150
+
+# Temperature conversion requires temp(value, from_unit, to_unit)
+result = evaluate_raw("temp(100, C, F)")
+print(result)  # 212.0
+```
+
+## Unit Utility Functions
+
+```python
+from nl_clicalc import normalize_unit, get_unit_category
+
+# Normalize unit to canonical form
+normalize_unit("meters")     # "m"
+normalize_unit("kilometers")  # "km"
+normalize_unit("feet")        # "ft"
+
+# Get unit category
+get_unit_category("m")    # "length"
+get_unit_category("kg")   # "mass"
+get_unit_category("gal")  # "volume"
 ```

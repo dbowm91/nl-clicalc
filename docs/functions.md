@@ -4,20 +4,29 @@ nl-clicalc supports a wide range of mathematical functions.
 
 ## Trigonometric
 
+All trigonometric functions handle both real and complex arguments:
+
 | Function | Description |
 |----------|-------------|
-| `sin(x)` | Sine |
-| `cos(x)` | Cosine |
-| `tan(x)` | Tangent |
-| `asin(x)` | Arcsine |
-| `acos(x)` | Arccosine |
-| `atan(x)` | Arctangent |
+| `sin(x)` | Sine (complex-aware) |
+| `cos(x)` | Cosine (complex-aware) |
+| `tan(x)` | Tangent (complex-aware) |
+| `asin(x)` | Arcsine (complex-aware) |
+| `acos(x)` | Arcsine (complex-aware) |
+| `atan(x)` | Arctangent (complex-aware) |
 | `atan2(y, x)` | Arctangent of y/x |
 
 ```bash
 calc "sin(pi/2)"      # 1.0
 calc "cos(0)"         # 1.0
 calc "tan(pi/4)"      # 1.0
+```
+
+**Complex numbers work too:**
+
+```bash
+calc "sin(1+2j)"      # (3.165...+1.959i)
+calc "log(-1)"        # 3.14159...j (πi)
 ```
 
 ## Hyperbolic
@@ -226,16 +235,20 @@ calc "x + 5"          # 15
 
 | Function | Description |
 |----------|-------------|
-| `clamp(x, lo, hi)` | Clamp value in range |
-| `hypot(x, y)` | Hypotenuse |
-| `percentof(p, total)` | p% of total |
-| `aspercent(x, total)` | x as % of total |
-| `temp(value, to_unit)` | Temperature conversion |
+| `clamp(x, lo, hi)` | Clamp value in range [lo, hi] |
+| `hypot(x, y, ...)` | Hypotenuse sqrt(x^2 + y^2 + ...) |
+| `percentof(p, total)` | p% of total (p/100 * total) |
+| `aspercent(x, total)` | x as percentage of total (x/total * 100) |
+| `temp(value, from_unit, to_unit)` | Temperature conversion |
 | `degrees(x)` | Radians to degrees |
 | `radians(x)` | Degrees to radians |
 
 ```bash
-calc "degrees(pi)"    # 180.0
-calc "radians(180)"   # 3.14159...
-calc "temp(100C, F)"  # 212 F
+calc "clamp(15, 0, 10)"       # 10
+calc "hypot(3, 4)"            # 5.0
+calc "percentof(20, 100)"    # 20.0 (20% of 100)
+calc "aspercent(25, 100)"    # 25.0 (25 as % of 100)
+calc "degrees(pi)"           # 180.0
+calc "radians(180)"          # 3.14159...
+calc "temp(100, C, F)"       # 212.0 (C to F)
 ```

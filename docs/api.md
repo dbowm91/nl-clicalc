@@ -1,107 +1,128 @@
 # Python API
 
+nl-clicalc provides several evaluation functions with different trade-offs. Choose the right function for your use case.
+
+## Choosing an Evaluation Function
+
+| Use Case | Function | Why |
+|----------|----------|-----|
+| User input (forms, chat) | `evaluate_raw()` | Handles natural language, spaces, units |
+| Pre-normalized input (you control format) | `evaluate()` | ~15x faster, skips normalization |
+| Repeated queries (webapps) | `evaluate_cached()` | LRU cache, O(1) after first call |
+| Untrusted input | `evaluate_with_timeout()` | Timeout protection against DoS |
+| Async frameworks (FastAPI) | `evaluate_async()` | Runs in thread pool |
+
 ## Core Functions
-
-### `evaluate(expression: str) -> Any`
-
-Evaluate a pre-normalized expression (no spaces, no natural language).
-
-```python
-from nl_clicalc import evaluate
-
-result = evaluate("5+3")
-print(result)  # 8
-```
-
-### `evaluate_raw(expression: str) -> Any`
-
-Evaluate a raw expression with spaces and/or natural language. Main function for user input.
-
-```python
-from nl_clicalc import evaluate_raw
-
-result = evaluate_raw("5 + 3")        # 8
-result = evaluate_raw("five plus 3")  # 8
-result = evaluate_raw("30m + 100ft")  # UnitValue
-```
-
-### `evaluate_cached(expression: str) -> Any`
-
-Like `evaluate_raw()` but with LRU caching for repeated expressions.
-
-```python
-from nl_clicalc import evaluate_cached
-
-# First call computes
-result = evaluate_cached("5 + 3")
-
-# Second call uses cache
-result = evaluate_cached("5 + 3")
-```
-
-### `evaluate_async(expression: str) -> Awaitable[Any]`
-
-Async version for async web frameworks.
-
-```python
-import asyncio
-from nl_clicalc import evaluate_async
-
-async def main():
-    result = await evaluate_async("5 + 3")
-    print(result)
-
-asyncio.run(main())
-```
 
 ### `evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any`
 
-Evaluate with timeout protection. Recommended for untrusted input.
+**Recommended for any untrusted input.** Provides timeout protection against long-running computations.
 
 ```python
 from nl_clicalc import evaluate_with_timeout, TimeoutError
 
 try:
-    result = evaluate_with_timeout("2 ** 1000000", timeout=1.0)
+    result = evaluate_with_timeout(user_expression, timeout=5.0)
 except TimeoutError:
-    print("Evaluation timed out")
+    result = "Calculation timed out"
+```
+
+### `evaluate(expression: str) -> Any`
+
+Direct AST evaluation. **Expects pre-normalized input** (no spaces, no natural language words).
+
+```python
+from nl_clicalc import evaluate
+
+result = evaluate("5+3")        # 8
+result = evaluate("sin(1)+2")  # 2.8414...
+result = evaluate("10")       # 10
+```
+
+**Does NOT work with:**
+- Natural language: `evaluate("five plus three")` → `EvaluationError`
+- Spaces: `evaluate("5 + 3")` → 8 (works but wasteful, use evaluate_raw)
+- Units attached: `evaluate("30m")` → May not parse correctly
+
+### `evaluate_raw(expression: str) -> Any`
+
+Full pipeline evaluation. Handles natural language, spaces, units, and mixed input. **Main function for user-facing applications.**
+
+```python
+from nl_clicalc import evaluate_raw
+
+result = evaluate_raw("5 + 3")          # 8
+result = evaluate_raw("five plus three")  # 8
+result = evaluate_raw("30m + 100ft")    # 60.48 m (with units)
+result = evaluate_raw("sqrt(144)")     # 12
+result = evaluate_raw("what is five plus three")  # 8
+```
+
+### `evaluate_cached(expression: str) -> Any`
+
+Like `evaluate_raw()` but with LRU caching (1024 entries). Best for repeated identical queries.
+
+```python
+from nl_clicalc import evaluate_cached
+
+# First call: ~155 μs (compute + cache)
+result = evaluate_cached("five plus three")
+
+# Subsequent calls: ~0.1 μs (cache hit)
+result = evaluate_cached("five plus three")
+```
+
+### `evaluate_async(expression: str) -> Awaitable[Any]`
+
+Async version of `evaluate_raw()`. For use with async web frameworks (FastAPI, aiohttp, etc.).
+
+```python
+import asyncio
+from nl_clicalc import evaluate_async
+
+async def calculate(expr: str):
+    return await evaluate_async(expr)
+
+result = asyncio.run(calculate("5 + 3"))  # 8
 ```
 
 ## PyCalcApp Class
 
-Thread-safe wrapper for web applications with caching and instance isolation.
+Thread-safe wrapper optimized for web applications. Each instance has isolated constants/functions and optional caching.
 
 ```python
 from nl_clicalc import PyCalcApp
 
 app = PyCalcApp(cache_size=1000)
 
-# Basic usage
-result = app.calculate("5 + 3")
+# Basic usage - natural language works
+result = app.calculate("five plus three")  # 8
+result = app.calculate("30m + 100ft")      # 60.48 m
 
-# Natural language
-result = app.calculate("five plus three")
+# Async support
+result = await app.calculate_async("sqrt(144)")  # 12.0
 
-# Units
-result = app.calculate("30m + 100ft")
-
-# Async
-result = await app.calculate_async("5 + 3")
-
-# Custom constants
+# Instance-specific constants (don't affect other instances)
 app.register_constant("myconst", 42)
-result = app.calculate("myconst")
+result = app.calculate("myconst + 8")  # 50
 
-# Custom functions
+# Instance-specific functions
 app.register_function("double", lambda x: x * 2)
-result = app.calculate("double(5)")
+result = app.calculate("double(5)")  # 10
 
 # Cache management
-print(app.cache_size)
-app.clear_cache()
+print(app.cache_size)  # Number of cached entries
+app.clear_cache()      # Clear all cache entries
 ```
 
-## Configuration
+**Why PyCalcApp instead of module-level functions?**
+
+1. **Instance isolation**: Constants/functions registered on one instance don't affect others
+2. **Caching**: Repeated queries use cache (O(1) lookup)
+3. **Async support**: Built-in async methods for async frameworks
+4. **Clean shutdown**: No global state to manage
+
+## Configuration Functions
 
 ### `register_constant(name: str, value: float) -> None`
 
@@ -112,54 +133,58 @@ from nl_clicalc import register_constant, evaluate_raw
 
 register_constant("earth_radius", 6371)
 result = evaluate_raw("earth_radius")  # 6371
+result = evaluate_raw("2 * pi * earth_radius")  # 40075...
 ```
 
 ### `register_function(name: str, func: Callable) -> None`
 
-Register a custom function globally. Only call during initialization.
+Register a custom function globally (thread-safe). **Only call during initialization, never with user input.**
 
 ```python
 from nl_clicalc import register_function, evaluate_raw
 
-def my_square(x, y):
-    return x**2 + y**2
+def circle_area(radius):
+    import math
+    return math.pi * radius ** 2
 
-register_function("mysquare", my_square)
-result = evaluate_raw("mysquare(3, 4)")  # 25
+register_function("area", circle_area)
+result = evaluate_raw("area(5)")  # 78.54...
 ```
 
 ### `load_user_config() -> None`
 
-Load configuration from `clicalc_config.py` in working directory.
+Load configuration from `nl_calc_config.py` in the working directory.
 
 ```python
 from nl_clicalc import load_user_config
 
-load_user_config()
+load_user_config()  # Loads CUSTOM_CONSTANTS, CUSTOM_FUNCTIONS, etc.
 ```
 
 ## Types
 
 ### `UnitValue`
 
-Represents a numeric value with units.
+Represents a numeric value with units. Returned when expressions involve units.
 
 ```python
-from nl_clicalc import UnitValue
+from nl_clicalc import evaluate_raw, UnitValue
 
-uv = UnitValue(5, "m")
-print(uv)        # "5 m"
-print(uv.value)  # 5.0
-print(uv.unit)   # "m"
+result = evaluate_raw("30m + 100ft")
 
-# Operations
-uv2 = UnitValue(100, "cm")
-result = uv + uv2  # 6 m
+if isinstance(result, UnitValue):
+    print(f"Value: {result.value}, Unit: {result.unit}")
+    # Value: 60.48, Unit: m
+
+# UnitValue supports arithmetic with auto-conversion
+uv1 = UnitValue(30, "m")
+uv2 = UnitValue(100, "ft")
+result = uv1 + uv2  # UnitValue(60.48, "m")
 ```
 
 ### `EvaluationError`
 
-Raised for invalid expressions.
+Raised when an expression is invalid or contains unsupported operations.
 
 ```python
 from nl_clicalc import evaluate_raw, EvaluationError
@@ -167,20 +192,20 @@ from nl_clicalc import evaluate_raw, EvaluationError
 try:
     result = evaluate_raw("import os")
 except EvaluationError as e:
-    print(f"Error: {e}")
+    print(f"Invalid expression: {e}")
 ```
 
 ### `TimeoutError`
 
-Raised when evaluation exceeds timeout.
+Raised when evaluation exceeds the specified timeout.
 
 ```python
 from nl_clicalc import evaluate_with_timeout, TimeoutError
 
 try:
-    result = evaluate_with_timeout("slow_expr", timeout=1.0)
+    result = evaluate_with_timeout("factorial(10000)", timeout=1.0)
 except TimeoutError:
-    print("Timed out")
+    print("Calculation timed out - possible DoS attempt")
 ```
 
 ## Utility Functions
@@ -189,75 +214,103 @@ except TimeoutError:
 
 ```python
 from nl_clicalc import (
-    normalize_unit,
-    get_conversion_factor,
-    get_all_units,
-    is_unit,
+    normalize_unit,      # Normalize unit name to canonical form
+    get_conversion_factor,  # Get conversion factor between units
+    get_all_units,       # List all supported units
+    is_unit,             # Check if text is a unit
 )
 
-# Normalize unit name
-normalize_unit("meters")  # "m"
-
-# Get conversion factor
+normalize_unit("meters")        # "m"
+normalize_unit("kilometers")     # "km"
 get_conversion_factor("ft", "m")  # 0.3048
+get_conversion_factor("km", "mi")  # 0.621371
 
-# List all units
-units = get_all_units()
-
-# Check if unit
-is_unit("m")    # True
-is_unit("xyz")  # False
+is_unit("m")     # True
+is_unit("xyz")   # False
 ```
 
 ## Memory Functions
 
+Calculator-style memory operations (global state).
+
 ```python
 from nl_clicalc import (
-    memory_store,
-    memory_recall,
-    memory_add,
-    memory_subtract,
-    memory_clear,
-    memory_list,
+    memory_store,     # Store value (default M register)
+    memory_recall,   # Recall from memory
+    memory_add,      # Add to memory (M+)
+    memory_subtract, # Subtract from memory (M-)
+    memory_clear,    # Clear memory
+    memory_list,     # List all registers
 )
 
-memory_store(42)
-memory_recall()     # 42
-memory_add(8)       # Now 50
-memory_subtract(5)  # Now 45
-memory_clear()
+memory_store(42)        # Store 42
+memory_recall()         # 42
+memory_add(8)          # M+8, memory is now 50
+memory_recall()         # 50
+memory_subtract(5)     # M-5, memory is now 45
+memory_clear()          # Clear all registers
 ```
+
+Also available: `MR` (alias for recall), `MC` (alias for clear), `Mplus(x)`, `Mminus(x)`
 
 ## Variable Functions
 
+User-defined variables (global state, thread-safe).
+
 ```python
 from nl_clicalc import (
-    setvar,
-    getvar,
-    delvar,
-    listvars,
-    clearvars,
+    setvar,       # Set variable value
+    getvar,       # Get variable value
+    delvar,       # Delete variable
+    listvars,     # List all variables
+    clearvars,    # Clear all variables
 )
 
 setvar("x", 10)
-getvar("x")    # 10
-listvars()     # {"x": 10}
+setvar("y", 20)
+getvar("x")      # 10
+listvars()       # {"x": 10, "y": 20}
 delvar("x")
-clearvars()
+clearvars()      # Remove all variables
+```
+
+**Usage example:**
+
+```python
+from nl_clicalc import evaluate_raw
+
+evaluate_raw('setvar("r", 5)')
+evaluate_raw('pi * r ^ 2')    # 78.54... (circle area)
+evaluate_raw('setvar("h", 10)')
+evaluate_raw('pi * r ^ 2 * h')  # 785.4... (cylinder volume)
 ```
 
 ## Security Constants
 
+Limits that protect against DoS attacks. Import and modify as needed.
+
 ```python
 from nl_clicalc import (
-    MAX_INPUT_LENGTH,
-    MAX_NESTING_DEPTH,
-    MAX_EXPONENT,
-    MAX_FACTORIAL,
-    MAX_RESULT_VALUE,
-    DEFAULT_CACHE_SIZE,
+    MAX_INPUT_LENGTH,     # 10000 - max input characters
+    MAX_NESTING_DEPTH,    # 100 - max parentheses nesting
+    MAX_EXPONENT,         # 10000 - max exponent value
+    MAX_FACTORIAL,        # 1000 - max factorial input
+    MAX_RESULT_VALUE,     # 1e308 - max result magnitude
+    DEFAULT_CACHE_SIZE,   # 1024 - LRU cache size
 )
 
-print(MAX_INPUT_LENGTH)   # 10000
-print(MAX_NESTING_DEPTH)  # 100
+print(f"Max input length: {MAX_INPUT_LENGTH}")
+print(f"Max nesting depth: {MAX_NESTING_DEPTH}")
 ```
+
+## Performance Notes
+
+| Function | Speed (typical) | Notes |
+|----------|-----------------|-------|
+| `evaluate()` | ~10 μs/eval | Fastest, requires pre-normalized input |
+| `evaluate_raw()` | ~155 μs/eval | Full pipeline, natural language support |
+| `evaluate_cached()` | ~0.1 μs/eval (cached) | First call same as evaluate_raw |
+| `PyCalcApp.calculate()` | ~0.3 μs/eval (cached) | Instance-level caching |
+| `evaluate_async()` | Same as evaluate_raw | Runs in thread pool |
+
+**For maximum performance with user input**: Cache parsed results using `evaluate_cached()` or `PyCalcApp`.

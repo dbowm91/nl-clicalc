@@ -8,13 +8,28 @@ Basic things work well, but some functionality is lightly tested. There might be
 
 ## Features
 
-- **Natural Language Input**: Write math expressions in plain English
-- **Unit Conversions**: Seamlessly convert between metric and imperial units
-- **Scientific Functions**: Support for trigonometric, logarithmic, and other mathematical functions
-- **Physical Constants**: Built-in scientific constants (Avogadro, Planck, Boltzmann, etc.)
-- **Safe Evaluation**: Uses AST-based parsing instead of `eval()` for security
-- **Pure Python**: No external dependencies - uses only the standard library
-- **Webapp Ready**: Thread-safe with caching, async support, and optimized performance
+nl-clicalc converts natural language math expressions into numerical results. Key capabilities:
+
+- **Natural Language Input**: Speak math expressions naturally
+  - `"five plus three times two"` → `5+3*2 = 11` (not 16 — follows order of operations)
+  - `"twenty five"` → `25` (combines number words)
+  - `"what is the square root of one hundred"` → `10`
+
+- **Unit Conversions**: Mix metric and imperial units seamlessly
+  - `"30m + 100ft"` → `60.48 m` (auto-converts feet to meters)
+  - `"60mi / h"` → `60 mi/h` (compound units)
+  - `"100C in F"` → `212 F` (temperature with `temp()` function)
+
+- **Complex Numbers**: Full support for imaginary numbers
+  - `"sqrt(-1)"` → `1j`
+  - `"log(-1)"` → `3.14159...j` (πi)
+  - `"3+4i"` → `(3+4j)`
+
+- **Safe Evaluation**: AST-based parsing, no `eval()`
+  - Blocks dangerous operations (`import`, `open`, etc.)
+  - Built-in DoS protection (max nesting, exponents, factorial size)
+
+- **Pure Python**: Standard library only, no dependencies
 
 ## Installation
 
@@ -174,23 +189,24 @@ register_function("mysquare", my_func)
 result = evaluate_raw("mysquare(3, 4)")  # 25
 ```
 
-### Performance
+### Performance (benchmarked on Python 3.14, M2 Pro)
 
-For webapps requiring high throughput:
+| Method | Input Type | Typical Speed |
+|--------|------------|---------------|
+| `evaluate()` | Pre-normalized (e.g., `5+3`) | ~10 μs/eval |
+| `evaluate_raw()` | Natural language (e.g., `"five plus three"`) | ~155 μs/eval |
+| `evaluate_cached()` | Repeated NL expressions | ~0.1 μs/eval (after first call) |
+| `PyCalcApp.calculate()` | NL with instance caching | ~0.3 μs/eval (after first call) |
+| `evaluate_async()` | Async frameworks | Same as evaluate_raw in thread pool |
 
-| Method | Input Type | Performance |
-|--------|------------|-------------|
-| `evaluate()` | Pre-normalized (e.g., `5+3`) | Fastest, ~29 μs/eval |
-| `evaluate_raw()` | Natural language, spaces | Full pipeline, ~50 μs/eval |
-| `evaluate_cached()` | Natural language, with cache | O(1) after first call |
-| `PyCalcApp.calculate()` | Natural language, auto-caching | O(1) after first call |
-| `PyCalcApp.calculate_async()` | Async, non-blocking | For async frameworks |
+**Key insight**: `evaluate()` is ~15x faster than `evaluate_raw()` because it skips the normalization pipeline. Use `evaluate()` when you control input format, `evaluate_raw()` for user input.
 
 The library includes optimizations:
-- Pre-computed unit lookups
-- LRU caching for parsed expressions
+- Pre-computed unit lookups (sorted by length for fast matching)
+- LRU caching for parsed expressions (1024 entries default)
 - Combined regex patterns for normalization
 - Thread-safe constant/function registration
+- Complex-aware trig functions (`sin()`, `log()`, etc. handle complex arguments)
 
 ## API Reference
 

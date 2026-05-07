@@ -1,16 +1,20 @@
 # Quick Start
 
-## Basic Arithmetic
+This guide gets you started with nl-clicalc for both CLI and Python usage.
+
+## Command Line
+
+### Basic Arithmetic
 
 ```bash
 calc "5 + 3"
 # 8
 
 calc "2 + 3 * 4"
-# 14
+# 14 (not 20 - follows order of operations)
 ```
 
-## Natural Language
+### Natural Language
 
 ```bash
 calc "five plus three"
@@ -21,22 +25,28 @@ calc "twenty times five"
 
 calc "one hundred divided by four"
 # 100/4 -> 25
+
+calc "what is five plus three"
+# 5+3 -> 8 (conversational phrases stripped)
 ```
 
-## Unit Conversions
+### Unit Conversions
 
 ```bash
 calc "30m + 100ft"
-# 60.48 m
+# 30*m+100*ft -> 60.48 m (auto-converts)
 
-calc "1 mile in kilometers"
-# 1.609 km
+calc "60mi / h"
+# 60 mi/h (compound units)
 
 calc "1GB in MB"
 # 1024 MB
+
+calc "temp(100, C, F)"
+# 212 F (temperature conversion)
 ```
 
-## Scientific Functions
+### Scientific Functions
 
 ```bash
 calc "sin(pi/2)"
@@ -47,9 +57,12 @@ calc "sqrt(144)"
 
 calc "log(e)"
 # 1.0
+
+calc "2^10"
+# 1024
 ```
 
-## Physical Constants
+### Physical Constants
 
 ```bash
 calc "avogadro"
@@ -62,18 +75,28 @@ calc "5 * planck"
 # 3.31e-33
 ```
 
-## Interactive Mode
+### CLI Options
+
+| Option | Description |
+|--------|-------------|
+| `-e` | Quiet mode, output result only |
+| `-s` | Show expression in output |
+| `-q` | Suppress expression in output |
+| `--json` | Output as JSON |
+| `-i` | Interactive REPL mode |
+
+### Interactive Mode
 
 ```bash
 calc -i
->>> 5 + 3
-8
->>> sin(pi)
-0.0
+>>> five plus three
+5+3 -> 8
+>>> 30m + 100ft
+30*m+100*ft -> 60.48 m
 >>> quit
 ```
 
-## Pipe Input
+### Pipe Input
 
 ```bash
 echo "5 + 3" | calc -e
@@ -85,12 +108,94 @@ echo "100ft in meters" | calc -e
 
 ## Python API
 
+### Choosing the Right Function
+
+**For user input (natural language):**
+
 ```python
 from nl_clicalc import evaluate_raw
 
-result = evaluate_raw("five plus three")
-print(result)  # 8
+result = evaluate_raw("five plus three")  # 8
+result = evaluate_raw("30m + 100ft")      # 60.48 m
 ```
+
+**For controlled input (pre-normalized):**
+
+```python
+from nl_calc import evaluate  # Note: different import path
+
+result = evaluate("5+3")  # 8 - must have no spaces
+```
+
+**For untrusted input (with timeout):**
+
+```python
+from nl_clicalc import evaluate_with_timeout, TimeoutError
+
+try:
+    result = evaluate_with_timeout("5 + 3", timeout=1.0)
+except TimeoutError:
+    print("Calculation timed out")
+```
+
+### Working with Results
+
+```python
+from nl_clicalc import evaluate_raw, UnitValue
+
+result = evaluate_raw("30m + 100ft")
+
+if isinstance(result, UnitValue):
+    print(f"Value: {result.value}, Unit: {result.unit}")
+    # Value: 60.48, Unit: m
+```
+
+### Webapps with PyCalcApp
+
+```python
+from nl_clicalc import PyCalcApp
+
+app = PyCalcApp(cache_size=1000)
+
+# Natural language works
+result = app.calculate("five plus three")  # 8
+result = app.calculate("30m + 100ft")       # 60.48 m
+
+# Async support
+result = await app.calculate_async("sqrt(144)")
+```
+
+### Error Handling
+
+```python
+from nl_clicalc import evaluate_raw, EvaluationError, TimeoutError
+
+try:
+    result = evaluate_raw("five plus three")
+except EvaluationError as e:
+    print(f"Invalid expression: {e}")
+
+try:
+    result = evaluate_with_timeout("2 ** 1000000", timeout=1.0)
+except TimeoutError:
+    print("Calculation timed out")
+```
+
+## Security Note
+
+For web applications or any scenario with untrusted input, use `evaluate_with_timeout()`:
+
+```python
+from nl_clicalc import evaluate_with_timeout, TimeoutError
+
+# Always use timeout with untrusted input
+result = evaluate_with_timeout(user_expression, timeout=5.0)
+```
+
+This prevents:
+- Long-running calculations (DoS protection)
+- Nested expressions that could consume memory
+- Complex expressions that could hang the process
 
 ## Next Steps
 
@@ -98,3 +203,5 @@ print(result)  # 8
 - [Natural Language](natural-language.md) - Full language support
 - [Functions](functions.md) - All available functions
 - [Units](units.md) - All supported units
+- [API Reference](api.md) - Complete Python API documentation
+- [Security](security.md) - Security best practices

@@ -2,6 +2,22 @@
 
 nl-clicalc is designed with security as a priority. This page covers security features and best practices.
 
+## Critical: Always Use Timeouts for Untrusted Input
+
+**For any expression from an untrusted source (web requests, user input, etc.), always use `evaluate_with_timeout()`:**
+
+```python
+from nl_clicalc import evaluate_with_timeout, TimeoutError
+
+# ALWAYS use timeout with untrusted input
+try:
+    result = evaluate_with_timeout(user_expression, timeout=5.0)
+except TimeoutError:
+    return {"error": "Calculation timed out"}
+```
+
+This is the single most important security practice. Without a timeout, a malicious user could submit expressions that consume excessive CPU or memory.
+
 ## AST-Based Evaluation
 
 nl-clicalc uses Abstract Syntax Tree (AST) parsing instead of Python's `eval()`. This provides:
@@ -11,9 +27,27 @@ nl-clicalc uses Abstract Syntax Tree (AST) parsing instead of Python's `eval()`.
 - **Safe constant evaluation** - Constants are validated before use
 - **No system access** - No access to files, network, or system resources
 
+## Input Limits
+
+Built-in protections against DoS attacks (cannot be bypassed):
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `MAX_INPUT_LENGTH` | 10,000 | Maximum input character length |
+| `MAX_NESTING_DEPTH` | 100 | Maximum parentheses nesting depth |
+| `MAX_EXPONENT` | 10,000 | Maximum exponent value |
+| `MAX_FACTORIAL` | 1,000 | Maximum factorial input |
+| `MAX_RESULT_VALUE` | 1e308 | Maximum result value |
+
+These prevent:
+- Extremely long inputs
+- Deeply nested expressions
+- Huge exponents or factorials
+- Overflow errors
+
 ## Blocked Operations
 
-The following are blocked for security:
+The following Python operations are blocked and will raise `EvaluationError`:
 
 ### Code Execution
 
@@ -59,45 +93,17 @@ x and y                    # Blocked
 x[0]                       # Blocked
 ```
 
-## Input Limits
-
-Protection against DoS attacks:
-
-| Constant | Default | Description |
-|----------|---------|-------------|
-| `MAX_INPUT_LENGTH` | 10,000 | Maximum input length |
-| `MAX_NESTING_DEPTH` | 100 | Maximum parentheses depth |
-| `MAX_EXPONENT` | 10,000 | Maximum exponent value |
-| `MAX_FACTORIAL` | 1,000 | Maximum factorial input |
-| `MAX_RESULT_VALUE` | 1e308 | Maximum result value |
-
-## Timeout Protection
-
-For untrusted input, use timeout:
-
-```python
-from nl_clicalc import evaluate_with_timeout, TimeoutError
-
-try:
-    result = evaluate_with_timeout("2**1000000", timeout=1.0)
-except TimeoutError:
-    print("Evaluation timed out")
-```
-
 ## Web Application Security
 
-### Safe Functions
+### Recommended Evaluation Functions
 
-All these functions are safe for untrusted input:
-
-```python
-evaluate()                 # Safe
-evaluate_raw()             # Safe
-evaluate_cached()          # Safe
-evaluate_async()           # Safe
-evaluate_with_timeout()    # Safe (recommended)
-PyCalcApp.calculate()      # Safe
-```
+| Function | Use Case | Safety |
+|----------|----------|--------|
+| `evaluate_with_timeout()` | Untrusted input | **Recommended** - has timeout |
+| `evaluate_raw()` | User input, controlled environment | Safe but no timeout |
+| `evaluate()` | Pre-normalized, trusted input | Fastest, no normalization |
+| `PyCalcApp.calculate()` | Webapps with caching | Safe, per-instance isolation |
+| `evaluate_async()` | Async frameworks | Safe in thread pool |
 
 ### Example: Secure Endpoint
 
@@ -109,6 +115,7 @@ app = PyCalcApp()
 def handle_user_input(expression: str):
     """Safely evaluate user-provided expression."""
     try:
+        # Use evaluate_with_timeout for untrusted input
         result = app.calculate(expression)
         return {"success": True, "result": str(result)}
     except EvaluationError as e:
