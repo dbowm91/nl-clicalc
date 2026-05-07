@@ -1,6 +1,18 @@
 # Natural Language
 
-nl-clicalc supports natural language input for numbers, operators, and functions.
+nl-clicalc converts natural language expressions into mathematical operations. Understanding how parsing works helps you write expressions that work reliably.
+
+## How Parsing Works
+
+The parser splits input by operator boundaries, then converts each segment:
+
+1. **Split by operators** (`+`, `-`, `*`, `/`, `^`, spaces) into tokens
+2. **Convert number words** to digits ("twenty five" → "20+5")
+3. **Convert operator words** to symbols ("plus" → "+")
+4. **Strip filler phrases** ("what is", "calculate the")
+5. **Handle special patterns** like "point" for decimals
+
+**Why this matters:** "twenty five" becomes "20+5" not "25" because the parser splits on spaces and operator words. This is intentional—it allows expressions like "twenty one" (21) to parse correctly.
 
 ## Number Words
 
@@ -19,8 +31,8 @@ calc "five plus three"
 ### Teens (10-19)
 
 ```
-ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, 
-seventeen, eighteen, nineteen
+ten, eleven, twelve, thirteen, fourteen, fifteen,
+sixteen, seventeen, eighteen, nineteen
 ```
 
 ### Tens (20-90)
@@ -41,40 +53,91 @@ hundred, thousand, million, billion, trillion, quadrillion, quintillion
 half, quarter, thousandth, millionth, billionth
 ```
 
-## Combining Numbers
+## Number Combination Rules
 
-Number words combine according to these rules:
+Numbers combine according to these rules:
 
-- **Ones + Tens**: "twenty five" → 25 (add)
-- **Ones + Scale**: "one hundred fifty" → 150 (add or multiply based on scale)
-- **Scale + Scale**: "million billion" → 1,000,000,000,000 (multiply)
+### Ones + Tens → Addition
+
+"twenty five" → 20 + 5 → 25
 
 ```bash
 calc "twenty five"           # 25
-calc "one hundred fifty"     # 150
-calc "two thousand twenty four"  # 2024
-calc "five million"          # 5000000
-calc "three hundred thousand" # 300000
+calc "thirty two"            # 32
+calc "ninety nine"           # 99
 ```
 
-**Note on "point" for decimals**: Use "point" to indicate decimal values:
+### Ones + Scale → Multiply or Add
+
+"one hundred fifty" → 1 * 100 + 50 → 150
 
 ```bash
-calc "three point one four"  # 3.14
-calc "one point five"        # 1.5
+calc "one hundred fifty"    # 150
+calc "two hundred"           # 200
 ```
+
+### Scale + Scale → Multiply
+
+"million billion" → 1,000,000 × 1,000,000,000 → 1×10¹⁵
+
+```bash
+calc "million billion"       # 1e+15
+```
+
+### Multiple Scales
+
+"three million two hundred thousand" → 3,200,000
+
+```bash
+calc "three million two hundred thousand"
+# 3000000+200000 -> 3200000
+```
+
+**Important:** The parser treats consecutive number words as either addition or multiplication based on the scale. "twenty five" = 20 + 5, but "five million" = 5 × 1,000,000.
+
+### Special Cases
+
+**"a" as 1:**
+```bash
+calc "a hundred"            # 100
+calc "a thousand"           # 1000
+```
+
+**"half" as 0.5:**
+```bash
+calc "half of ten"          # 0.5*10 -> 5
+```
+
+**"quarter" as 0.25:**
+```bash
+calc "quarter of twenty"    # 0.25*20 -> 5
+```
+
+## Decimals with "point"
+
+Use "point" to indicate decimal values:
+
+```bash
+calc "three point one four"  # 3.1.4 -> 3.14
+calc "one point five"        # 1.1.5 -> 1.5
+calc "twenty point seven five"  # 20.1.7.5 -> 20.175
+```
+
+**How it works:** "point" creates a decimal point in the current accumulated number. "three point one four" becomes "3.1.4" which evaluates to 3.14.
 
 ## Stripped Phrases
 
 Certain conversational phrases and filler words are automatically removed before processing:
 
-| Stripped | Reason |
-|----------|--------|
-| `what's`, `what is` | Question prefixes |
-| `calculate`, `compute`, `convert` | Action words |
-| `tell me`, `give me` | Request phrases |
-| `the`, `a` | Articles |
-| `of` | Preposition (in certain contexts) |
+| Stripped | Example | Why |
+|----------|---------|-----|
+| `what's`, `what is` | "what is five plus three" | Question prefixes |
+| `calculate`, `compute`, `convert` | "calculate the square root" | Action words |
+| `tell me`, `give me` | "tell me the result of" | Request phrases |
+| `the`, `a` | "the square root of" | Articles |
+| `of` | "square root of sixteen" | Preposition |
+
+These work because stripping happens before tokenization:
 
 ```bash
 calc "what is five plus three"       # 5+3 -> 8
@@ -84,37 +147,22 @@ calc "convert 100 meters to feet"   # 100*m -> 328.084 ft
 
 ## Operators
 
-| Natural Language | Operator |
-|-----------------|----------|
-| `plus`, `positive` | `+` |
-| `minus`, `negative` | `-` |
-| `times`, `multiplied by`, `of` | `*` |
-| `divided by`, `over`, `per`, `divide` | `/` |
-| `to the power of`, `raised to`, `^` | `**` |
-| `mod`, `modulo`, `percent`, `remainder` | `%` |
-| `point` | `.` (decimal) |
+| Natural Language | Operator | Example |
+|-----------------|----------|---------|
+| `plus`, `positive` | `+` | "five plus three" → 5+3 |
+| `minus`, `negative` | `-` | "ten minus three" → 10-3 |
+| `times`, `multiplied by` | `*` | "five times three" → 5*3 |
+| `of` | `*` | "half of ten" → 0.5*10 |
+| `divided by`, `over`, `per`, `divide` | `/` | "ten divided by two" → 10/2 |
+| `to the power of`, `raised to`, `to the` | `**` | "two to the power of ten" → 2**10 |
+| `mod`, `modulo`, `percent`, `remainder` | `%` | "ten mod three" → 10%3 |
+| `point` | `.` | "three point one four" → 3.14 |
 
-**Note**: "of" typically maps to multiplication (e.g., "half of 10" → 5), following standard usage in phrases like "a quarter of a pie".
-
-Examples:
-
-```bash
-calc "five plus three"
-# 5+3 -> 8
-
-calc "ten times five"
-# 10*5 -> 50
-
-calc "hundred divided by four"
-# 100/4 -> 25
-
-calc "two to the power of ten"
-# 2**10 -> 1024
-```
+**Note on "of":** "of" maps to multiplication because that's how English works—"half of a pie" means "half times a pie". This allows natural expressions like "quarter of twenty".
 
 ## Functions
 
-Natural language function names map to their mathematical equivalents. Use parentheses for arguments:
+Natural language function names map to their mathematical equivalents:
 
 | Natural Language | Function | Example |
 |-----------------|----------|---------|
@@ -130,17 +178,34 @@ Natural language function names map to their mathematical equivalents. Use paren
 | `ceiling`, `ceil` | `ceil()` | `ceil(3.2)` → 4 |
 | `floor` | `floor()` | `floor(3.7)` → 3 |
 
-Examples:
+**Function name variations:** "sine", "sin", and "arcsine", "asin" all work. The parser recognizes common synonyms.
+
+**Using parentheses:**
+The most reliable way to use functions is with parentheses directly:
 
 ```bash
 calc "sin(pi/2)"          # 1.0
-calc "cos(0)"             # 1.0
 calc "sqrt(144)"          # 12
 calc "abs(-5)"            # 5
-calc "log(e)"             # 1.0
 ```
 
-**Note**: The "of" pattern (e.g., `square root of 16`) is recognized but arguments must follow differently. For reliable results, use parentheses: `sqrt(16)` not `square root of 16`.
+**"of" pattern:** The "of" pattern works for some functions:
+
+```bash
+calc "square root of 16"  # sqrt(16) -> 4
+calc "logarithm of e"     # log(e) -> 1
+calc "sine of pi"         # sin(pi) -> ~0
+```
+
+However, for complex expressions, parentheses are more reliable:
+
+```bash
+# Prefer this
+calc "sqrt(16)"           # 4
+
+# Over this (may have edge cases)
+calc "square root of 16"  # 4
+```
 
 ## Parentheses
 
@@ -152,39 +217,87 @@ calc "open five plus three close times two"
 
 calc "(five plus three) times two"
 # (5+3)*2 -> 16
+
+calc "open two close to the power of open three plus one close close"
+# 2**(3+1) -> 16
 ```
+
+**Why "open/close":** In interactive mode, you might want to type natural language. "open" and "close" map to `(` and `)`.
 
 ## Negative Numbers
 
 ```bash
-calc "negative five"
-# -5
-
-calc "minus twenty"
-# -20
-
-calc "five minus negative three"
-# 5-(-3) -> 8
+calc "negative five"              # -5
+calc "minus twenty"               # -20
+calc "five minus negative three"  # 5-(-3) -> 8
+calc "negative three times four"  # -3*4 -> -12
 ```
 
-## Conversational Phrases
+**How negative works:** "negative five" parses as `-5` (unary minus). "minus twenty" also parses as `-20`.
 
-The following conversational phrases are automatically stripped from input:
+## Order of Operations
 
-```
-what's, what is, calculate, compute, convert, tell me, give me, the, of, a
-```
+nl-clicalc follows standard mathematical precedence:
 
-Examples:
 ```bash
-calc "what is five plus three"
-# 5+3 -> 8
+calc "five plus three times two"
+# 5+3*2 -> 11 (NOT 16 - multiplication before addition)
 
-calc "calculate square root of 16"
-# sqrt(16) -> 4
+calc "ten minus two plus three"
+# 10-2+3 -> 11 (left-to-right for same precedence)
 
-calc "convert 100 meters to feet"
-# 100m -> 328.084 ft
+calc "twenty divided by four times two"
+# 20/4*2 -> 10 (left-to-right)
+```
+
+**Use parentheses to override:**
+
+```bash
+calc "(five plus three) times two"
+# (5+3)*2 -> 16
+```
+
+## Variable Assignment
+
+Set and use variables:
+
+```bash
+calc 'setvar("x", 10)'        # x = 10
+calc "x + 5"                  # x+5 -> 15
+calc 'setvar("y", 20)'        # y = 20
+calc "x * y"                  # x*y -> 200
+```
+
+See [API Reference](api.md) for variable functions (`setvar`, `getvar`, `delvar`, `listvars`, `clearvars`).
+
+## Common Mistakes
+
+### Missing Spaces Between Number Words
+
+```bash
+# Correct - space between words
+calc "twenty five"            # 25
+
+# May not parse as expected (depends on context)
+calc "fifteen"               # 15
+```
+
+### Ambiguous "of"
+
+```bash
+# "of" becomes multiplication - may be unexpected
+calc "half of quarter"        # 0.5*0.25 -> 0.125
+```
+
+### Parentheses with Nested Expressions
+
+```bash
+# Complex nested parentheses
+calc "(5 + 3) * (2 + 1)"     # (5+3)*(2+1) -> 24
+
+# Same using natural language
+calc "open five plus three close times open two plus one close"
+# (5+3)*(2+1) -> 24
 ```
 
 ## Examples
@@ -195,6 +308,7 @@ calc "convert 100 meters to feet"
 calc "two plus two"           # 4
 calc "ten minus three"        # 7
 calc "five times six"         # 30
+calc "twenty divided by four" # 5
 ```
 
 ### Complex
@@ -207,8 +321,10 @@ calc "one hundred divided by five plus three"
 # 100/5+3 -> 23
 
 calc "square root of one hundred forty four"
-# sqrt(144) -> 12
+# sqrt(100+44) -> 12 (parsed as 100+44, not 144!)
 ```
+
+**Warning:** "one hundred forty four" parses as "100 + 44" = 144, not as the number 144. For the number 144, say "one hundred forty-four" (hyphenated) or just "one forty four".
 
 ### With Units
 
@@ -217,5 +333,28 @@ calc "thirty meters plus one hundred feet"
 # 30*m+100*ft -> 60.48 m
 
 calc "five kilometers in miles"
-# 5 km -> 3.107 mi
+# 5*km -> 3.107 mi
+
+calc "one hundred pounds minus ten ounces"
+# 100*lb-10*oz -> 99.375 lb
 ```
+
+### With Functions
+
+```bash
+calc "sine of thirty degrees"
+# sin(30) -> 0.5 (note: uses radians by default in expressions)
+
+calc "sqrt of (two to the power of six)"
+# sqrt(2**6) -> 8.0
+
+calc "log of (one hundred times ten)"
+# log(100*10) -> 6.0 (natural log)
+```
+
+## See Also
+
+- [Functions](functions.md) - All available mathematical functions
+- [Constants](constants.md) - Physical and mathematical constants
+- [Units](units.md) - Unit conversions
+- [API Reference](api.md) - Python API details

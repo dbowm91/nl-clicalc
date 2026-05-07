@@ -223,6 +223,37 @@ def safe_evaluate(expr: str):
         raise
 ```
 
+## Unicode Text Security
+
+For applications that process user-provided text, the `nl_calc.exact` module provides tools to detect Unicode-based spoofing attacks:
+
+- **Confusables detection**: Identify characters from different scripts that look identical
+- **Invisible character detection**: Find zero-width spaces, BOM, bidi controls
+- **Mixed script detection**: Flag text with characters from multiple scripts
+
+```python
+from nl_calc.exact.synthesis import inspect_text
+
+def validate_user_text(text: str) -> tuple[bool, list[str]]:
+    """Check text for Unicode spoofing risks before storing."""
+    result = inspect_text(text)
+
+    warnings = []
+    if result.confusables:
+        warnings.append(f"Confusable characters: {len(result.confusables)} found")
+    if result.invisibles:
+        warnings.append(f"Invisible characters: {len(result.invisibles)} found")
+    if result.normalization.mixed_scripts:
+        warnings.append("Mixed Unicode scripts detected")
+
+    return len(warnings) == 0, warnings
+
+# Usage
+safe, warnings = validate_user_text("p\xe0ypal")  # Cyrillic confusable
+```
+
+See [Exact Module](exact.md) for comprehensive text processing documentation.
+
 ## Security Audit
 
 nl-clicalc follows these security principles:

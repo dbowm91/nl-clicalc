@@ -1,162 +1,690 @@
-# calc(1) -- Natural language math calculator
+.TH CALC 1 "2025-05-07" "1.1.0" "nl-clicalc Manual"
+.ad l
+.nh
 
-## NAME
+.SH NAME
+calc \- natural language math expression calculator
 
-calc - Natural language math expression calculator
+.SH SYNOPSIS
+\fBcalc\fR [\fIOPTIONS\fR] [\fIEXPRESSION\fR]
+.PP
+\fBcalc\fR \fB\-i\fR
+.PP
+\fBecho\fR \e"5 + 3\e" | \fBcalc\fR \fB\-e\fR
 
-## SYNOPSIS
+.SH DESCRIPTION
+\fBcalc\fR is a command-line calculator that accepts natural language expressions and converts them into mathematical operations. It supports unit conversions, scientific functions, physical constants, complex numbers, and more.
+.PP
+Unlike traditional calculators, \fBcalc\fR understands plain English:
+.PP
+.nf
+  $ calc \e"five plus three\e"
+  5+3 -> 8
+  $ calc \e"30 meters plus 100 feet\e"
+  30*m+100*ft -> 60.48 m
+  $ calc \e"sin of pi over two\e"
+  math.sin(pi/2) -> 1.0
+.fi
 
-`calc` \[*OPTIONS*] \[*EXPRESSION*]
+.SH OPTIONS
 
-`calc` `-i`
+.TP
+\fB\-h\fR, \fB--help\fR
+Show help message with all available operators, units, constants, and examples.
 
-`echo "5 + 3" | calc` `-e`
+.TP
+\fB\-v\fR, \fB--version\fR
+Show version information and exit.
 
-## DESCRIPTION
+.TP
+\fB\-e\fR, \fB--expression\fR \fIEXPRESSION\fR
+Evaluate a single expression. By default, outputs only the result (quiet mode). This is the recommended mode for piping input.
 
-calc is a command-line calculator that accepts natural language expressions and converts them into mathematical operations. It supports unit conversions, scientific functions, physical constants, and more.
+.TP
+\fB\-q\fR, \fB--quiet\fR
+Suppress the expression in output, showing only the numeric result.
 
-## OPTIONS
+.TP
+\fB\-s\fR, \fB--show\fR
+Show the expression in output. Useful with \fB\-e\fR to see what was parsed:
+.PP
+.nf
+  $ calc -e -s \e"five plus three\e"
+  5+3 -> 8
+.fi
 
-`-h`, `--help`
-: Show help message and available operators.
+.TP
+\fB--json\fR
+Output result as JSON with \fBresult\fR and \fBexpression\fR fields:
+.PP
+.nf
+  $ calc --json \e"5 + 3\e"
+  {"result": 8, "expression": "5+3"}
+.fi
 
-`-v`, `--version`
-: Show version information.
+.TP
+\fB\-i\fR, \fB--interactive\fR
+Start interactive REPL mode. Enter expressions directly, type \fBquit\fR or \fBexit\fR to exit:
+.PP
+.nf
+  $ calc -i
+  >>> five plus three
+  5+3 -> 8
+  >>> sqrt(144)
+  12.0
+  >>> 30m + 100ft
+  30*m+100*ft -> 60.48 m
+  >>> quit
+.fi
 
-`-e`, `--expression`
-: Evaluate a single expression. In quiet mode by default (output only the result).
+.TP
+\fB--mcp\fR
+Run as an MCP (Model Context Protocol) server for AI agent integration. The server exposes text and math tools via JSON-RPC over stdin/stdout. See the \fBMCP SERVER MODE\fR section for details.
 
-`-q`, `--quiet`
-: Suppress the expression in output, showing only the result.
+.SH ARGUMENTS
 
-`-s`, `--show`
-: Show the expression in output (useful with `-e`).
+.TP
+\fIEXPRESSION\fR
+The math expression to evaluate. Can include:
+.RS
+.IP \(bu 2
+Arithmetic: \fB+\fR, \fB-\fR, \fB*\fR, \fB/\fR, \fB**\fR (power), \fB%\fR (modulo)
+.IP \(bu
+Number words: \fBzero\fR, \fBone\fR, \fBtwo\fR, ..., \fBmillion\fR, \fBbillion\fR
+.IP \(bu
+Natural language operators: \fBplus\fR, \fBminus\fR, \fBtimes\fR, \fBdivided by\fR
+.IP \(bu
+Functions: \fBsin\fR, \fBcos\fR, \fBsqrt\fR, \fBlog\fR, \fBabs\fR, etc.
+.IP \(bu
+Units: \fBm\fR, \fBft\fR, \fBkg\fR, \fBgal\fR, etc.
+.IP \(bu
+Constants: \fBpi\fR, \fBe\fR, \fBavogadro\fR, \fBplanck\fR, etc.
+.RE
 
-`--json`
-: Output result as JSON.
+.SH TEXT INSPECTION TOOLS
 
-`-i`, `--interactive`
-: Start interactive REPL mode.
+\fBcalc\fR includes text inspection tools for detecting hidden characters, testing patterns, and analyzing text security risks.
 
-## EXAMPLES
+.SS inspect - Hidden Character Detection
 
-Basic arithmetic:
-```
-$ calc "five plus two"
-5+2 -> 7
-```
+Check text for invisible characters and confusables:
+.PP
+.nf
+  $ calc inspect \e"hello\e"
+  \(bu No hidden characters
 
-Complex expressions:
-```
-$ calc "(twenty + five) * 3"
-(20+5)*3 -> 75
-```
+  $ calc inspect \e"user\x00name\e"
+  \(bu HIDDEN: Text contains NULL (U+0000) at index 5.
 
-Unit conversions:
-```
-$ calc "30m + 100ft"
-30*m+100*ft -> 60.48 m
-```
+  $ calc inspect \e"p\xe2ypal\e"   # Cyrillic 'а' looks like Latin 'a'
+  \(bu CONFUSABLE: Text contains confusable character '\(e2' (looks like 'a') at index 1.
+.fi
+.PP
+This uses the Unicode UTS #39 confusables database (6500+ entries) to detect homoglyph attacks.
 
-Trigonometric functions:
-```
-$ calc "sin of 3.14159"
-math.sin(3.14159) -> 2.65e-06
-```
+.SS count - Character Counting
 
-Physical constants:
-```
-$ calc "5 times avogadro"
-5*na -> 3.01e+24
-```
+Count character occurrences with optional frequency table:
+.PP
+.nf
+  $ calc count \e"hello\e" l
+  'l' appears 3 time(s) in \e"hello\e"
 
-Pipe input:
-```
-$ echo "5 + 3" | calc -e
-8
-```
+  $ calc count \e"hello world"\e"
+  \e"hello world\e":
+    11 characters
+    'l': 3
+    'o': 2
+    'e': 1
+    (space): 1
+    'h': 1
+    'w': 1
+    'r': 1
+    'd': 1
+.fi
 
-Interactive mode:
-```
-$ calc -i
->>> five plus two
-5+2 -> 7
->>> quit
-```
+.SS regex - Pattern Testing
 
-## FEATURES
+Test regex patterns against sample text:
+.PP
+.nf
+  $ calc regex \e"^\ed+$\e" \e"12345\e"
+  \(bu Match: '12345'
 
-- **Natural Language Input**: Write math expressions in plain English
-- **Unit Conversions**: Convert between metric and imperial units
-- **Scientific Functions**: Trigonometric, logarithmic, and other functions
-- **Physical Constants**: Avogadro, Planck, Boltzmann, speed of light, etc.
-- **Safe Evaluation**: AST-based parsing (no `eval()`)
-- **Pure Python**: No external dependencies
+  $ calc regex \e"(\ed+)-(\ed+)\e" \e"555-1234\e"
+  \(bu Match: '555-1234'
+    Groups: ('555', '1234')
+.fi
 
-## SUPPORTED OPERATIONS
+.SH MCP SERVER MODE
 
-### Arithmetic
-`+`, `-`, `*`, `/`, `**`
+When run with \fB--mcp\fR, \fBcalc\fR acts as a Model Context Protocol server exposing exact text and math tools to AI agents. This enables AI agents to perform deterministic text analysis and math calculations.
 
-### Functions
-Trig: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`
+.SS Available Tools
 
-Math: `sqrt`, `log`, `log10`, `exp`, `abs`, `floor`, `ceil`, `round`
+.TP
+\fBmath_eval\fR
+Evaluate math expressions with full natural language and unit support.
+.TP
+\fBtext_measure\fR
+Return text metrics: UTF-8 bytes, codepoint count, word count, line count, whitespace analysis, newline style, Unicode normalization state.
+.TP
+\fBtext_equal\fR
+Compare strings with normalization options (raw, NFC, NFD, NFKC, NFKD, casefold, trim) and detailed evidence.
+.TP
+\fBtext_diff_explain\fR
+Explain differences between strings with codepoint details, Unicode names, normalization differences, and security findings.
+.TP
+\fBtext_inspect\fR
+Complete text inspection: hidden characters, Unicode confusables, mixed scripts, normalization state, and security warnings.
+.TP
+\fBtext_count\fR
+Count character occurrences or return frequency table.
+.TP
+\fBvalidate_brackets\fR
+Check bracket balance for \fB()\fR, \fB[]\fR, \fB{}\fR, \fB<>\fR with unmatched opener/closer details.
+.TP
+\fBvalidate_json\fR
+Validate JSON and report parse errors with line, column, and position.
+.TP
+\fBvalidate_regex\fR
+Test regex patterns against samples, report matches and capture groups.
+.TP
+\fBlist_compare\fR
+Compare two lists with options for order sensitivity, casefold, and normalization.
 
-Combinatorics: `factorial`, `gcd`, `lcm`, `perm`, `comb`
+.SS Protocol
 
-Statistics: `mean`, `median`, `mode`, `std`, `variance`
+The server uses JSON-RPC 2.0 over stdin/stdout:
+.PP
+.nf
+  # List available tools
+  {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
 
-### Units
-Length: m, km, cm, mm, in, ft, yd, mi
+  # Call a tool
+  {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+   "params": {"name": "math_eval", "arguments": {"expression": "5 + 3"}}}
+.fi
 
-Time: s, ms, min, h, d, wk, yr
+.SS Example Session
 
-Data: B, KB, MB, GB, TB
+.PP
+.nf
+  $ calc --mcp
+  {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+  # Response: {"jsonrpc": "2.0", "id": 1, "result": {"tools": [...]}}
 
-Mass: kg, g, mg, lb, oz
+  {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+   "params": {"name": "math_eval", "arguments": {"expression": "2**10"}}}
+  # Response: {"jsonrpc": "2.0", "id": 2, "result": {"ok": true, "result": 1024}}
+.fi
 
-### Constants
-`pi`, `e`, `tau`, `i`, `avogadro`, `planck`, `boltzmann`, `c` (speed of light)
+.SH EXAMPLES
 
-## PYTHON API
+.SS Basic Arithmetic
 
-```python
-from nl_clicalc import evaluate, evaluate_raw
+.PP
+.nf
+  $ calc \e"2 + 2\e"
+  2+2 -> 4
 
-result = evaluate("5+3")           # 8
-result = evaluate_raw("five plus 3")  # 8
-```
+  $ calc \e"10 / 3\e"
+  10/3 -> 3.3333333333333335
 
-## FILES
+  $ calc \e"2 ** 10\e"
+  2**10 -> 1024
+.fi
 
-`clicalc_config.py`
-: Optional user configuration file for custom constants and functions.
+.SS Natural Language
 
-## EXIT STATUS
+.PP
+.nf
+  $ calc \e"five plus three\e"
+  5+3 -> 8
 
+  $ calc \e"twenty times five\fR"
+  20*5 -> 100
+
+  $ calc \e"what is the square root of one hundred\fR"
+  sqrt(100) -> 10.0
+
+  $ calc \e"one hundred fifty times three\fR"
+  100*50*3 -> 15000
+.fi
+
+.SS Order of Operations
+
+\fBcalc\fR follows standard mathematical precedence:
+.PP
+.nf
+  $ calc \e"five plus three times two\fR"
+  5+3*2 -> 11   # NOT 16 (multiplication before addition)
+
+  $ calc \e"(five plus three) times two\fR"
+  (5+3)*2 -> 16  # Parentheses override precedence
+.fi
+
+.SS Unit Conversions
+
+Use the \fBin\fR keyword to convert between units:
+.PP
+.nf
+  $ calc \e"100ft in meters\fR"
+  100*ft -> 30.48 m
+
+  $ calc \e"5km in miles\fR"
+  5*km -> 3.107 mi
+
+  $ calc \e"1GB in MB\fR"
+  1*GB -> 1024 MB
+.fi
+
+.SS Unit Arithmetic
+
+Add, subtract, multiply units directly:
+.PP
+.nf
+  $ calc \e"30m + 100ft\fR"
+  30*m+100*ft -> 60.48 m
+
+  $ calc \e"2h + 30min\fR"
+  2*h+30*min -> 2.5 h
+
+  $ calc \e"60mi / h\fR"
+  60*mi/h -> 60 mi/h
+.fi
+
+.SS Temperature Conversions
+
+Use the \fBtemp()\fR function for temperature:
+.PP
+.nf
+  $ calc \e"temp(100, C, F)\fR"
+  temp(100,C,F) -> 212.0
+
+  $ calc \e"temp(32, F, C)\fR"
+  temp(32,F,C) -> 0.0
+
+  $ calc \e"temp(0, C, K)\fR"
+  temp(0,C,K) -> 273.15
+.fi
+
+.SS Scientific Functions
+
+.PP
+.nf
+  $ calc \e"sin(pi/2)\fR"
+  math.sin(pi/2) -> 1.0
+
+  $ calc \e"sqrt(144)\fR"
+  sqrt(144) -> 12.0
+
+  $ calc \e"log(e)\fR"
+  log(e) -> 1.0
+
+  $ calc \e"factorial(5)\fR"
+  factorial(5) -> 120
+
+  $ calc \e"gcd(12, 18)\fR"
+  gcd(12,18) -> 6
+.fi
+
+.SS Complex Numbers
+
+.PP
+.nf
+  $ calc \e"sqrt(-1)\fR"
+  sqrt(-1) -> 1j
+
+  $ calc \e"3+4i\fR"
+  3+4i -> (3+4j)
+
+  $ calc \e"abs(3+4i)\fR"
+  abs(3+4i) -> 5.0
+
+  $ calc \e"log(-1)\fR"
+  log(-1) -> 3.141592653589793j
+.fi
+
+.SS Physical Constants
+
+.PP
+.nf
+  $ calc \e"pi\fR"
+  pi -> 3.141592653589793
+
+  $ calc \e"avogadro\fR"
+  na -> 6.02214076e+23
+
+  $ calc \e"speed of light\fR"
+  c -> 299792458
+
+  $ calc \e"5 * planck\fR"
+  5*h -> 3.313e-33
+
+  $ calc \e"h * c / 500nm\fR"  # Photon energy
+  h*c/500*nm -> 3.972e-19
+.fi
+
+.SS Pipe Input
+
+.PP
+.nf
+  $ echo \e"5 + 3\fR" | calc -e
+  8
+
+  $ echo \e"100ft in meters\fR" | calc -e
+  30.48
+.fi
+
+.SS Bitwise Operations
+
+.PP
+.nf
+  $ calc \e"5 AND 3\fR"
+  5&3 -> 1
+
+  $ calc \e"0xFF & 0x0F\fR"
+  0xFF&0x0F -> 15
+
+  $ calc \e"bin(255)\fR"
+  bin(255) -> '0xff'
+.fi
+
+.SH NATURAL LANGUAGE REFERENCE
+
+.SS Number Words
+
+.TP
+Basic (0-9):
+\fBzero\fR, \fBone\fR, \fBtwo\fR, \fBthree\fR, \fBfour\fR, \fBfive\fR, \fBsix\fR, \fBseven\fR, \fBeight\fR, \fBnine\fR
+
+.TP
+Teens (10-19):
+\fBten\fR, \fBeleven\fR, \fBtwelve\fR, \fBthirteen\fR, \fBfourteen\fR, \fBfifteen\fR, \fBsixteen\fR, \fBseventeen\fR, \fBeighteen\fR, \fBnineteen\fR
+
+.TP
+Tens (20-90):
+\fBtwenty\fR, \fBthirty\fR, \fBforty\fR, \fBfifty\fR, \fBsixty\fR, \fBseventy\fR, \fBeighty\fR, \fBninety\fR
+
+.TP
+Scales:
+\fBhundred\fR, \fBthousand\fR, \fBmillion\fR, \fBbillion\fR, \fBtrillion\fR
+
+.TP
+Fractions:
+\fBhalf\fR, \fBquarter\fR, \fBthousandth\fR, \fBmillionth\fR
+
+.SS Number Combinations
+
+Numbers combine according to these rules:
+.PP
+.nf
+  # Ones + Tens: "twenty five" -> 25
+  $ calc \e"twenty five\fR"
+  20+5 -> 25
+
+  # Scale + Scale: "million billion" -> 1,000,000,000,000
+  $ calc \e"million billion\fR"
+  1000000*1000000000 -> 1e+15
+
+  # "point" for decimals: "three point one four" -> 3.14
+  $ calc \e"three point one four\fR"
+  3.1.4 -> 3.14
+.fi
+
+.SS Operator Words
+
+.TP
+\fBplus\fR, \fBpositive\fR -> \fB+\fR
+.TP
+\fBminus\fR, \fBnegative\fR -> \fB-\fR
+.TP
+\fBtimes\fR, \fBmultiplied by\fR, \fBof\fR -> \fB*\fR
+.TP
+\fBdivided by\fR, \fBover\fR, \fBper\fR, \fBdivide\fR -> \fB/\fR
+.TP
+\fBto the power of\fR, \fBraised to\fR -> \fB**\fR
+.TP
+\fBmod\fR, \fBmodulo\fR, \fBpercent\fR, \fBremainder\fR -> \fB%\fR
+
+.SS Stripped Phrases
+
+Certain conversational phrases are automatically removed:
+.PP
+.nf
+  $ calc \e"what is five plus three\fR"
+  5+3 -> 8
+
+  $ calc \e"calculate the square root of 16\fR"
+  sqrt(16) -> 4.0
+
+  $ calc \e"convert 100 meters to feet\fR"
+  100*m -> 328.084 ft
+.fi
+.PP
+Stripped phrases: \fBwhat's\fR, \fBwhat is\fR, \fBcalculate\fR, \fBcompute\fR, \fBconvert\fR, \fBtell me\fR, \fBgive me\fR, \fBthe\fR, \fBa\fR, \fBof\fR
+
+.SH SUPPORTED UNITS
+
+.SS Length
+\fBm\fR (meters), \fBkm\fR (kilometers), \fBcm\fR (centimeters), \fBmm\fR (millimeters), \fBum\fR (micrometers), \fBnm\fR (nanometers), \fBin\fR (inches), \fBft\fR (feet), \fByd\fR (yards), \fBmi\fR (miles), \fBly\fR (lightyears), \fBau\fR (astronomical units), \fBpc\fR (parsecs)
+
+.SS Time
+\fBs\fR (seconds), \fBms\fR (milliseconds), \fBus\fR (microseconds), \fBns\fR (nanoseconds), \fBmin\fR (minutes), \fBh\fR (hours), \fBd\fR (days), \fBwk\fR (weeks), \fByr\fR (years)
+
+.SS Mass
+\fBkg\fR (kilograms), \fBg\fR (grams), \fBmg\fR (milligrams), \fBug\fR (micrograms), \fBlb\fR (pounds), \fBoz\fR (ounces), \fBton\fR (tons)
+
+.SS Data
+\fBbit\fR, \fBB\fR (bytes), \fBKB\fR, \fBMB\fR, \fBGB\fR, \fBTB\fR, \fBPB\fR, \fBEB\fR, \fBZB\fR, \fBYB\fR
+
+.SS Volume
+\fBL\fR (liters), \fBmL\fR (milliliters), \fBgal\fR (gallons), \fBqt\fR (quarts), \fBpt\fR (pints), \fBcup\fR, \fBfloz\fR (fluid ounces), \fBtbsp\fR (tablespoons), \fBtsp\fR (teaspoons)
+
+.SS Temperature
+\fBC\fR (Celsius), \fBF\fR (Fahrenheit), \fBK\fR (Kelvin), \fBR\fR (Rankine) - use \fBtemp()\fR function
+
+.SS Other Categories
+Pressure: \fBPa\fR, \fBkPa\fR, \fBbar\fR, \fBatm\fR, \fBpsi\fR
+.br
+Energy: \fBJ\fR, \fBkJ\fR, \fBcal\fR, \fBkcal\fR, \fBWh\fR, \fBkWh\fR, \fBBTU\fR, \fBeV\fR
+.br
+Power: \fBW\fR, \fBkW\fR, \fBMW\fR, \fBGW\fR, \fBhp\fR
+.br
+Speed: \fBm/s\fR, \fBkm/h\fR, \fBmph\fR, \fBkn\fR (knots), \fBmach\fR
+.br
+Angles: \fBrad\fR, \fBdeg\fR
+
+.SH PHYSICAL CONSTANTS
+
+.TP
+\fBavogadro\fR (Na)
+6.02214076e+23 mol\u+207b\u00b9
+
+.TP
+\fBboltzmann\fR (k)
+1.380649e-23 J/K
+
+.TP
+\fBplanck\fR (h)
+6.62607015e-34 J\u00b7s
+
+.TP
+\fBhbar\fR (\u0127)
+1.054571817e-34 J\u00b7s
+
+.TP
+\fBc\fR (speed of light)
+299792458 m/s
+
+.TP
+\fBecharge\fR (e)
+1.602176634e-19 C
+
+.TP
+\fBg\fR (standard gravity)
+9.80665 m/s\u00b2
+
+.TP
+\fBG\fR (gravitational constant)
+6.67430e-11 m\u00b3/(kg\u00b7s\u00b2)
+
+.TP
+\fBR\fR (gas constant)
+8.314462618 J/(mol\u00b7K)
+
+.TP
+\fBme\fR (electron mass)
+9.1093837015e-31 kg
+
+.TP
+\fBmp\fR (proton mass)
+1.67262192369e-27 kg
+
+.TP
+\fBstefan\fR (\u03c3)
+5.670374419e-8 W/(m\u00b2\u00b7K\u2074)
+
+.PP
+Natural language aliases work: \fBspeed of light\fR, \fBplanck constant\fR, \fBboltzmann constant\fR
+
+.SH MATHEMATICAL CONSTANTS
+
+\fBpi\fR (3.14159...), \fBe\fR (2.71828...), \fBtau\fR (6.28318...), \fBi\fR (imaginary unit), \fBinf\fR (infinity), \fBnan\fR (NaN)
+
+.SH FUNCTIONS
+
+.SS Trigonometric
+\fBsin\fR, \fBcos\fR, \fBtan\fR, \fBasin\fR, \fBacos\fR, \fBatan\fR, \fBatan2\fR(y,x)
+.PP
+All trig functions handle complex arguments.
+
+.SS Hyperbolic
+\fBsinh\fR, \fBcosh\fR, \fBtanh\fR, \fBasinh\fR, \fBacosh\fR, \fBatanh\fR
+
+.SS Logarithmic & Exponential
+\fBlog\fR (natural log), \fBlog10\fR (base 10), \fBlog2\fR (base 2), \fBlog1p\fR (log(1+x)), \fBexp\fR, \fBexpm1\fR
+
+.SS Roots & Powers
+\fBsqrt\fR, \fBcbrt\fR, \fBpow\fR(x,y)
+
+.SS Rounding & Absolute
+\fBabs\fR, \fBfloor\fR, \fBceil\fR, \fBtrunc\fR, \fBround\fR(x,n), \fBsign\fR
+
+.SS Factorial & Combinatorics
+\fBfactorial\fR(n), \fBgcd\fR(a,b,...), \fBlcm\fR(a,b,...), \fBperm\fR(n,r), \fBcomb\fR(n,r), \fBnPr\fR, \fBnCr\fR
+
+.SS Complex Numbers
+\fBreal\fR(z), \fBimag\fR(z), \fBconj\fR(z), \fBphase\fR(z), \fBpolar\fR(z), \fBrect\fR(r,phi)
+
+.SS Statistics
+\fBmean\fR(x,...), \fBmedian\fR(x,...), \fBmode\fR(x,...), \fBstd\fR(x,...), \fBvariance\fR(x,...), \fBsum\fR(x,...), \fBmin\fR(x,...), \fBmax\fR(x,...)
+
+.SS Prime Numbers
+\fBisprime\fR(n), \fBprimefactors\fR(n), \fBnextprime\fR(n), \fBprevprime\fR(n)
+
+.SS Random
+\fBrandom\fR(), \fBrandint\fR(a,b), \fBrandrange\fR(a,b), \fBuniform\fR(a,b), \fBrandn\fR(), \fBgauss\fR(mu,sigma), \fBseed\fR(n)
+
+.SS Bitwise
+\fBbitand\fR(a,b), \fBbitor\fR(a,b), \fBbitxor\fR(a,b), \fBbitnot\fR(a), \fBbitlshift\fR(a,b), \fBbitrshift\fR(a,b), \fBbin\fR(n), \fBhex\fR(n), \fBoct\fR(n)
+
+.SS Memory & Variables
+\fBstore\fR(x), \fBrecall\fR(), \fBMR\fR (alias), \fBMplus\fR(x), \fBMminus\fR(x), \fBMC\fR (clear)
+.br
+\fBsetvar\fR(name,value), \fBgetvar\fR(name), \fBdelvar\fR(name), \fBlistvars\fR(), \fBclearvars\fR()
+
+.SS Utility
+\fBclamp\fR(x,lo,hi), \fBhypot\fR(x,y,...), \fBpercentof\fR(p,total), \fBaspercent\fR(x,total), \fBdegrees\fR(x), \fBradians\fR(x)
+
+.SH ENVIRONMENT VARIABLES
+
+.TP
+\fBCLICALC_MAX_INPUT_LENGTH\fR
+Override maximum input length (default: 10000 characters).
+
+.TP
+\fBCLICALC_CACHE_SIZE\fR
+Set default LRU cache size (default: 1024).
+
+.SH EXIT STATUS
+
+.TP
 0
-: Success.
+Success - expression evaluated correctly.
 
+.TP
 1
-: Invalid expression.
+Invalid expression - syntax error or unsupported operation.
 
+.TP
 2
-: Input too long.
+Input too long - exceeded maximum input length.
 
-## BUGS
+.SH FILES
 
+.TP
+\fB~/.clicalc_config.py\fR (or \fB./clicalc_config.py\fR)
+Optional user configuration file for custom constants and functions.
+.PP
+.nf
+  # Example clicalc_config.py
+  CUSTOM_CONSTANTS = {
+      "earth_radius": 6371,  # km
+  }
+
+  CUSTOM_FUNCTIONS = {
+      "circle_area": lambda r: 3.14159 * r ** 2,
+  }
+.fi
+
+.SH SECURITY
+
+\fBcalc\fR uses AST-based parsing instead of \fBeval\fR(), providing:
+.IP \(bu 2
+No arbitrary code execution
+.IP \(bu
+Controlled function access (whitelist only)
+.IP \(bu
+No access to files, network, or system resources
+.IP \(bu
+Built-in DoS protection (max nesting, exponents, factorial size)
+
+.PP
+For untrusted input, use \fBevaluate_with_timeout()\fR from the Python API to prevent long-running calculations.
+
+.SH PYTHON API
+
+.PP
+.nf
+  from nl_clicalc import evaluate_raw, evaluate
+
+  # Natural language and units (use this for user input)
+  result = evaluate_raw("five plus three")    # 8
+  result = evaluate_raw("30m + 100ft")        # 60.48 m
+
+  # Pre-normalized expressions (faster, no spaces allowed)
+  result = evaluate("5+3")                   # 8
+
+  # With caching for repeated queries
+  from nl_clicalc import evaluate_cached
+  result = evaluate_cached("five plus three")
+
+  # Thread-safe webapp wrapper
+  from nl_clicalc import PyCalcApp
+  app = PyCalcApp(cache_size=1000)
+  result = app.calculate("five plus three")
+.fi
+
+.SH SEE ALSO
+\fBpython\fR(1), \fBbc\fR(1), \fBexpr\fR(1)
+
+.SH BUGS
 Report bugs at https://github.com/dbowman91/nl-clicalc/issues
 
-## AUTHOR
-
+.SH AUTHOR
 CliCalc Contributors
 
-## LICENSE
-
+.SH LICENSE
 MIT License
-
-## SEE ALSO
-
-python(1), bc(1), expr(1)

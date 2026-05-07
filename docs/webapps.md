@@ -220,3 +220,53 @@ def safe_evaluate(expr: str):
     except Exception as e:
         return {"success": False, "error": str(e), "type": "unknown"}
 ```
+
+## AI Agent Integration (MCP)
+
+For AI agent workflows, nl-clicalc includes an MCP (Model Context Protocol) server that exposes text and math tools:
+
+```bash
+calc --mcp
+```
+
+The MCP server provides 10 tools for AI agent use:
+- `math_eval` - Math expressions with natural language and units
+- `text_measure` - Text metrics (bytes, codepoints, words, lines)
+- `text_equal` - String comparison with normalization
+- `text_diff_explain` - Detailed diff with security findings
+- `text_inspect` - Hidden characters, confusables, mixed scripts
+- `text_count` - Character counting and frequency
+- `validate_brackets` - Bracket balance checking
+- `validate_json` - JSON validation
+- `validate_regex` - Regex pattern testing
+- `list_compare` - List comparison
+
+See [MCP Server](mcp.md) for full documentation.
+
+### MCP in Web Applications
+
+If your webapp serves AI agents, you can proxy MCP requests:
+
+```python
+from fastapi import FastAPI
+import subprocess
+import json
+
+app = FastAPI()
+
+@app.post("/mcp")
+async def mcp_proxy(request: dict):
+    # Start calc MCP server
+    process = subprocess.Popen(
+        ["calc", "--mcp"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+
+    # Send request
+    response_bytes = process.communicate(input=json.dumps(request).encode())[0]
+    return json.loads(response_bytes.decode())
+```
+
+**Security note:** The MCP server enforces input limits (100K text, 10K list items) to prevent DoS attacks.
