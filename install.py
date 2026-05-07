@@ -8,6 +8,7 @@ Supports Linux, macOS, and Windows.
 
 import argparse
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -88,15 +89,86 @@ def add_to_path(install_dir: str) -> bool:
             with open(target_file, "a") as f:
                 f.write(f"\n# Added by nl_calc install\n{export_line}\n")
 
-            current_path = os.environ.get("PATH", "")
-            os.environ["PATH"] = f"{install_dir}{os.pathsep}{current_path}"
             print(f"Added {install_dir} to PATH in {target_file}")
-            print("Note: You may need to restart your shell or run: source " + target_file)
             return True
         else:
             print("No shell config found. Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):")
             print(f'  export PATH="{install_dir}:$PATH"')
             return False
+
+
+def remove_from_path(install_dir: str) -> bool:
+    """Remove install directory from PATH. Returns True if successful."""
+    if sys.platform == "win32":
+        print("To remove from PATH on Windows, manually remove the entry from your PATH.")
+        return False
+
+    shell_profile = os.path.expanduser("~/.bashrc")
+    zshrc = os.path.expanduser("~/.zshrc")
+    target_file = zshrc if os.path.exists(zshrc) else shell_profile
+
+    if not os.path.exists(target_file):
+        print("No shell config found.")
+        return False
+
+    with open(target_file, "r") as f:
+        content = f.read()
+
+    export_line = f'export PATH="{install_dir}:$PATH"'
+    added_marker = "# Added by nl_calc install"
+    removed_marker = "# Removed by nl_calc install"
+
+    lines = content.split('\n')
+    new_lines = []
+    i = 0
+    found_export = False
+
+    while i < len(lines):
+        line = lines[i]
+        if export_line in line:
+            # Found the export line - skip it and any following markers
+            found_export = True
+            i += 1
+            # Skip the added/removed marker on next line if present
+            if i < len(lines) and lines[i].strip() in (added_marker, removed_marker):
+                i += 1
+            continue
+        # Handle markers that follow a removed export line
+        if line.strip() in (added_marker, removed_marker):
+            # Skip if we already found the export (this is its trailing marker)
+            if found_export:
+                i += 1
+                continue
+            # This is an orphaned marker without a preceding export
+            # Skip it
+            i += 1
+            continue
+        new_lines.append(line)
+        i += 1
+
+    # Clean up consecutive blank lines
+    result_lines = []
+    prev_empty = False
+    for line in new_lines:
+        if line.strip() == "":
+            if not prev_empty:
+                result_lines.append(line)
+            prev_empty = True
+        else:
+            prev_empty = False
+            result_lines.append(line)
+
+    while result_lines and result_lines[-1].strip() == "":
+        result_lines.pop()
+
+    with open(target_file, "w") as f:
+        f.write('\n'.join(result_lines))
+
+    if found_export:
+        print(f"Removed {install_dir} from PATH in {target_file}")
+    else:
+        print(f"{install_dir} was not in PATH (already removed).")
+    return True
 
 
 def install_calc(install_dir: str, no_path: bool = False) -> bool:
@@ -113,11 +185,20 @@ def install_calc(install_dir: str, no_path: bool = False) -> bool:
     print(f"Installed calc to: {calc_path}")
 
     if no_path:
+        print("calc is ready to use!")
         return True
 
     added = add_to_path(install_dir)
+
     if added:
         print("calc is ready to use!")
+        new_path = f"{install_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+        shell = os.path.expanduser("~/.zshrc") if os.path.exists(os.path.expanduser("~/.zshrc")) else os.path.expanduser("~/.bashrc")
+        print(f"\nSpawning shell with calc available...")
+        subprocess.run(
+            ["bash", "-i"],
+            env={**os.environ, "PATH": new_path}
+        )
 
     return True
 
@@ -147,20 +228,14 @@ def update_calc(install_dir: str) -> bool:
 
 
 def uninstall_calc(install_dir: str) -> bool:
-    """Remove calc from the specified directory. Returns True if successful."""
-    calc_path = get_calc_path(install_dir)
+    """Remove calc from the specified directory and PATH. Returns True if successful."""
+    if os.path.exists(install_dir):
+        shutil.rmtree(install_dir)
+        print(f"Removed {install_dir}")
+    else:
+        print(f"calc is not installed at {install_dir}")
 
-    if not os.path.exists(calc_path):
-        print("calc is not installed.")
-        return False
-
-    os.remove(calc_path)
-    print(f"Removed calc from: {calc_path}")
-
-    if os.path.exists(install_dir) and not os.listdir(install_dir):
-        os.rmdir(install_dir)
-        print(f"Removed empty directory: {install_dir}")
-
+    remove_from_path(install_dir)
     return True
 
 
@@ -177,30 +252,22 @@ def show_menu(install_dir: str):
         "",
     ]
 
-    while True:
-        for line in menu_lines:
-            print(line)
-        choice = input("Select an option [1-4]: ").strip()
+    for line in menu_lines:
+        print(line)
+    choice = input("Select an option [1-4]: ").strip()
 
-        if len(choice) == 0:
-            break
-        if choice == "1":
-            install_calc(install_dir)
-        elif choice == "2":
-            update_calc(install_dir)
-        elif choice == "3":
-            uninstall_calc(install_dir)
-        elif choice == "4":
-            break
-        else:
-            print("Invalid choice. Please enter 1-4.")
-            continue
-
-        if choice in ("1", "2", "3"):
-            if choice != "4":
-                input("\nPress Enter to continue...")
-            if choice == "4":
-                break
+    if len(choice) == 0:
+        return
+    if choice == "1":
+        install_calc(install_dir)
+    elif choice == "2":
+        update_calc(install_dir)
+    elif choice == "3":
+        uninstall_calc(install_dir)
+    elif choice == "4":
+        return
+    else:
+        print("Invalid choice. Please enter 1-4.")
 
 
 def main():

@@ -100,7 +100,7 @@ for unit in _COMMON_UNITS:
 OPERATOR_CONVERSIONS: dict[str, list[str]] = {
     "+": ["plus", "positive"],
     "-": ["minus", "negative"],
-    "*": ["times", "multiplied by"],
+    "*": ["times", "multiplied by", "of"],  # "of" for "30% of 200"
     "/": ["divided by", "over", "per", "divide"],
     "**": ["^", "raised to", "raised to the power", "to the power of"],
     ".": ["point"],
@@ -264,7 +264,7 @@ STRIPPED_PHRASES: list[str] = [
     "what's",
     "what is",
     "a ",
-    "\\bof\\b",
+    r"\bof\b",
     "?",
     "calculate",
     "compute",
@@ -361,7 +361,8 @@ def _build_config() -> tuple[dict, dict]:
         "inline_negative": re.compile(r"^[a-zA-Z]+-[a-zA-Z]+$"),
         "parenthesis": re.compile(r"\(|\)"),
         "operators": re.compile(f"^({'|'.join([re.escape(s) for s in symbols])}){{1}}$"),
-        "stripped_chars": re.compile(f"({'|'.join([re.escape(p) for p in STRIPPED_PHRASES])})"),
+        # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
+        "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in STRIPPED_PHRASES])})"),
         "int": re.compile(r"^[-|+]?[0-9]\d*$"),
         "float": re.compile(r"^[-|+]?[0-9]\d*\.\d+?$"),
         "int_number_combine": re.compile(r"^[-|+|*]?[0-9]\d*$"),
@@ -731,6 +732,10 @@ def split_at_operators(
 
 def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str:
     """Normalize an expression by removing filler words and applying conversions."""
+    # Handle "N percent" -> "N/100" BEFORE word_to_all substitutions
+    # This must come first so we get "0.2 of 150" then word_to_all converts "of" to "*"
+    expression = re.sub(r"(\d+(?:\.\d+)?)\s+percent\b", lambda m: str(float(m.group(1)) / 100), expression, flags=re.IGNORECASE)
+
     # Use combined word replacement for efficiency (single pass)
     # Use word boundaries to avoid replacing parts of words
     word_to_all = operators.get("word_to_all", {})
