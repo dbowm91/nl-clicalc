@@ -13,6 +13,19 @@ class TestEvaluator:
         """Test basic arithmetic operations."""
         result = evaluate("5 + 3")
         assert result == 8 or (isinstance(result, UnitValue) and result.value == 8)
+
+    def _get_value(self, result):
+        """Extract numeric value from result."""
+        if isinstance(result, UnitValue):
+            return result.value
+        return result
+
+    def test_multi_digit_subtraction(self):
+        """Test subtraction with multi-digit numbers."""
+        assert abs(self._get_value(evaluate("90-1")) - 89) < 1e-10
+        assert abs(self._get_value(evaluate("100-10")) - 90) < 1e-10
+        assert abs(self._get_value(evaluate("50-5")) - 45) < 1e-10
+        assert abs(self._get_value(evaluate("1000-1")) - 999) < 1e-10
     
     def test_order_of_operations(self):
         """Test order of operations."""

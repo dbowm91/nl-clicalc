@@ -658,6 +658,11 @@ def _handle_negative_token(
     return tokens, [index - 1]
 
 
+def _should_split_number_minus(token: str) -> bool:
+    """Check if token matches pattern: digit-sequence minus digit-sequence."""
+    return bool(re.match(r"^\d+-\d+$", token))
+
+
 def _should_handle_inline_negative(
     tokens: list, index: int, patterns: Mapping[str, Pattern[str]]
 ) -> bool:
@@ -706,6 +711,12 @@ def split_at_operators(
             elif _should_handle_decimal_negative(tokens, i, patterns):
                 tokens, removed = _handle_negative_token(tokens, i, patterns)
                 indices_to_remove.extend(removed)
+            elif _should_split_number_minus(tokens[i]):
+                token = tokens[i]
+                parts = token.split("-", 1)
+                tokens[i] = parts[0]
+                tokens.insert(i + 1, "-")
+                tokens.insert(i + 2, parts[1])
             elif tokens[i][:1] != "-" and tokens[i - 1] != ".":
                 tokens[i] = tokens[i].replace("-", "")
             elif patterns["negative"].match(tokens[i][:1]):

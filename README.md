@@ -2,7 +2,7 @@
 
 CLI calculator accepting natural language and unit conversion. Standard library only.
 
-For install as a CLI tool, clone the repo, cd into it, and run the install.py script. It will combine everything into one file and add it to your $path. Then you can run it like `calc 2 meters plus 2ft`. It ignores spacing and relies on spliting the input by operator. 
+For install as a CLI tool, clone the repo, cd into it, and run `python install.py --install`. It will combine everything into one file and add it to your $path. Then you can run it like `calc 2 meters plus 2ft`. It ignores spacing and relies on spliting the input by operator. 
 
 Basic things work well, but some functionality is lightly tested. There might be edge cases with syntax parsing or conversion I haven't hit yet, though error handling is good. It can be chained into another script and used in webapps. It's passed all tests and it should be handling unexpected inputs well, but I have not tried this in a real environment. 
 

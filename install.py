@@ -8,7 +8,6 @@ Supports Linux, macOS, and Windows.
 
 import argparse
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -21,6 +20,16 @@ def get_install_path() -> str:
         return os.path.join(base, "Programs", "calc")
     else:
         return os.path.join(os.path.expanduser("~"), ".local", "bin")
+
+
+def get_calc_path(install_dir: str) -> str:
+    """Get the full path to the calc executable."""
+    return os.path.join(install_dir, "calc")
+
+
+def is_installed(install_dir: str) -> bool:
+    """Check if calc is currently installed."""
+    return os.path.exists(get_calc_path(install_dir))
 
 
 def build_single_file():
@@ -38,15 +47,15 @@ def create_executable(source_path: str, install_dir: str) -> str:
     """Copy the single-file executable to install directory."""
     os.makedirs(install_dir, exist_ok=True)
     dest_path = os.path.join(install_dir, "calc")
-    
+
     with open(source_path, "r") as f:
         content = f.read()
-    
+
     with open(dest_path, "w") as f:
         f.write(content)
-    
+
     os.chmod(dest_path, os.stat(dest_path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    
+
     return dest_path
 
 
@@ -55,109 +64,164 @@ def add_to_path(install_dir: str) -> bool:
     if sys.platform == "win32":
         current_path = os.environ.get("PATH", "")
         if install_dir not in current_path:
-            print(f"\nTo add to PATH on Windows, run:")
+            print("To add to PATH on Windows, run:")
             print(f'  setx PATH "%PATH%;{install_dir}"')
-            print(f"\nOr manually add this to your PATH:")
+            print("Or manually add this to your PATH:")
             print(f"  {install_dir}")
         return False
     else:
         shell_profile = os.path.expanduser("~/.bashrc")
         zshrc = os.path.expanduser("~/.zshrc")
-        
+
         target_file = zshrc if os.path.exists(zshrc) else shell_profile
-        
+
         if os.path.exists(target_file):
             with open(target_file, "r") as f:
                 content = f.read()
-            
+
             export_line = f'export PATH="{install_dir}:$PATH"'
-            
+
             if export_line in content:
-                print(f"\n{install_dir} is already in your PATH configuration.")
+                print(f"{install_dir} is already in your PATH configuration.")
                 return True
-            
+
             with open(target_file, "a") as f:
                 f.write(f"\n# Added by nl_calc install\n{export_line}\n")
-            
+
             current_path = os.environ.get("PATH", "")
             os.environ["PATH"] = f"{install_dir}{os.pathsep}{current_path}"
-            print(f"\nAdded {install_dir} to PATH in {target_file}")
+            print(f"Added {install_dir} to PATH in {target_file}")
             print("Note: You may need to restart your shell or run: source " + target_file)
             return True
         else:
-            print(f"\nNo shell config found. Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):")
+            print("No shell config found. Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):")
             print(f'  export PATH="{install_dir}:$PATH"')
             return False
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Install calc command-line tool")
-    parser.add_argument("--path", "-p", help="Custom installation directory")
-    parser.add_argument("--uninstall", "-u", action="store_true", help="Uninstall calc")
-    parser.add_argument("--no-path", action="store_true", help="Don't modify PATH")
-    parser.add_argument("expression", nargs="*", help="Expression to evaluate after install")
-    args = parser.parse_args()
-    
-    install_dir = args.path or get_install_path()
-    
-    if args.uninstall:
-        if os.path.exists(install_dir):
-            shutil.rmtree(install_dir)
-            print(f"Removed {install_dir}")
-        else:
-            print(f"calc is not installed at {install_dir}")
-        return
-    
+def install_calc(install_dir: str, no_path: bool = False) -> bool:
+    """Install calc to the specified directory. Returns True if successful."""
+    if is_installed(install_dir):
+        print("calc is already installed.")
+        print("Use --update to replace the existing installation.")
+        return False
+
     print("Building single-file nl_calc...")
     single_file = build_single_file()
-    
+
     calc_path = create_executable(single_file, install_dir)
     print(f"Installed calc to: {calc_path}")
-    
-    already_in_path = install_dir in os.environ.get("PATH", "").split(os.pathsep)
-    
-    if already_in_path:
-        print("\ncalc is already in your PATH!")
-    elif args.no_path:
-        add_to_path(install_dir)
-    else:
-        added = add_to_path(install_dir)
-        
-        if args.expression:
-            expr = " ".join(args.expression)
-            shell = os.path.expanduser("~/.zshrc") if os.path.exists(os.path.expanduser("~/.zshrc")) else os.path.expanduser("~/.bashrc")
-            new_path = f"{install_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-            print(f"\nRunning: calc {expr}")
-            result = subprocess.run(
-                ["bash", "-c", f"source {shell} && calc {expr}"],
-                env={**os.environ, "PATH": new_path}
-            )
-            sys.exit(result.returncode)
-        
-        if added:
-            print(f"\nSpawning interactive shell with calc available...")
-            print(f"Run 'calc <expression>' to use it. Type 'exit' to quit.\n")
-            new_path = f"{install_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-            subprocess.run(
-                ["bash", "-i"],
-                env={**os.environ, "PATH": new_path}
-            )
-            return
-        
-        print(f"\nTo use calc, either:")
-        print(f'  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)')
-        print(f"  2. Run with full path: {install_dir}/calc")
-        print(f"\nExample:")
-        print(f'  {install_dir}/calc "five plus two"')
-        
-        if added:
-            print(f"\ncalc is ready to use!")
 
-    if args.expression:
-        expr = " ".join(args.expression)
-        print(f"\nRunning: calc {expr}")
-        result = subprocess.run([calc_path, expr])
-        sys.exit(result.returncode)
+    if no_path:
+        return True
+
+    added = add_to_path(install_dir)
+    if added:
+        print("calc is ready to use!")
+
+    return True
+
+
+def update_calc(install_dir: str) -> bool:
+    """Update an existing calc installation. Returns True if successful."""
+    if not is_installed(install_dir):
+        print("calc is not installed.")
+        print("Use --install to install it first.")
+        return False
+
+    print("Building new single-file nl_calc...")
+    single_file = build_single_file()
+
+    calc_path = get_calc_path(install_dir)
+
+    with open(single_file, "r") as f:
+        new_content = f.read()
+
+    with open(calc_path, "w") as f:
+        f.write(new_content)
+
+    os.chmod(calc_path, os.stat(calc_path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    print(f"Updated calc at: {calc_path}")
+    return True
+
+
+def uninstall_calc(install_dir: str) -> bool:
+    """Remove calc from the specified directory. Returns True if successful."""
+    calc_path = get_calc_path(install_dir)
+
+    if not os.path.exists(calc_path):
+        print("calc is not installed.")
+        return False
+
+    os.remove(calc_path)
+    print(f"Removed calc from: {calc_path}")
+
+    if os.path.exists(install_dir) and not os.listdir(install_dir):
+        os.rmdir(install_dir)
+        print(f"Removed empty directory: {install_dir}")
+
+    return True
+
+
+def show_menu(install_dir: str):
+    """Display interactive menu and handle user choice."""
+    menu_lines = [
+        "nl-calc Installer",
+        f"Status: {'Installed' if is_installed(install_dir) else 'Not installed'}",
+        "",
+        "1. Install calc",
+        "2. Update calc",
+        "3. Uninstall calc",
+        "4. Exit",
+        "",
+    ]
+
+    while True:
+        for line in menu_lines:
+            print(line)
+        choice = input("Select an option [1-4]: ").strip()
+
+        if len(choice) == 0:
+            break
+        if choice == "1":
+            install_calc(install_dir)
+        elif choice == "2":
+            update_calc(install_dir)
+        elif choice == "3":
+            uninstall_calc(install_dir)
+        elif choice == "4":
+            break
+        else:
+            print("Invalid choice. Please enter 1-4.")
+            continue
+
+        if choice in ("1", "2", "3"):
+            if choice != "4":
+                input("\nPress Enter to continue...")
+            if choice == "4":
+                break
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Install calc command-line tool")
+    parser.add_argument("--install", action="store_true", help="Install calc to PATH")
+    parser.add_argument("--update", action="store_true", help="Update existing calc installation")
+    parser.add_argument("--uninstall", action="store_true", help="Remove calc from PATH")
+    parser.add_argument("--path", "-p", help="Custom installation directory")
+    parser.add_argument("--no-path", action="store_true", help="Don't modify PATH")
+    args = parser.parse_args()
+
+    install_dir = args.path or get_install_path()
+
+    if args.install:
+        install_calc(install_dir, args.no_path)
+    elif args.update:
+        update_calc(install_dir)
+    elif args.uninstall:
+        uninstall_calc(install_dir)
+    else:
+        show_menu(install_dir)
 
 
 if __name__ == "__main__":

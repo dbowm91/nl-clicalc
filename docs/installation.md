@@ -30,6 +30,43 @@ pip install -e ".[dev]"
 pre-commit install
 ```
 
+## CLI Installation (Linux/macOS/Windows)
+
+For portable CLI installation using the install script:
+
+```bash
+git clone https://github.com/dbowman91/nl-clicalc.git
+cd nl-clicalc
+python install.py --install
+```
+
+### CLI Options
+
+| Option | Description |
+|--------|-------------|
+| `--install` | Install calc to PATH |
+| `--update` | Update existing calc installation |
+| `--uninstall` | Remove calc from PATH |
+| `--path`, `-p` | Custom installation directory |
+| `--no-path` | Don't modify PATH |
+
+### Interactive Mode
+
+Run `python install.py` without arguments for an interactive menu:
+
+```bash
+python install.py
+# nl-calc Installer
+# Status: Not installed
+#
+# 1. Install calc
+# 2. Update calc
+# 3. Uninstall calc
+# 4. Exit
+#
+# Select an option [1-4]:
+```
+
 ## Verify Installation
 
 ```bash
