@@ -288,6 +288,25 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
         "# synthesis imports handled inline"
     )
 
+    # Rename aliased primitives imports in synthesis to their actual names
+    # (since they're now in the same file and not imported)
+    code = code.replace("_measure_basic(", "measure_basic(")
+    code = code.replace("_char_category_metrics(", "char_category_metrics(")
+    code = code.replace("_line_metrics(", "line_metrics(")
+    code = code.replace("_word_metrics(", "word_metrics(")
+    code = code.replace("_find_invisibles(", "find_invisibles(")
+    code = code.replace("_casefold_text(", "casefold_text(")
+    code = code.replace("_normalize_unicode(", "normalize_unicode(")
+    code = code.replace("_normalized_equal(", "normalized_equal(")
+    code = code.replace("_raw_equal(", "raw_equal(")
+    code = code.replace("_visible_repr(", "visible_repr(")
+    code = code.replace("_detect_confusables(", "detect_confusables(")
+    code = code.replace("_detect_mixed_scripts(", "detect_mixed_scripts(")
+    code = code.replace("_common_prefix_suffix(", "common_prefix_suffix(")
+    code = code.replace("_diff_spans(", "diff_spans(")
+    code = code.replace("_first_diff(", "first_diff(")
+    code = code.replace("_levenshtein_distance(", "levenshtein_distance(")
+
     return code, imports
 
 
@@ -360,13 +379,17 @@ def _main():
     parser = argparse.ArgumentParser(description="nl_calc - Natural language calculator + MCP server")
     parser.add_argument("--mcp", action="store_true", help="Run as MCP server")
     parser.add_argument("expression", nargs="*", help="Math expression to evaluate")
-    parser.add_argument("-e", "--expression", dest="single_expr", help="Single expression (for piping)")
+    parser.add_argument("-e", "--expression", dest="single_expr", metavar="<expr>", help="Evaluate a single expression (useful for piping)")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress expression in output")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--usage", action="store_true", help="Show full usage information and examples")
     args = parser.parse_args()
 
     if args.mcp:
         return mcp_main()
+    elif args.usage:
+        print_help()
+        return 0
     elif args.expression or args.single_expr:
         sys.argv = ["nl_calc"]
         if args.single_expr:

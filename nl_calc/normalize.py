@@ -21,7 +21,8 @@ from functools import lru_cache
 from typing import Any, Mapping, Pattern
 
 from .evaluator import EvaluationError, evaluate
-from .units import UnitValue, UNIT_ALIASES, is_unit
+from .units import UnitValue, UNIT_ALIASES, is_unit, UNIT_CATEGORIES
+from .exact import inspect_text, count_chars, regex_test
 
 __all__ = [
     "evaluate",
@@ -1030,44 +1031,185 @@ def _run_repl(show_expression: bool = True) -> int:
     return 0
 
 
+def _get_units_by_category() -> dict[str, list[str]]:
+    """Get units organized by category from UNIT_CATEGORIES."""
+    categories: dict[str, set[str]] = {}
+    for unit, category in UNIT_CATEGORIES.items():
+        if category not in categories:
+            categories[category] = set()
+        categories[category].add(unit)
+    # Sort units within each category
+    result = {}
+    for cat in sorted(categories.keys()):
+        result[cat] = sorted(categories[cat])
+    return result
+
+
 def print_help() -> None:
-    """Print available operators and functions."""
-    lines = [
-        "Available operators:",
-        "  Arithmetic: +, -, *, /, **",
-        "  Words: plus, minus, times, divided by, over, raised to, to the power of",
-        "  Negative: negative, minus",
-        "",
-        "Available functions:",
-        "  sin, cos, tan, asin, acos, atan, atan2",
-        "  sinh, cosh, tanh, asinh, acosh, atanh",
-        "  sqrt, log, log10, log2, log1p",
-        "  abs, floor, ceil, trunc, factorial, gcd, pow",
-        "",
-        "Available constants:",
-        "  pi, e, tau, inf, nan",
-        "  avogadro, gas constant, planck, boltzmann",
-        "  c (speed of light), elementary charge, faraday, amu",
-        "",
-        "Available units:",
-        "  Length: m, km, cm, mm, um, nm, pm, in, ft, yd, mi, ly, au, pc",
-        "  Time: s, ms, us, ns, ps, min, h, d, wk, yr",
-        "  Data: B, KB, MB, GB, TB, PB",
-        "  Mass: kg, g, mg, ug, ng, lb, oz, ton",
-        "  Volume: L, mL, gal, qt, pt, cup",
-        "  Pressure: Pa, kPa, MPa, GPa, bar, atm, psi",
-        "  Energy: J, kJ, MJ, GJ, cal, kcal, Wh, kWh, BTU, eV",
-        "  Power: W, kW, MW, GW, mW, hp",
-        "",
-        "Examples:",
-        "  calc five plus two",
-        '  calc "twenty plus five"',
-        '  calc "sin of 3.14159"',
-        "  calc 30m + 100ft",
-        "  calc (30m+100ft)/2",
-    ]
+    """Print available operators, functions, and units."""
+    # Get units by category programmatically
+    units_by_cat = _get_units_by_category()
+
+    lines: list[str] = []
+
+    lines.append("Usage:")
+    lines.append("  calc <expression>          Evaluate math expression")
+    lines.append("  calc inspect <text>       Check for hidden characters/confusables")
+    lines.append("  calc count <text>         Count characters (or count <text> <char>)")
+    lines.append("  calc regex <pat> <text>  Test regex pattern against text")
+    lines.append("")
+    lines.append("Operators:")
+    lines.append("  Arithmetic: +  -  *  /  **")
+    lines.append("  Words: plus, minus, times, divided by, over, raised to")
+    lines.append("")
+    lines.append("Functions:")
+    lines.append("  Trigonometry: sin, cos, tan, asin, acos, atan, atan2")
+    lines.append("  Hyperbolic: sinh, cosh, tanh, asinh, acosh, atanh")
+    lines.append("  Logarithmic: log, log10, log2, log1p, exp, expm1")
+    lines.append("  Rounding: abs, floor, ceil, trunc, round, sign")
+    lines.append("  Other: sqrt, pow, factorial, gcd, lcm, mean, median")
+    lines.append("")
+    lines.append("Constants:")
+    lines.append("  pi, e, tau, inf, nan")
+    lines.append("  avogadro, gasconstant, planck, boltzmann")
+    lines.append("  c (speed of light), elementarycharge, faraday, amu")
+    lines.append("")
+    lines.append("Units:")
+
+    # Build unit lines by category
+    for category, units in units_by_cat.items():
+        # Truncate long lists with "..."
+        if len(units) > 15:
+            display_units = units[:12] + ["..."]
+        else:
+            display_units = units
+        lines.append(f"  {category.capitalize()}: {', '.join(display_units)}")
+
+    lines.append("")
+    lines.append("Unit conversion examples:")
+    lines.append("  calc 30m + 100ft")
+    lines.append("  calc 1km in miles")
+    lines.append("  calc 100F to C")
+    lines.append("  calc 1kg in lb")
+    lines.append("")
+    lines.append("Text tools examples:")
+    lines.append("  calc inspect \"hello\"")
+    lines.append("  calc inspect \"p\u0430ypal\"  ( Cyrillic 'a' instead of Latin)")
+    lines.append("  calc count \"hello world\"")
+    lines.append("  calc count \"hello\" l")
+    lines.append("  calc regex \"^\\d+$\" \"12345\"")
+
     for line in lines:
         print(line)
+
+
+def _cli_text_command(expression: str) -> int:
+    """Handle text commands (inspect, count, regex) before math evaluation.
+
+    Returns:
+        0 if command was handled, 1 if expression should continue to math eval
+    """
+    parts = expression.strip().split()
+    if not parts:
+        return 1
+
+    cmd = parts[0].lower()
+
+    if cmd == "inspect":
+        if len(parts) < 2:
+            print("Usage: calc inspect <text>", file=sys.stderr)
+            return 1
+        text = " ".join(parts[1:])
+        try:
+            result = inspect_text(text, include_codepoints=False, include_confusables=True)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if result["warnings"]:
+            for w in result["warnings"]:
+                kind = w["kind"].upper()
+                print(f"\u2717 {kind}: {w['message']}")
+        else:
+            print("\u2713 No hidden characters")
+
+        if result["confusables"]:
+            print(f"\nConfusables found: {len(result['confusables'])}")
+            for c in result["confusables"][:5]:
+                print(f"  '{c['char']}' (looks like '{c['confusable_with']}') at {c['index']}")
+        return 0
+
+    if cmd == "count":
+        if len(parts) < 2:
+            print("Usage: calc count <text> [char]", file=sys.stderr)
+            return 1
+        text = " ".join(parts[1:])
+
+        # Check if last part is a single char to count
+        if len(parts) >= 3 and len(parts[-1]) == 1:
+            char = parts[-1]
+            text = " ".join(parts[1:-1])
+            try:
+                result = count_chars(text, target=char)
+            except ValueError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 1
+            print(f"'{char}' appears {result['count']} time(s) in \"{text}\"")
+            return 0
+
+        # Default: show frequency table for multi-word, simple count for single
+        try:
+            if " " in text:
+                result = count_chars(text)
+                if isinstance(result, dict):
+                    print(f"\"{text}\":")
+                    print(f"  {len(text)} characters")
+                    sorted_chars = sorted(result.items(), key=lambda x: (-x[1], x[0]))
+                    for char, count in sorted_chars[:10]:
+                        display = repr(char) if char != " " else "(space)"
+                        print(f"  {display}: {count}")
+                    if len(result) > 10:
+                        print(f"  ... and {len(result) - 10} more unique chars")
+                return 0
+            else:
+                result = count_chars(text)
+                print(f"\"{text}\": {len(text)} character(s)")
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        return 0
+
+    if cmd == "regex":
+        if len(parts) < 3:
+            print("Usage: calc regex <pattern> <text>", file=sys.stderr)
+            return 1
+        pattern = parts[1]
+        text = " ".join(parts[2:])
+        try:
+            result = regex_test(pattern, [text])
+        except Exception as e:
+            print(f"Error: Invalid regex pattern: {e}", file=sys.stderr)
+            return 1
+
+        if not result["valid_pattern"]:
+            print(f"\u2717 Invalid regex pattern: {pattern}", file=sys.stderr)
+            return 1
+
+        if result["results"]:
+            r = result["results"][0]
+            if r["matches"]:
+                print(f"\u2713 Match: '{r['sample']}'")
+                if r["groups"]:
+                    print(f"  Groups: {r['groups']}")
+                if r["groupdict"]:
+                    print(f"  Named groups: {r['groupdict']}")
+            else:
+                print(f"\u2717 No match")
+        else:
+            print(f"\u2717 No match")
+        return 0
+
+    return 1  # Not a text command, continue to math eval
 
 
 def main() -> int:
@@ -1085,6 +1227,9 @@ def main() -> int:
     parser.add_argument(
         "-h", "--help", action="store_true", help="Show help and available operators"
     )
+    parser.add_argument(
+        "--usage", action="store_true", help="Show full usage information and examples"
+    )
     parser.add_argument("-v", "--version", action="store_true", help="Show version information")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress expression in output")
     parser.add_argument("--json", action="store_true", help="Output result as JSON")
@@ -1092,6 +1237,7 @@ def main() -> int:
         "-e",
         "--expression",
         dest="single_expr",
+        metavar="<expr>",
         help="Evaluate a single expression (useful for piping)",
     )
     parser.add_argument(
@@ -1110,8 +1256,12 @@ def main() -> int:
         print(f"nl-calc {__version__}")
         return 0
 
-    if args.help or (not args.expression and not args.single_expr and not args.interactive):
+    if args.usage:
         print_help()
+        return 0
+
+    if args.help or (not args.expression and not args.single_expr and not args.interactive):
+        parser.print_help()
         return 0
 
     if args.interactive:
@@ -1145,6 +1295,11 @@ def main() -> int:
             print("Or use -e flag:", file=sys.stderr)
             print(f'  calc -e "{" ".join(args.expression)}"', file=sys.stderr)
             return 1
+
+    # Try text commands first (inspect, count, regex)
+    cmd_result = _cli_text_command(expression)
+    if cmd_result == 0:
+        return 0  # Command was handled
 
     output_format = "json" if args.json else "plain"
     if args.quiet:
