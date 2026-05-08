@@ -38,10 +38,28 @@ TOOL_HANDLERS: dict[str, Any] = {
 }
 
 
+def _invalid_request(request_id: Any, message: str) -> dict:
+    """Build JSON-RPC invalid request/params error."""
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {
+            "code": -32600,
+            "message": message,
+        },
+    }
+
+
 def _handle_call_tool(request: dict) -> dict:
     """Handle a tools/call MCP request."""
-    name = request.get("params", {}).get("name", "")
-    arguments = request.get("params", {}).get("arguments", {})
+    params = request.get("params", {})
+    if not isinstance(params, dict):
+        return _invalid_request(request.get("id"), "Invalid params: expected object")
+
+    name = params.get("name", "")
+    arguments = params.get("arguments", {})
+    if not isinstance(arguments, dict):
+        return _invalid_request(request.get("id"), "Invalid arguments: expected object")
 
     if name not in TOOL_HANDLERS:
         return {
@@ -318,8 +336,11 @@ def _handle_list_tools(request: dict) -> dict:
     }
 
 
-def handle_request(request: dict) -> dict:
+def handle_request(request: Any) -> dict | None:
     """Route MCP request to appropriate handler."""
+    if not isinstance(request, dict):
+        return _invalid_request(None, "Invalid Request: expected JSON object")
+
     method = request.get("method", "")
 
     if method == "tools/list":
@@ -377,7 +398,17 @@ def main() -> int:
             print(json.dumps(response), flush=True)
             continue
 
-        response = handle_request(request)
+        try:
+            response = handle_request(request)
+        except Exception as e:
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id") if isinstance(request, dict) else None,
+                "error": {
+                    "code": -32603,
+                    "message": f"Internal error: {str(e)}",
+                },
+            }
 
         if response is not None:
             print(json.dumps(response), flush=True)
