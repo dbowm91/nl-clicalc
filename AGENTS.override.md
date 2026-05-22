@@ -53,4 +53,23 @@ The following were fixed as part of the plan implementation:
 - diff_spans algorithm architecture doc updated (uses SequenceMatcher, not Levenshtein backtrack)
 - TypedDict __slots__ added to validate.py and measure.py classes
 
+### Architecture Review Implementation (2026-05-22)
+
+The following issues were identified and fixed from architecture review:
+
+**Wave 1 (Critical Bugs) - All Fixed:**
+- `__rsub__` operand reversal bug in units.py - now properly delegates to `other.__sub__(self)`
+- Missing exports in `nl_calc/exact/__init__.py` - added unicode_scripts, confusables_count, longest_common_subsequence
+- Invalid `__slots__` on TypedDict classes in measure.py - removed (TypedDict doesn't support __slots__)
+- Invalid emoji range in primitives.py - fixed 0x1FFFF to 0x10FFFF
+- REPL history stores None on eval failure - now checks `result is not None`
+- Missing `mcp_main` alias in server.py - added at end of file
+
+**Wave 2 (Medium Priority) - All Fixed:**
+- Missing `accent_or_diacritic_difference` case in `_generate_agent_instruction` - added proper instruction message
+- Unused `signal` import in validate.py - removed
+
+**Wave 3 (Low Priority) - Fixed where applicable:**
+- Export memory/variable functions in evaluator.py `__all__` - added memory_store, memory_recall, memory_add, memory_subtract, memory_clear, memory_list, setvar, getvar, delvar, listvars, clearvars
+
 (End of file - 73 lines)
