@@ -1,120 +1,232 @@
-# normalize.py - Natural Language Processing Pipeline
+# normalize.py — Natural Language Processing Module
 
-## Purpose
+Converts mathematical expressions written in natural language into executable mathematical expressions.
 
-Converts mathematical expressions written in natural language (e.g., "sixteen plus five hundred twenty two") into executable mathematical expressions.
+## Overview
 
-## Key Responsibilities
+The `normalize` module is the **entry point** for natural language input. It handles:
+- Number word conversion (`"five"` → `5`)
+- Operator word conversion (`"plus"` → `+`)
+- Function name normalization (`"square root"` → `sqrt`)
+- Physical constant words (`"avogadro"` → `6.022e23`)
+- Unit suffix parsing (`"30m"` → number `30` with unit `m`)
+- Filler phrase stripping (`"what's"`, `"calculate"`, etc.)
 
-1. **Word-to-Number Conversion**: Translates number words ("twenty", "five", "hundred") to digits
-2. **Operator Mapping**: Converts operator words ("plus", "minus", "times") to symbols
-3. **Tokenization**: Splits expressions at operator boundaries
-4. **Unit Preprocessing**: Inserts multiplication operators before units (e.g., `30m` → `30*m`)
-5. **Unit Conversion Detection**: Identifies and handles unit conversion expressions
+## Key Exports
 
-## Main Functions
-
-### `normalize(expression, operators, patterns)`
-
-Applies all normalization transformations to an expression string:
-- Word replacement using combined dictionaries
-- Percentage conversion
-- Complex number suffix handling (`3i` → `3j`)
-- Whitespace handling (removes outside parentheses, preserves inside)
-
-### `normalize_expression(expression, operators, patterns, skip_validation=False)`
-
-Full normalization pipeline without evaluation:
-1. `normalize()` - Apply word replacements
-2. `split_at_operators()` - Tokenize at operators
-3. `convert_from_human_handler()` - Convert number words
-4. `apply_math_functions()` - Handle function syntax
-5. `_handle_unit_conversion_from_tokens()` - Detect unit conversions
-6. `_preprocess_units()` - Add multiplication before units
-
-The `skip_validation` parameter (default False) skips token validation, allowing use with custom evaluators.
+```python
+from nl_calc.normalize import (
+    run,           # Full pipeline: normalize + evaluate
+    normalize,     # Tokenize and normalize text
+    normalize_expression,  # Convert NL to Python syntax
+    main,          # CLI entry point
+    print_help,    # Show help text
+    NORMALIZE,     # Compiled normalization config
+    PATTERNS,      # Compiled regex patterns
+    MAX_INPUT_LENGTH,
+    MAX_NESTING_DEPTH,
+)
+```
 
 ## Data Structures
 
+### `OPERATOR_CONVERSIONS`
+Maps operator symbols to word variants:
 ```python
-OPERATOR_CONVERSIONS = {
+{
     "+": ["plus", "positive"],
     "-": ["minus", "negative"],
-    "*": ["times", "multiplied by", "of"],
-    "/": ["divided by", "over", "per"],
+    "*": ["times", "multiplied by", "of"],  # "of" for "30% of 200"
+    "/": ["divided by", "over", "per", "divide"],
     "**": ["^", "raised to", "to the power of"],
+    "IN": ["in", "into"],  # Unit conversion
+    "TO": ["to", "as"],
     ...
 }
+```
 
-NUMBER_WORDS = {
+### `FUNCTION_MAPPINGS`
+Maps function name variants to canonical names:
+```python
+{
+    "square root": "sqrt",
+    "sine": "sin",
+    "cosine": "cos",
+    "absolute": "abs",
+    "log": "log",
+    "ln": "log",
+    "mean": "mean",
+    "average": "mean",
+    ...
+}
+```
+
+### `NUMBER_WORDS`
+Maps number values to word forms:
+```python
+{
     "0": ["zero"],
     "1": ["one"],
     ...
+    "10": ["teen", "ten"],
     "100": ["hundred"],
     "1000": ["thousand"],
+    "1000000": ["million"],
+    "0.5": ["half"],
+    "0.25": ["quarter"],
     ...
 }
+```
 
-FUNCTION_MAPPINGS = {
-    "square root": "sqrt",
-    "cube root": "cbrt",
+### `CONSTANT_WORDS`
+Maps physical constant names to symbols:
+```python
+{
+    "na": ["avogadro", "avogadro number"],
+    "r": ["gas constant", "ideal gas constant"],
+    "h": ["planck", "planck constant"],
+    "c": ["speed of light"],
+    "elementarycharge": ["elementary charge"],
     ...
 }
+```
 
-CONSTANT_WORDS = {
-    "avogadro": ["avogadro", "avogadro's number"],
-    "planck": ["planck", "planck's constant"],
-    ...
-}
-
-STRIPPED_PHRASES = [
-    "what is",
-    "calculate",
+### `STRIPPED_PHRASES`
+Filler words removed during normalization:
+```python
+[
     "what's",
+    "what is",
+    "a ",
+    r"\bof\b",
+    "?",
+    "calculate",
+    "compute",
+    "convert",
     ...
 ]
 ```
 
-### `check_if_number(token)`
+## Core Functions
 
-Checks if a token represents a number (int, float, hex, binary, octal, complex, unit-suffixed).
+### `normalize(text: str, NORMALIZE: dict, PATTERNS: dict) -> list[str]`
+Tokenizes and normalizes input text.
 
-## Data Structures
+**Process:**
+1. Strip filler phrases
+2. Tokenize
+3. Convert number words to digits
+4. Convert operator words to symbols
+5. Convert function names to canonical forms
+6. Parse unit suffixes
+
+### `normalize_expression(text: str, NORMALIZE: dict, PATTERNS: dict) -> tuple[str, int]`
+Converts natural language to Python syntax string.
+
+**Returns:** `(normalized_string, exit_code)`
+
+### `run(text: str, NORMALIZE: dict, PATTERNS: dict) -> Any`
+Full pipeline: normalize input, then evaluate.
 
 ```python
-OPERATOR_CONVERSIONS = {
-    "+": ["plus", "positive"],
-    "-": ["minus", "negative"],
-    "*": ["times", "multiplied by", "of"],
-    "/": ["divided by", "over", "per"],
-    "**": ["^", "raised to", "to the power of"],
-    ...
-}
+result = run("five plus three", NORMALIZE, PATTERNS)  # → 8
+result = run("30m + 100ft", NORMALIZE, PATTERNS)     # → UnitValue(60.48, "m")
+```
 
-NUMBER_WORDS = {
-    "0": ["zero"],
-    "1": ["one"],
-    ...
-    "100": ["hundred"],
-    "1000": ["thousand"],
-    ...
+### `check_if_number(token: str) -> dict`
+Checks if a token represents a number.
+
+**Returns:**
+```python
+{
+    "bool": True/False,
+    "converted": parsed_number_or_original,
+    "type": type(token)
 }
 ```
 
-## Performance Optimizations
+Handles:
+- Integers (`"42"`)
+- Floats (`"3.14"`)
+- Percentages (`"50%"`)
+- Complex numbers (`"3i"`, `"-2j"`)
+- Hex/binary/octal (`0xFF`, `0b101`, `0o77`)
+- Numbers with units (`"30m"`, `"100ft"`)
 
-- Pre-sorted unit list `_UNITS_BY_LENGTH` for longest-match unit detection
-- Unit prefix set `_UNIT_PREFIXES` for O(1) quick rejection
-- LRU cache on `check_if_number()` (1024 entries)
-- Combined regex patterns for single-pass word replacement
+## Processing Pipeline
+
+```
+Input: "what's five plus three hundred twenty two?"
+    ↓
+1. Strip phrases: "five plus three hundred twenty two"
+    ↓
+2. Tokenize: ["five", "plus", "three", "hundred", "twenty", "two"]
+    ↓
+3. Convert number words: [5, +, 3, 100, 20, 2]
+    ↓
+4. Combine numbers: [5, +, 322]
+    ↓
+5. Build expression: "5+322"
+    ↓
+Output: 327
+```
+
+## Regex Patterns (PATTERNS)
+
+| Pattern | Purpose |
+|---------|---------|
+| `space` | Multiple whitespace |
+| `point` | Decimal point |
+| `negative` | Negative sign |
+| `thousands_separator` | comma (1,000,000) |
+| `inline_negative` | hyphenated words (e-grave) |
+| `parenthesis` | ( ) |
+| `operators` | Valid operator symbols |
+| `stripped_chars` | Phrases to remove |
+| `int` | Integer pattern |
+| `float` | Float pattern |
+| `int_number_combine` | Number combining |
+| `valid_operations` | Valid operation/constant names |
+
+## Configuration Building
+
+### `_build_config() -> tuple[dict, dict]`
+Builds the NORMALIZE and PATTERNS structures at module load time.
+
+**Sort order:** Words are sorted by length descending for correct matching (e.g., "hundred" before "one").
 
 ## Constants
 
-- `MAX_INPUT_LENGTH = 10000` - Maximum input character length
-- `MAX_NESTING_DEPTH = 100` - Maximum parentheses nesting depth
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MAX_INPUT_LENGTH` | 10000 | Maximum input string length |
+| `MAX_NESTING_DEPTH` | 100 | Maximum expression nesting |
+| `_UNITS_BY_LENGTH` | list | Units sorted by length for parsing |
+| `_COMMON_UNITS` | list | Frequently used units for fast lookup |
+| `_UNIT_PREFIXES` | set | O(1) lookup for unit starts |
 
-## Dependencies
+## Unit Handling
 
-- Imports from `evaluator.py`: `EvaluationError`, `evaluate`
-- Imports from `units.py`: `UnitValue`, `UNIT_ALIASES`, `is_unit`, `UNIT_CATEGORIES`
-- Imports from `exact`: `inspect_text`, `count_chars`, `regex_test`
+Units are parsed as part of the normalization process:
+
+1. Common units are pre-computed for fast prefix matching
+2. When a number token ends with a unit, it's tagged
+3. The evaluator handles unit arithmetic and conversion
+
+See [units.md](units.md) for unit conversion details.
+
+## Security Notes
+
+- No `eval()` usage — uses AST parsing in evaluator
+- Input length limits enforced
+- Nesting depth limits enforced
+- Invalid tokens raise `ValueError`
+
+## Module Dependencies
+
+```
+normalize.py
+    ├── evaluator (EvaluationError, evaluate)
+    ├── units (UnitValue, UNIT_ALIASES, is_unit, UNIT_CATEGORIES)
+    └── exact (inspect_text, count_chars, regex_test)
+```

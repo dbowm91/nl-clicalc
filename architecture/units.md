@@ -1,119 +1,243 @@
-# units.py - Unit Definitions and Conversions
+# units.py — Unit Definitions and Conversions
 
-## Purpose
+Provides comprehensive unit conversion support for the calculator.
 
-Comprehensive unit conversion support including length, time, mass, volume, pressure, energy, power, and more.
+## Overview
 
-## Key Types
+The `units` module handles:
+- Unit value representation with automatic arithmetic
+- Conversion between units of the same category
+- Temperature conversions (with offset handling)
+- Unit aliasing and normalization
 
-### `UnitValue`
-
-Represents a numeric value with optional units.
+## Key Exports
 
 ```python
-uv = UnitValue(60.48, "m")
-uv.value  # 60.48
-uv.unit  # "m"
+from nl_calc.units import (
+    UnitValue,              # Value with optional unit
+    normalize_unit,         # Normalize unit string
+    get_conversion_factor,  # Get conversion factor between units
+    get_all_units,          # List all known units
+    is_unit,                # Check if string is a valid unit
+    are_units_compatible,   # Check if units can be converted
+    convert_temperature,    # Temperature conversion
+    FLOAT_EPSILON,          # 1e-10 for float comparison
+)
 ```
 
-Supports arithmetic operations with automatic unit conversion on add/subtract.
+## UnitValue Class
+
+Represents a numeric value with optional units:
+
+```python
+uv = UnitValue(30, "m")  # 30 meters
+
+# Arithmetic with automatic unit conversion
+uv + UnitValue(100, "ft")  # → UnitValue(60.48, "m")
+
+# Unit conversion
+uv.convert_to("ft")  # → UnitValue(98.425, "ft")
+```
+
+### Constructor
+```python
+UnitValue(value: float, unit: str | None = None)
+```
+
+### Properties
+| Property | Type | Description |
+|----------|------|-------------|
+| `value` | float | Numeric value |
+| `unit` | str \| None | Unit string |
+
+### Methods
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `convert_to(target_unit)` | UnitValue | Convert to different unit |
+| `__repr__()` | str | Human-readable representation |
+
+### Arithmetic Operations
+
+| Operation | Result Unit | Notes |
+|-----------|-------------|-------|
+| `UnitValue + UnitValue` | Common unit | Converts if compatible |
+| `UnitValue - UnitValue` | Common unit | Converts if compatible |
+| `UnitValue * UnitValue` | Compound (e.g., `m*m`) | |
+| `UnitValue / UnitValue` | Compound (e.g., `m/s`) | |
+| `UnitValue ** n` | Same unit | Power of value, keeps unit |
+
+**Important:** Adding/subtracting incompatible units raises `ValueError`.
 
 ## Unit Categories
 
-| Category | Base Unit | Examples |
-|----------|-----------|----------|
-| length | m | m, km, cm, mm, in, ft, yd, mi, ly, au, pc |
-| time | s | s, ms, us, ns, min, h, d, wk, yr |
-| data | B | B, KB, MB, GB, TB, PB (binary prefixes) |
-| data_rate | bps | bps, Kbps, Mbps, Gbps (decimal prefixes) |
-| mass | kg | kg, g, mg, lb, oz, ton |
-| volume | L | L, mL, gal, qt, pt, cup, floz |
-| pressure | Pa | Pa, kPa, MPa, bar, atm, psi |
-| energy | J | J, kJ, cal, kcal, Wh, kWh, BTU, eV |
-| power | W | W, kW, MW, GW, mW, hp |
-| force | N | N, kN, dyne, lbf |
-| voltage | V | V, kV, mV, uV |
-| current | A | A, mA, uA |
-| angle | rad | rad, deg |
-| speed | m/s | m/s, km/h, mph, kn, mach |
-| area | m2 | m2, km2, ft2, acre, ha |
-| frequency | Hz | Hz, kHz, MHz, GHz, THz |
-| temperature | K (offset-based) | K, C, F, R |
+Units are organized by category (length, mass, time, etc.):
+
+| Category | Base Unit | Example Units |
+|----------|-----------|---------------|
+| Length | m | km, cm, mm, in, ft, yd, mi, ly |
+| Time | s | ms, us, ns, min, h, d, wk, yr |
+| Mass | kg | g, mg, lb, oz, t |
+| Data | B | KB, MB, GB, TB, PB |
+| Volume | L | mL, gal, qt, pt, cup |
+| Pressure | Pa | kPa, bar, psi, atm |
+| Energy | J | kJ, cal, kcal, Wh, kWh, BTU, eV |
+| Power | W | kW, MW, hp |
+| Speed | m/s | km/h, mph, knot |
+| Temperature | K | C, F |
+| Frequency | Hz | kHz, MHz, GHz |
+| Force | N | kN, mN |
+| Voltage | V | mV, kV |
+| Current | A | mA, kA |
+| Data Rate | bps | Kbps, Mbps, Gbps |
+
+## Unit Definition Structure (UNIT_BASE)
+
+```python
+UNIT_BASE: dict[str, dict[str, float]] = {
+    "m": {           # Base unit for length
+        "m": 1.0,     # meter
+        "km": 1000.0,
+        "cm": 0.01,
+        "mm": 0.001,
+        "ft": 0.3048,  # foot
+        "in": 0.0254,  # inch
+        ...
+    },
+    "s": {           # Base unit for time
+        "s": 1.0,
+        "min": 60.0,
+        "h": 3600.0,
+        ...
+    },
+    ...
+}
+```
+
+## Conversion Factor
+
+Conversion between units uses multiplicative factors:
+
+```python
+get_conversion_factor("km", "m")      # → 1000.0
+get_conversion_factor("ft", "m")      # → 0.3048
+get_conversion_factor("kg", "lb")     # → 0.453592
+```
+
+For temperature, special offset math is used (not multiplicative).
 
 ## Temperature Conversions
 
-Temperature uses special handling with offset calculations:
+Temperature uses offset-based conversion, not multiplicative factors:
 
 ```python
-TEMPERATURE_CONVERSIONS = {
-    ("C", "F"): (1.8, 32.0),   # Celsius to Fahrenheit
-    ("F", "C"): (1.0/1.8, -17.777778),
-    ("K", "C"): (1.0, -273.15),
+convert_temperature(0, "C", "F")  # → 32.0
+convert_temperature(100, "C", "F")  # → 212.0
+convert_temperature(0, "K", "C")  # → -273.15
+```
+
+### Temperature Scale Formulas
+
+| From/To | Celsius (C) | Fahrenheit (F) | Kelvin (K) |
+|---------|-------------|----------------|------------|
+| Celsius | — | C × 9/5 + 32 | C + 273.15 |
+| Fahrenheit | (F - 32) × 5/9 | — | (F - 32) × 5/9 + 273.15 |
+| Kelvin | K - 273.15 | K × 9/5 - 459.67 | — |
+
+**Warning:** Converting temperature to non-temperature units gives physically meaningless results.
+
+## Unit Aliases (UNIT_ALIASES)
+
+Maps unit variations to canonical forms:
+
+```python
+UNIT_ALIASES = {
+    "meters": "m",
+    "kilometers": "km",
+    "centimeters": "cm",
+    "millimeters": "mm",
+    "seconds": "s",
+    "minutes": "min",
+    "hours": "h",
+    "days": "d",
+    "grams": "g",
+    "kilograms": "kg",
     ...
 }
 ```
 
-Formula: `result = value * multiplier + offset`
+Used by `normalize_unit()` to standardize unit input.
 
-## Data Structure
+## Functions
 
-### `UNIT_BASE`
-
-Dictionary mapping base units to their variants and conversion factors:
-
+### `normalize_unit(unit: str) -> str`
+Normalizes a unit string to canonical form:
 ```python
-"m": {
-    "m": 1.0,
-    "km": 1000.0,
-    "cm": 0.01,
-    "ft": 0.3048,
-    ...
-}
+normalize_unit("meters")  # → "m"
+normalize_unit("kilometers")  # → "km"
 ```
 
-### `UNIT_ALIASES`
-
-Maps all unit variant names to canonical forms:
-
+### `is_unit(s: str) -> bool`
+Checks if a string is a valid unit:
 ```python
-"meters": "m",
-"kilometer": "km",
-"foot": "ft",
-...
+is_unit("m")     # → True
+is_unit("kg")    # → True
+is_unit("foo")   # → False
 ```
 
-### `UNIT_CONVERSIONS`
-
-Pre-computed pairwise conversion factors: `(from_unit, to_unit) → factor`
-
-Built by `_build_unit_conversions()` at module load time.
-
-## Key Functions
-
-| Function | Description |
-|----------|-------------|
-| `get_conversion_factor(from, to)` | Get conversion factor between units |
-| `convert_temperature(value, from, to)` | Convert temperature values |
-| `normalize_unit(unit)` | Get canonical unit name |
-| `is_unit(text)` | Check if text is a unit |
-| `get_unit_category(unit)` | Get category for unit |
-| `are_units_compatible(u1, u2)` | Check if units can be added |
-| `get_all_units()` | List all supported units |
-
-## Compatibility Checking
-
-`are_units_compatible()` enables adding/subtracting only units of the same category:
-
+### `get_conversion_factor(from_unit: str, to_unit: str) -> float`
+Returns the multiplicative factor to convert from one unit to another:
 ```python
-# These work
-UnitValue(1, "m") + UnitValue(1, "ft")  # Convert ft to m
-UnitValue(1, "kg") + UnitValue(1, "lb")  # Convert lb to kg
-
-# These raise ValueError
-UnitValue(1, "m") + UnitValue(1, "kg")  # Incompatible units
+get_conversion_factor("km", "m")   # → 1000.0
+get_conversion_factor("m", "km")   # → 0.001
 ```
+
+### `are_units_compatible(unit1: str, unit2: str) -> bool`
+Checks if two units can be converted (same category):
+```python
+are_units_compatible("m", "ft")     # → True (both length)
+are_units_compatible("m", "kg")     # → False (length vs mass)
+are_units_compatible("m", None)     # → True (dimensionless)
+```
+
+### `get_unit_category(unit: str) -> str | None`
+Returns the category of a unit:
+```python
+get_unit_category("m")    # → "length"
+get_unit_category("kg")   # → "mass"
+get_unit_category("K")    # → "temperature"
+get_unit_category("foo") # → None
+```
+
+### `get_all_units() -> list[str]`
+Returns all known unit names.
+
+## Prefixed Units
+
+The system handles SI prefixes:
+
+| Prefix | Symbol | Factor |
+|--------|--------|--------|
+| milli | m | 0.001 |
+| centi | c | 0.01 |
+| deci | d | 0.1 |
+| kilo | k | 1000 |
+| mega | M | 1000000 |
+| giga | G | 1000000000 |
+| tera | T | 1000000000000 |
+
+Examples: `kN` (kilonewton), `mV` (millivolt), `mA` (milliampere)
 
 ## Constants
 
-- `FLOAT_EPSILON = 1e-10` - For float equality comparison
-- `MAX_RESULT_VALUE = 1e308` - Maximum result value
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `FLOAT_EPSILON` | 1e-10 | For float comparison in equality |
+| `MAX_RESULT_VALUE` | 1e308 | Maximum value (matches evaluator) |
+
+## Module Dependencies
+
+```
+units.py (no dependencies on other nl_calc modules)
+```
+
+Independent module with no imports from other nl_calc modules.

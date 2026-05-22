@@ -1,101 +1,282 @@
-# evaluator.py - AST-Based Expression Evaluator
+# evaluator.py — AST-Based Expression Evaluation
 
-## Purpose
+Provides a **secure** way to evaluate mathematical expressions without using `eval()`. Uses Python's `ast` module to parse and evaluate expressions safely.
 
-Safe AST-based evaluation of mathematical expressions without using `eval()`. Supports arithmetic, trigonometric, logarithmic, constant, and unit operations.
+## Overview
 
-## Architecture
+The `evaluator` module is the **core computation engine**. It:
+- Parses Python AST (Abstract Syntax Tree) instead of using eval
+- Supports arithmetic, trigonometric, logarithmic functions
+- Handles complex numbers, memory operations, variables
+- Provides caching, async evaluation, and timeouts
 
-Uses Python's `ast` module to parse expressions into an Abstract Syntax Tree, then uses a custom `ast.NodeVisitor` subclass to evaluate only allowed operations.
+## Key Exports
 
-## Key Classes
+```python
+from nl_calc.evaluator import (
+    evaluate,           # Main evaluation function
+    evaluate_raw,       # Evaluate with NL normalization
+    evaluate_cached,    # LRU cached evaluation
+    evaluate_async,     # Async evaluation
+    evaluate_with_timeout,
+    EvaluationError,    # Exception class
+    TimeoutError,       # Timeout exception
+    PyCalcApp,          # Webapp class with caching
+    get_default_evaluator,
+    register_constant,  # Add user constants
+    register_function,  # Add user functions
+    load_user_config,   # Load nl_calc_config.py
+    # Memory functions
+    memory_store, memory_recall, memory_add, memory_subtract,
+    memory_clear, memory_list,
+    # Variable functions
+    setvar, getvar, delvar, listvars, clearvars,
+)
+```
 
-### `Evaluator`
+## Security Architecture
 
-AST visitor that evaluates mathematical expressions.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Security Model                          │
+├─────────────────────────────────────────────────────────────┤
+│  Input: "5 + 3 * 2"                                         │
+│      ↓                                                      │
+│  ast.parse() → AST tree (validates syntax)                  │
+│      ↓                                                      │
+│  Evaluator.visit() → traverses AST                          │
+│      ↓                                                      │
+│  Only whitelisted operations allowed                        │
+│      ↓                                                      │
+│  Output: 11                                                 │
+└─────────────────────────────────────────────────────────────┘
 
-**Constants Registry** (`CONSTANTS`):
-- Mathematical: `pi`, `e`, `tau`, `inf`, `nan`, `i`, `j`
-- Physical: `avogadro`, `gasconstant`, `planck`, `boltzmann`, `speedoflight`, `elementarycharge`, `faraday`, `amu`, `epsilon0`, `mu0`, `g`, `G`, `rydberg`, `stefan`, `hbar`
+NOT eval() — uses AST for safety
+```
 
-**Functions Registry** (`FUNCTIONS`):
-- Trigonometric: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
-- Hyperbolic: `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`
-- Logarithmic: `log`, `log10`, `log2`, `log1p`, `exp`, `expm1`
-- Power/Root: `sqrt`, `pow`, `cbrt`
-- Rounding: `abs`, `floor`, `ceil`, `trunc`
-- Statistical: `mean`, `median`, `mode`, `std`, `variance`, `var`, `variance_sample`, `sum`, `max`, `min`
-- Combinatorics: `factorial`, `gcd`, `lcm`, `perm`, `comb`, `nPr`, `nCr`
-- Complex: `real`, `imag`, `conj`, `conjugate`, `phase`, `polar`, `rect`
-- Base conversion: `bin`, `hex`, `oct`
-- Percentage: `percentof`, `percent_of`, `aspercent`, `as_percent`
-- Bitwise: `bitand`, `bitor`, `bitxor`, `bitnot`, `bitlshift`, `bitrshift`
-- Prime: `isprime`, `is_prime`, `primefactors`, `prime_factors`, `nextprime`, `next_prime`, `prevprime`, `prev_prime`
-- Random: `random`, `randint`, `randrange`, `uniform`, `randn`, `gauss`, `seed`
-- Utility: `clamp`, `hypot`, `round`, `sign`, `degrees`, `radians`
-- Memory: `store`, `recall`, `M`, `Mplus`, `Mminus`, `MC`, `MR`
-- Variables: `setvar`, `getvar`, `delvar`, `listvars`, `clearvars`
-- Units: `temp`, `convert`
+## AST Node Handlers
 
-### `Memory`
+The `Evaluator` class implements `visit_*` methods for each AST node type:
 
-Calculator-style memory registers for storing values.
+| Node Type | Handler | Operation |
+|-----------|---------|-----------|
+| `ast.Num` | visit_Num | Literals |
+| `ast.BinOp` | visit_BinOp | +, -, *, /, ** |
+| `ast.UnaryOp` | visit_UnaryOp | +, - |
+| `ast.Compare` | visit_Compare | <, >, <=, >=, ==, != |
+| `ast.BoolOp` | visit_BoolOp | and, or, not |
+| `ast.Call` | visit_Call | Function calls |
+| `ast.Name` | visit_Name | Variables/constants |
+| `ast.Attribute` | visit_Attribute | Module constants (math.pi) |
+| `ast.Subscript` | visit_Subscript | List/dict access |
+| `ast.List` | visit_List | List construction |
+| `ast.Dict` | visit_Dict | Dict construction |
 
-**Memory functions return `float` values, not `Memory` objects:**
-- `memory_store(value)` - Returns stored value as float
-- `memory_recall()` - Returns recalled value as float
-- `memory_add(value)` - Returns new register total as float
-- `memory_subtract(value)` - Returns new register total as float
-- `memory_clear()` - Returns None
-- `memory_list()` - Returns dict of register names to float values
+## Safe Math Functions
 
-### `PyCalcApp`
+Built-in functions available in expressions:
 
-Thread-safe wrapper optimized for webapps with caching and instance isolation.
+### Arithmetic
+- `abs(x)`, `round(x, n)`, `sign(x)`
+- `min(*args)`, `max(*args)`, `clamp(x, lo, hi)`
+- `hypot(*args)`
 
-## Security Features
+### Trigonometric
+- `sin(x)`, `cos(x)`, `tan(x)`
+- `asin(x)`, `acos(x)`, `atan(x)`
+- `sinh(x)`, `cosh(x)`, `tanh(x)`
+- `asinh(x)`, `acosh(x)`, `atanh(x)`
 
-### Node Validation
+### Logarithmic/Exponential
+- `log(x)` / `ln(x)` — natural log
+- `log10(x)` — base 10
+- `log2(x)` — base 2
+- `exp(x)` — e^x
+- `sqrt(x)`, `cbrt(x)`
 
-`_validate_node()` blocks forbidden node types:
-- Subscript, List, Dict, Set
-- ListComp, DictComp, SetComp, GeneratorExp
-- Lambda, IfExp, Compare, BoolOp
-- Attribute access except `math.real`, `math.imag`, `math.conjugate`
+### Statistical
+- `mean(*args)`, `median(*args)`
+- `std(*args)` — population std dev
+- `variance(*args)`
+- `sum(*args)`
 
-### DoS Protection
+### Combinatorics
+- `factorial(n)` / `fact(n)`
+- `perm(n, r)` — permutations
+- `comb(n, r)` — combinations
+- `gcd(*args)`, `lcm(*args)`
 
-- `MAX_EXPONENT = 10000` - Maximum exponent value
-- `MAX_FACTORIAL = 1000` - Maximum factorial input
-- `MAX_NESTING_DEPTH = 100` - Maximum parentheses depth (also defined in `normalize.py:43`)
+### Complex Numbers
+- `real(z)`, `imag(z)`, `conj(z)`
+- `phase(z)`, `polar(z)`, `rect(r, phi)`
 
-**Note:** `MAX_NESTING_DEPTH` is defined in both `evaluator.py:51` and `normalize.py:43` and must be kept in sync.
-- `MAX_RESULT_VALUE = 1e308` - Maximum result value
+### Bitwise
+- `bitand(a, b)`, `bitor(a, b)`, `bitxor(a, b)`
+- `bitnot(a)`
+- `lshift(a, b)`, `rshift(a, b)`
 
-## Public API Functions
+### Random
+- `random()` — [0, 1)
+- `randint(a, b)` — [a, b]
+- `randn()` — standard normal
+- `gauss(mu, sigma)`
+- `seed(n)` — seed RNG
 
-| Function | Description |
-|----------|-------------|
-| `evaluate(expr)` | Pre-normalized expression (no spaces) |
-| `evaluate_raw(expr)` | Full pipeline with NL support (skips token validation only) |
-| `evaluate_cached(expr)` | LRU cached evaluation |
-| `evaluate_async(expr)` | Async evaluation |
-| `evaluate_with_timeout(expr, timeout)` | Timeout-protected evaluation |
-| `get_default_evaluator()` | Get the default Evaluator instance |
-| `register_constant(name, value)` | Add custom constant |
-| `register_function(name, func)` | Add custom function |
-| `load_user_config()` | Load from nl_calc_config.py |
+### Number Theory
+- `isprime(n)`, `primefactors(n)`
+- `nextprime(n)`, `prevprime(n)`
 
-**Exceptions:** `EvaluationError`, `TimeoutError` |
+### Format Conversion
+- `bin(x)`, `hex(x)`, `oct(x)` — to string
+
+### Percentage
+- `percentof(p, x)` — p% of x
+- `aspercent(x, total)` — x as % of total
+
+## Constants
+
+Built-in physical and mathematical constants:
+
+| Name | Value | Description |
+|------|-------|-------------|
+| `pi` | 3.141592653589793 | π |
+| `e` | 2.718281828459045 | e |
+| `c` | 299792458 | Speed of light (m/s) |
+| `na` | 6.02214076e23 | Avogadro number |
+| `h` | 6.62607015e-34 | Planck constant |
+| `k` | 1.380649e-23 | Boltzmann constant |
+| `r` | 8.314462618 | Gas constant (J/mol·K) |
+| `g` | 9.80665 | Standard gravity (m/s²) |
+| `G` | 6.67430e-11 | Gravitational constant |
+| `elementarycharge` | 1.602176634e-19 | Elementary charge (C) |
+| `epsilon0` | 8.8541878128e-12 | Vacuum permittivity |
+| `mu0` | 1.25663706212e-6 | Vacuum permeability |
+| `me` | 9.1093837015e-31 | Electron mass (kg) |
+| `mp` | 1.67262192369e-27 | Proton mass (kg) |
+| `mn` | 1.67493e-27 | Neutron mass (kg) |
+| `re` | 2.817952326e-15 | Classical electron radius |
+| `alpha` | 7.2973525693e-3 | Fine structure constant |
+| `rydberg` | 10973731.6 | Rydberg constant (m⁻¹) |
+| `stefan` | 5.670374e-8 | Stefan-Boltzmann constant |
+| `wien` | 2.897771955e-3 | Wien displacement (m·K) |
+
+Additional from `math` module: `inf`, `nan`
+
+## Memory System
+
+Calculator-style memory with registers:
+
+```python
+memory_store(42)           # Store 42 in M
+memory_add(10)             # M = M + 10
+memory_recall()            # Get M value
+memory_subtract(5)         # M = M - 5
+memory_clear()             # Clear M
+memory_list()              # List all registers
+```
+
+Named registers also supported:
+```python
+memory_store(42, "M2")     # Store in M2
+memory_add(10, "M2")       # Add to M2
+```
+
+## Variable Storage
+
+User-defined variables persist across evaluations:
+
+```python
+setvar("x", 5)
+setvar("y", 10)
+getvar("x")        # → 5
+evaluate("x + y")  # → 15
+delvar("x")
+listvars()         # → {"y": 10}
+clearvars()
+```
+
+## Limits and Safeguards
+
+| Limit | Value | Purpose |
+|-------|-------|---------|
+| `MAX_EXPONENT` | 10000 | Prevent power DoS |
+| `MAX_FACTORIAL` | 1000 | Prevent factorial DoS |
+| `MAX_NESTING_DEPTH` | 100 | Prevent stack overflow |
+| `MAX_RESULT_VALUE` | 1e308 | Prevent overflow |
+| `DEFAULT_CACHE_SIZE` | 1024 | LRU cache size |
+
+## Evaluation Functions
+
+### `evaluate(expression: str) -> Any`
+Direct AST evaluation. Expects valid Python syntax.
+
+```python
+evaluate("5 + 3")          # → 8
+evaluate("sin(pi/2)")      # → 1.0
+evaluate("sqrt(2)")        # → 1.414...
+```
+
+### `evaluate_raw(expression: str) -> Any`
+Evaluates with NL normalization (calls `normalize_expression` first).
+
+```python
+evaluate_raw("five plus three")  # → 8
+evaluate_raw("30m + 100ft")     # → UnitValue(60.48, "m")
+```
+
+### `evaluate_cached(expression: str) -> Any`
+LRU cached evaluation for repeated identical expressions. Best for webapps.
+
+### `evaluate_async(expression: str) -> Any`
+Async evaluation for use with async web frameworks.
+
+### `evaluate_with_timeout(expression: str, timeout: float) -> Any`
+Evaluation with timeout in seconds. Raises `TimeoutError` on timeout.
 
 ## Complex Number Support
 
-`_complex_aware()` decorator wraps math functions to handle both real and complex inputs:
-- `sqrt`, `log`, `log10`, `log2`, `exp` - handle negative reals via complex branch
-- `asin`, `acos` - use complex functions when `|x| > 1`
+The `_complex_aware()` wrapper creates functions that handle both real and complex inputs:
+
+```python
+_sqrt = _complex_aware(math.sqrt, cmath.sqrt, use_complex_for_negative=True)
+_log = _complex_aware(math.log, cmath.log, use_complex_for_negative=True)
+```
+
+Functions automatically use `cmath` when:
+- Input is complex
+- Input is negative (with `use_complex_for_negative=True`)
+- Input has magnitude > 1 (with `use_complex_for_abs_gt_one=True`)
+
+## PyCalcApp
+
+Webapp wrapper with caching:
+
+```python
+from nl_calc import PyCalcApp
+
+app = PyCalcApp(cache_size=1024)
+result = app.calculate("five plus two")
+```
 
 ## Unit Handling
 
-`visit_BinOp()` automatically handles unit conversion during arithmetic:
-- Addition/subtraction with incompatible units raises error
-- Mixed units are converted to left operand's unit
+When expressions contain units, evaluation returns `UnitValue` objects:
+
+```python
+result = evaluate("30m + 100ft")
+# → UnitValue(60.48, "m")
+
+result.value      # → 60.48
+result.unit       # → "m"
+result.convert_to("ft")  # → UnitValue(198.5, "ft")
+```
+
+See [units.md](units.md) for unit conversion details.
+
+## Module Dependencies
+
+```
+evaluator.py
+    └── units (UnitValue, UNIT_ALIASES, UNIT_CONVERSIONS,
+              normalize_unit, convert_temperature, are_units_compatible)
+```

@@ -1,208 +1,385 @@
-# exact/ - Unicode Text Inspection Tools
+# exact/ — Unicode Text Primitives
 
-## Purpose
-
-Low-level Unicode text primitives for detecting hidden characters, confusables, and text metrics. These primitives are deterministic, independently testable, and do not perform semantic interpretation.
+Low-level deterministic Unicode text analysis tools. These modules are **independent** and **testable** without semantic interpretation or LLM calls.
 
 ## Module Structure
 
 ```
 exact/
-├── __init__.py          # Re-exports all public functions
-├── primitives.py         # UTF-8 encoding, codepoint iteration
-├── unicode_tools.py      # Script detection, confusable detection
-├── confusables.py        # Homoglyph identification
-├── validate.py          # JSON/bracket/regex validation
-├── diff.py              # String diffing algorithms
-├── measure.py           # Text metrics (words, lines, categories)
-└── synthesis.py         # Higher-level text analysis tools
+├── __init__.py       # Public API re-exports
+├── primitives.py     # UTF-8, codepoints, normalization, invisibles
+├── unicode_tools.py  # Script detection, confusables
+├── measure.py        # Text metrics (words, lines, categories)
+├── diff.py           # String diffing algorithms
+├── validate.py       # JSON/bracket/regex validation
+├── synthesis.py     # Higher-level text analysis
+└── confusables.py   # Homoglyph identification (auto-generated)
 ```
 
-## Core Primitives (primitives.py)
+## exact/__init__.py — Public API
 
-### `utf8_bytes(text: str) -> int`
-
-Returns number of UTF-8 bytes in text.
-
-### `codepoints(text: str) -> list[CodepointInfo]`
-
-Returns list of codepoint information:
+Re-exports all public functions from submodules:
 
 ```python
-@dataclass
-class CodepointInfo:
-    char: str
-    codepoint: int
-    hex: str
-    name: str
-    category: str
+from nl_calc.exact import (
+    # Primitives
+    utf8_bytes, codepoints, normalize_unicode, casefold_text,
+    raw_equal, normalized_equal, measure_basic, count_graphemes,
+    truncate_to_grapheme, find_invisibles, visible_repr,
+
+    # Unicode tools
+    unicode_script, unicode_scripts, detect_mixed_scripts,
+    detect_confusables, confusables_count,
+
+    # Diff
+    first_diff, common_prefix_suffix, levenshtein_distance,
+    diff_spans, longest_common_subsequence,
+
+    # Validate
+    check_brackets, validate_json, regex_test,
+
+    # Measure
+    line_metrics, word_metrics, char_category_metrics,
+
+    # Synthesis
+    measure_text, text_equal, inspect_text, explain_diff,
+    count_chars, list_compare,
+)
 ```
 
-### `normalize_unicode(text: str, form: str = "NFKC") -> str`
+---
 
-Apply Unicode normalization (default NFKC).
+## primitives.py — Core Text Primitives
 
-### `casefold_text(text: str) -> str`
+Low-level operations built on Python's `unicodedata` module.
 
-Apply case folding for comparison.
+### Functions
 
-### `raw_equal(a: str, b: str) -> bool`
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `utf8_bytes(s)` | bytes | Raw UTF-8 encoded bytes |
+| `codepoints(s)` | list[CodepointInfo] | Detailed codepoint information |
+| `normalize_unicode(s, form)` | str | NFC/NFD/NFKC/NFKD normalization |
+| `casefold_text(s)` | str | Case-insensitive comparison |
+| `raw_equal(a, b)` | bool | Exact string equality |
+| `normalized_equal(a, b)` | bool | Equality after NFC normalization |
+| `measure_basic(s)` | MeasureBasic | Basic text metrics |
+| `count_graphemes(s)` | int | Grapheme cluster count |
+| `truncate_to_grapheme(s, max_len)` | str | Truncate to grapheme boundary |
+| `find_invisibles(s)` | list[InvisibleCharInfo] | Detect hidden characters |
+| `visible_repr(s)` | str | Display-safe representation |
 
-Byte-level equality check.
-
-### `normalized_equal(a: str, b: str) -> bool`
-
-Normalized equality check.
-
-### `measure_basic(text: str) -> MeasureBasic`
-
-Basic text metrics.
-
-### `find_invisibles(text: str) -> list[InvisibleCharInfo]`
-
-Find invisible characters (zero-width, control chars, etc.).
-
-### `visible_repr(text: str) -> str`
-
-Visual representation with escapes.
-
-## Unicode Tools (unicode_tools.py)
-
-### `unicode_script(char: str) -> ScriptInfo`
-
-Get script information for a character.
+### Invisible Characters Detected
 
 ```python
-@dataclass
-class ScriptInfo:
-    script: str          # e.g., "Latin", "Cyrillic"
-    script_name: str     # Full name
-    is_latin: bool
-    is_cyrillic: bool
-    is_common: bool
+{
+    "\u200b": "ZERO WIDTH SPACE (ZWSP)",
+    "\u200c": "ZERO WIDTH NON-JOINER (ZWNJ)",
+    "\u200d": "ZERO WIDTH JOINER (ZWJ)",
+    "\u200e": "LEFT-TO-RIGHT MARK (LRM)",
+    "\u200f": "RIGHT-TO-LEFT MARK (RLM)",
+    "\ufeff": "ZERO WIDTH NO-BREAK SPACE (BOM)",
+    "\u00a0": "NO-BREAK SPACE (NBSP)",
+    "\u2028": "LINE SEPARATOR",
+    "\u2029": "PARAGRAPH SEPARATOR",
+    "\u202a": "LEFT-TO-RIGHT EMBEDDING (LRE)",
+    "\u2060": "WORD JOINER",
+    "\u00ad": "SOFT HYPHEN (SHY)",
+    ...
+}
 ```
 
-### `detect_mixed_scripts(text: str) -> list[ScriptInfo]`
-
-Detect mixed scripts in text.
-
-### `detect_confusables(text: str) -> list[ConfusableInfo]`
-
-Find confusable characters (homoglyphs).
+### CodepointInfo NamedTuple
 
 ```python
-@dataclass
-class ConfusableInfo:
-    char: str
-    confusable_with: str
-    index: int
-    codepoint: int
-    script: str
+CodepointInfo(
+    index=int,      # Position in string
+    char=str,       # The character
+    codepoint=str,  # "U+XXXX" format
+    name=str,       # Unicode name
+    category=str    # Unicode category (Lu, Nd, Po, etc.)
+)
 ```
 
-## Validation (validate.py)
-
-### `check_brackets(text: str) -> CheckBracketsResult`
-
-Verify matching bracket pairs (parentheses, braces, brackets).
-
-### `validate_json(text: str) -> ValidateJsonResult`
-
-Validate JSON syntax.
-
-### `regex_test(pattern: str, texts: list[str]) -> RegexTestResult`
-
-Test regex pattern against texts.
-
-## Diff Algorithms (diff.py)
-
-### `levenshtein_distance(a: str, b: str) -> int`
-
-Calculate edit distance between strings.
-
-### `first_diff(a: str, b: str) -> FirstDiff | None`
-
-Find first difference between two strings.
+### MeasureBasic TypedDict
 
 ```python
-@dataclass
-class FirstDiff:
-    position: int
-    a_char: str
-    b_char: str
-    a_context: str
-    b_context: str
+MeasureBasic(
+    bytes_utf8=int,          # UTF-8 byte count
+    codepoints=int,          # Codepoint count
+    graphemes_estimate=int,  # Grapheme cluster estimate
+    chars_no_whitespace=int, # Non-whitespace characters
+    ascii=int,               # ASCII character count
+    non_ascii=int            # Non-ASCII character count
+)
 ```
 
-### `common_prefix_suffix(a: str, b: str) -> tuple[str, str]`
+---
 
-Find common prefix and suffix.
+## unicode_tools.py — Script and Confusable Detection
 
-### `diff_spans(a: str, b: str) -> list[DiffSpan]`
+### Functions
 
-Generate list of diff spans.
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `unicode_script(char)` | str | Script of a character |
+| `unicode_scripts(s)` | list[str] | Scripts for all characters |
+| `detect_mixed_scripts(s)` | list[ScriptInfo] | Find mixed-script runs |
+| `detect_confusables(s)` | list[ConfusableInfo] | Find confusable homoglyphs |
+| `confusables_count(s)` | int | Fast confusable count |
+
+### Script Detection
+
+Scripts include: Latin, Greek, Cyrillic, Arabic, Hebrew, Han (Chinese), Japanese (Hiragana/Katakana), Korean (Hangul), Thai, etc.
+
+### Confusable Detection
+
+Identifies characters that appear identical but have different Unicode code points:
 
 ```python
-@dataclass
-class DiffSpan:
-    span_type: str  # "equal", "insert", "delete", "replace"
-    a_start: int
-    a_end: int
-    b_start: int
-    b_end: int
+# Latin 'a' vs Cyrillic 'а'
+detect_confusables("access")  # Returns confusables in Latin 'a' → Cyrillic 'а'
 ```
 
-## Measurement (measure.py)
+---
 
-### `line_metrics(text: str) -> LineMetrics`
+## measure.py — Text Metrics
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `measure_basic(s)` | MeasureBasic | Basic metrics |
+| `char_category_metrics(s)` | CharCategoryMetrics | Metrics by Unicode category |
+| `line_metrics(s)` | LineMetrics | Line count and newline style |
+| `word_metrics(s)` | WordMetrics | Word count and boundaries |
+
+### CharCategoryMetrics
+
+Groups characters by Unicode category:
+
+| Category | Description | Example |
+|----------|-------------|---------|
+| Lu | Letter, uppercase | A-Z (Latin) |
+| Ll | Letter, lowercase | a-z (Latin) |
+| Nd | Number, decimal digit | 0-9 |
+| Po | Punctuation, other | . , ! ? |
+|Zs | Separator, space | Space, NBSP |
+| ... | | |
+
+### LineMetrics
 
 ```python
-@dataclass
-class LineMetrics:
-    count: int
-    max_length: int
-    avg_length: float
+LineMetrics(
+    count=int,              # Number of lines
+    newline_style=str,      # "LF", "CRLF", "CR", "mixed"
+    has_trailing_newline=bool,
+    blank_lines=int
+)
 ```
 
-### `word_metrics(text: str) -> WordMetrics`
+---
+
+## diff.py — String Comparison Algorithms
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `first_diff(a, b)` | FirstDiff | Position of first difference |
+| `common_prefix_suffix(a, b)` | CommonPrefixSuffix | Longest common prefix/suffix |
+| `levenshtein_distance(a, b)` | int | Edit distance |
+| `diff_spans(a, b)` | list[DiffSpan] | Spans that differ |
+| `longest_common_subsequence(a, b)` | str | LCS via dynamic programming |
+
+### DiffSpan
 
 ```python
-@dataclass
-class WordMetrics:
-    count: int
-    max_length: int
-    avg_length: float
-    unique: int
+DiffSpan(
+    a_start=int,
+    a_end=int,
+    a_text=str,
+    b_start=int,
+    b_end=int,
+    b_text=str,
+    diff_type=str  # "equal", "insert", "delete", "replace"
+)
 ```
 
-### `char_category_metrics(text: str) -> CharCategoryMetrics`
+### Examples
 
-Character category breakdown (Lu, Ll, Nd, Po, etc.).
+```python
+first_diff("hello", "hallo")
+# → FirstDiff(index=1, a_char='e', b_char='a')
 
-## Synthesis (synthesis.py)
+levenshtein_distance("kitten", "sitting")
+# → 3 (kitten → sitten → sittin → sitting)
 
-Higher-level tools combining primitives:
+common_prefix_suffix("abc123", "abc456")
+# → CommonPrefixSuffix(prefix="abc", suffix="")
+```
 
-### `measure_text(text: str) -> MeasureTextResult`
+---
 
-Comprehensive text metrics.
+## validate.py — Format Validation
 
-### `text_equal(a: str, b: str, normalize: bool = True) -> TextEqualResult`
+### Functions
 
-String comparison with normalization options.
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `check_brackets(s)` | CheckBracketsResult | Balanced bracket check |
+| `validate_json(s)` | ValidateJsonResult | JSON syntax validation |
+| `regex_test(pattern, samples)` | RegexTestResult | Test regex against samples |
 
-### `explain_diff(a: str, b: str) -> ExplainDiffResult`
+### CheckBracketsResult
 
-Human-readable diff explanation.
+```python
+CheckBracketsResult(
+    balanced=bool,
+    message=str,           # Error message if unbalanced
+    position=int | None,  # Position of error
+    expected=str | None,  # Expected closing bracket
+    found=str | None      # Found character
+)
+```
 
-### `inspect_text(text: str) -> InspectTextResult`
+Handles bracket types: `()`, `[]`, `{}`, `<>`
 
-Check for hidden characters, confusables, mixed scripts.
+### RegexTestResult
 
-### `count_chars(text: str, target: str | None = None) -> CountCharsResult`
+```python
+RegexTestResult(
+    valid=bool,           # Pattern is valid regex
+    error=str | None,     # Error message if invalid
+    match_count=int,      # Number of matching samples
+    matches=list[str],    # Matched samples
+    non_matches=list[str] # Non-matching samples
+)
+```
 
-Character counting and frequency.
+---
 
-### `list_compare(a: list, b: list) -> dict`
+## synthesis.py — Higher-Level Analysis
 
-Compare two lists element by element.
+Combines primitives into higher-level tools.
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `measure_text(s)` | MeasureTextResult | Comprehensive text metrics |
+| `text_equal(a, b, ...)` | TextEqualResult | String equality modes |
+| `inspect_text(s, ...)` | InspectTextResult | Hidden char inspection |
+| `explain_diff(a, b, ...)` | ExplainDiffResult | Detailed diff explanation |
+| `count_chars(s, ...)` | CountCharsResult | Character counting |
+| `list_compare(a, b)` | dict | Compare two lists |
+
+### MeasureTextResult
+
+Combines: basic metrics + category metrics + line metrics + word metrics + invisible detection + mixed script detection
+
+```python
+MeasureTextResult(
+    basic=MeasureBasic,
+    categories=CharCategoryMetrics,
+    lines=LineMetrics,
+    words=WordMetrics,
+    invisibles=list[InvisibleCharInfo],
+    mixed_scripts=list[ScriptInfo],
+    ...
+)
+```
+
+### TextEqualResult
+
+```python
+TextEqualResult(
+    raw_equal=bool,
+    nfc_equal=bool,
+    nfd_equal=bool,
+    nfkc_equal=bool,
+    nfkd_equal=bool,
+    casefold_equal=bool,
+    trim_equal=bool,
+    ...
+)
+```
+
+### InspectTextResult
+
+```python
+InspectTextResult(
+    codepoints=list[CodepointInfo],
+    invisibles=list[InvisibleCharInfo],
+    confusables=list[ConfusableInfo],
+    mixed_scripts=list[ScriptInfo],
+    visible_repr=str,
+    normalization=str,  # Current normalization form
+    ...
+)
+```
+
+---
+
+## confusables.py — Homoglyph Data
+
+**Auto-generated data file** (~180KB, ~6500 lines).
+
+Contains mapping of confusable character pairs:
+- Latin/Cyrillic confusables
+- Latin/Greek confusables
+- Latin/Arabic confusables
+- etc.
+
+Data format:
+```python
+CONFUSABLES: dict[str, list[str]] = {
+    "A": ["А", "Α", "А", "𝒜"],  # Latin A vs Cyrillic А, Greek Α, etc.
+    "a": ["а", "ɑ", "α", "а"],
+    ...
+}
+```
+
+---
+
+## Architecture Notes
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        synthesis.py                         │
+│         (High-level tools combining primitives)            │
+├─────────────────────────────────────────────────────────────┤
+│  ┌──────────┐ ┌────────────┐ ┌──────┐ ┌──────────┐     │
+│  │diff.py   │ │measure.py   │ │validate│ │unicode_ │     │
+│  │          │ │            │ │      │ │tools.py │     │
+│  └────┬─────┘ └──────┬─────┘ └───┬──┘ └────┬─────┘     │
+│       │               │           │          │            │
+├───────┴───────────────┴───────────┴──────────┴────────────┤
+│                      primitives.py                           │
+│         (UTF-8, codepoints, normalization, invisibles)      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Conventions
+
+1. **`utf8_bytes()` returns `bytes`** — Not an int count, returns actual UTF-8 encoded bytes
+2. **`visible_repr()` display order matters** — Variation selector checks must come BEFORE combining mark checks
+3. **`_get_script_heuristic()` benefits from caching** — Now has `@functools.lru_cache` decorator
+4. **Cf (format) characters excluded from `control_chars`** — Format characters are silently ignored per UTS #55
+5. **`confusables_count()` helper** — Fast function to count confusables without building full list
+
+### TypedDict vs NamedTuple
+
+Architecture docs may show `@dataclass class Xxx(NamedTuple)` but code uses `class Xxx(TypedDict)` for consistency with Python 3.14+ typing patterns.
+
+---
+
+## Testing
+
+All exact/ modules have deterministic behavior:
+- No random operations
+- No external dependencies (network, filesystem)
+- No LLM calls
+- Repeatable results for same input
+
+See `tests/test_exact.py` for comprehensive tests.
