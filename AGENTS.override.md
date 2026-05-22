@@ -25,12 +25,22 @@ Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`. Word f
 **visible_repr() Check Order is Correct:**
 The variation selector check (0xfe00-0xfe0f) comes BEFORE the combining mark check in `visible_repr()`. This is the correct order per AGENTS.md conventions. The code at primitives.py:273-276 is correct.
 
-### Known Issues (Low Priority - Deferred)
+### Critical Issues (Require Fix Before Release)
 
-These items are documented but not critical:
-- `notifications/cancel` and `notifications/progress` not implemented in MCP server
-- `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
-- Bidirectional confusable detection not implemented
+1. **`split_at_operators` whitespace handling** - `nl_calc/normalize.py:703-742`
+   - Symptom: `run("what's five plus three hundred twenty two?")` returns `(3100207, 0)` instead of `(327, 0)`
+   - Multi-word numbers like "three hundred twenty two" are not properly combined
+
+2. **`combine_number_parts()` logic** - `nl_calc/normalize.py:493-530`
+   - Symptom: `combine_number_parts([20, 2])` returns `['20', '+2']` instead of `['22']`
+   - Does not properly combine number parts into single values
+
+3. **TypedDict `__slots__` in validate.py** - `nl_calc/exact/validate.py:26, 36, 60`
+   - `CheckBracketsResult`, `RegexTestResult` are TypedDicts and should NOT have `__slots__`
+   - `BracketError` is a regular class and CAN have `__slots__`
+
+4. **`math_eval` response format inconsistency** - `nl_calc/mcp/tools.py:89`
+   - Returns raw dict `{"result": ..., "type": ...}` instead of using `_success_response()` wrapper
 
 ### Verified Correct Information
 
@@ -42,35 +52,21 @@ The following items have been verified against the codebase and should be consid
 4. **`mcp_main` alias in server.py** - Already present at `server.py:234`
 5. **Memory and variable functions exported** - All present in `evaluator.py.__all__`
 6. **exact/__init__.py exports** - `unicode_scripts`, `confusables_count`, `longest_common_subsequence` all correctly exported
+7. **acre in UNIT_ALIASES** - "acre" and "acres" are present at `units.py:1015-1016`
 
-### Implementation Notes from Architecture Review (Completed 2026-05-22)
+### Known Issues (Low Priority - Deferred)
 
-All items below have been fixed as of the 2026-05-22 implementation wave:
+These items are documented but not critical:
+- `notifications/cancel` and `notifications/progress` not implemented in MCP server
+- `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
+- Bidirectional confusable detection not implemented
+- `_is_extended_pictographic` range (0x1F300-0x10FFFF) is broad and includes private use areas
+- Script detection uses heuristic range-based approach, not `unicodedata.script()`
 
-1. **REPL History stores None on eval failure** - Fixed: condition at `normalize.py:1028` already checks `_ is not None`
+### Documentation Notes
 
-2. **TypedDict `__slots__` invalid in measure.py** - Fixed: `__slots__` removed from `WordMetrics`, `LineMetrics`, `CharCategoryMetrics`
-
-3. **Control chars counting incomplete** - Fixed: `measure.py` now counts `Co` and `Cn` per UTS #55, excluding `Cf`
-
-4. **`__rsub__` in UnitValue** - Intentionally left as-is; `5 - UnitValue(3, 'ft')` returns `2 ft` (scalar minus unitless result)
-
-5. **`combine_number_parts()` logic error** - Fixed: added case for `part == 10 and next < 10` to handle "ten six" properly
-
-6. **`_handle_negative_token()` bounds** - Fixed: added proper bounds checking at start of function
-
-7. **`_advance_past_sequence()` dead code** - Fixed: function removed, logic retained inline in `count_graphemes()`
-
-8. **BIDI control character handling** - Fixed: BIDI chars (U+202A-202E, U+2066-2069) already in `_INVISIBLE_CHARS`
-
-### Documentation Discrepancies Fixed
-
-1. **TypedDict vs NamedTuple in arch docs** - Fixed: architecture docs updated to use `class Xxx(TypedDict)` instead of NamedTuple
-
-2. **Missing arch documentation** - Fixed: `unicode_scripts()`, `confusables_count()`, `longest_common_subsequence()` now documented
-
-3. **DiffSpan field names** - Fixed: architecture docs now correctly show `a_span/b_span` instead of `a_start/a_end`
-
-4. **`text_truncate` schema** - Fixed: schema updated with output fields in `schemas.py`
-
-5. **Rankine temperature** - Fixed: documented in `architecture/units.md`
+1. **TypedDict vs NamedTuple** - All architecture docs use `class Xxx(TypedDict)` correctly
+2. **ConfusableInfo fields** - Use `confusable_with` and `confusable_name`, not `confusable_for` or `confusable_codepoint`
+3. **ScriptInfo fields** - Use `index`, `char`, `script`, `codepoint` (not `count`, `start`, `end`)
+4. **detect_mixed_scripts return** - Returns dict with keys `mixed_scripts`, `scripts`, `positions` (not list[ScriptInfo])
+5. **CommonPrefixSuffix fields** - Use `common_prefix_len`, `common_suffix_len` (not `prefix`, `suffix`)

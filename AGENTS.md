@@ -246,37 +246,8 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `notifications/cancel` and `notifications/progress` not implemented in MCP server
 - `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
 - Bidirectional confusable detection not implemented
-
-### Session Learnings (2026-05-22 Review)
-
-**Completed Fixes (2026-05-22):**
-- Dead code `_advance_past_sequence()` at `primitives.py` removed (was defined but never called)
-- Duplicate assignment `same_length_codepoints` in `explain_diff()` consolidated to single location
-- `_handle_negative_token()` at `normalize.py` now has proper bounds checking
-- Control characters counting now includes Co and Cn per UTS #55 (Cf remains excluded)
-- BIDI control characters (U+202A-202E, U+2066-2069) are properly detected via `_INVISIBLE_CHARS`
-- `combine_number_parts()` now properly skips parts that were combined (added skip_next flag)
-- `_classify_difference()` now checks NFC equality before casefold equality (fixes unreachable unicode_normalization_only case)
-
-**Completed Documentation/Removal:**
-- Removed unused `SuccessEnvelope` from `schemas.py`
-- Added `get_unit_category()` to architecture/overview.md Key Data Structures table
-- Fixed `check_brackets` and `RegexMatch` examples in architecture/validate.md
-- Added `unicode_scripts()` and `confusables_count()` to unicode_tools.md index
-
-**Architecture Documentation Fixes (2026-05-22 Wave 3):**
-- exact.md: CheckBracketsResult now correctly documented with `unmatched_openers`/`unmatched_closers` (not message/position/expected/found)
-- exact.md: RegexTestResult now correctly documented with `valid_pattern` and `results: list[RegexMatch]` (not match_count/matches/non_matches)
-- exact.md: Added RegexMatch TypedDict definition (sample, matches, fullmatch, span, groups, groupdict)
-- exact.md: LineMetrics now correctly documented with full field list (lines, nonempty_lines, blank_lines, max_line_length_codepoints, trailing_whitespace_lines, newline_style, ends_with_newline)
-- api.md: Added `get_unit_category()` to utility functions
-- api.md: Clarified that `normalize_unit()` exists in units.py but is not part of public API
-
-**TypedDict `__slots__`:**
-- TypedDict classes do NOT support `__slots__`. Valid for regular classes (like `BracketError`), invalid for TypedDicts (like `WordMetrics`, `LineMetrics`, `CharCategoryMetrics`, `CheckBracketsResult`).
-
-**Variation Selector Detection:**
-- Both `visible_repr()` (range check 0xFE00-0xFE0F) and `find_invisibles()` (set membership) handle VS detection, but differently. Both work correctly for their purposes.
+- `split_at_operators` does not properly handle whitespace-separated number words (e.g., "three hundred twenty two" fails to combine correctly)
+- `combine_number_parts()` logic does not properly combine number parts into single values
 
 ### API Usage Reminder
 For testing NL/unit features:
