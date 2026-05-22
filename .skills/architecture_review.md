@@ -53,6 +53,11 @@ For each module, examine:
 - Alias mappings that break functionality (e.g., prefixed units aliased to base)
 - Precision errors in constants
 - Missing CLI flags between built vs source versions
+- TypedDict vs NamedTuple mismatches (documentation shows one, code uses other)
+- Missing function aliases (documentation shows `normalize_main`, `mcp_main` but they don't exist)
+- ErrorEnvelope class documented but doesn't exist in code
+- Data structure field mismatches (CheckBracketsResult, WordMetrics)
+- Classification labels in synthesis.py don't match documentation
 
 ## Architecture Files Location
 - `architecture/` - Module-level documentation

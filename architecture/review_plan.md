@@ -1,5 +1,23 @@
 # Architecture Review Plan
 
+## Status: COMPLETED
+
+All 12 modules reviewed:
+- normalize: Documentation needs minor updates (duplicate data structures, missing functions)
+- evaluator: Missing constants in docs, missing functions (degrees, radians)
+- units: Missing TEMPERATURE_CONVERSIONS doc and helper functions
+- cli: Documentation errors (normalize_main alias, verbose mode flag)
+- primitives: Minor VS handling clarification
+- unicode_tools: Minor doc formatting issues
+- confusables: Large file size not documented
+- validate: CheckBracketsResult structure completely wrong in docs
+- diff: TypedDict vs NamedTuple mismatch, algorithm description incorrect
+- measure: WordMetrics example has field that doesn't exist (max_word_length)
+- synthesis: Classification labels incorrect (accent_or_diacritic vs case_only)
+- mcp_server: ErrorEnvelope doesn't exist, mcp_main alias doesn't exist
+
+All 346 tests pass.
+
 ## Overview
 
 This plan coordinates a comprehensive review of all architecture documents in this directory, excluding this file itself. Each module will be reviewed by a dedicated subagent that will:
