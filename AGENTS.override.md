@@ -33,5 +33,6 @@ These items are documented but not critical:
 - Bidirectional confusable detection not implemented
 - `difflib.SequenceMatcher` used for diff (not pure Levenshtein)
 - Temperature-to-non-temperature conversions silently fall through (no warning)
+- `kilonewton` alias maps to `"N"` instead of `"kN"` (should be `"kilonewton": "kN"`) - bug ~line 923 in units.py
 
 (End of file - 48 lines)

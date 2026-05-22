@@ -212,9 +212,15 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 ### exact/ Module Conventions
 - **`utf8_bytes()` returns `bytes`** - Not an int count, returns actual UTF-8 encoded bytes
 - **`visible_repr()` display order matters** - Variation selector checks must come BEFORE combining mark checks (U+FE00-U+FE0F should be checked before category 'M')
-- **WORD JOINER (U+2060) needs explicit handling** - Detected by `find_invisibles()` but `visible_repr()` needs separate case
+- **WORD JOINER (U+2060)** - Code at lines 277-278 in primitives.py is redundant dead code; already handled by `_INVISIBLE_CHARS` dict lookup at line 270
 - **Newline detection `mixed` value** - The `mixed` newline style can be returned but was not properly detected in original implementation
 - **`_get_script_heuristic()` benefits from caching** - Now has `@functools.lru_cache` decorator
+- **Cf (format) characters intentionally excluded** - `control_chars` in `measure.py` excludes `Cf` category; format characters are silently ignored
+
+### TypedDict vs NamedTuple
+- Architecture docs may show `@dataclass class Xxx(NamedTuple)` but code uses `class Xxx(TypedDict)`
+- TypedDict is used throughout for consistency with Python 3.14+ typing patterns
+- Always check actual code for exact return type signatures
 
 ### MCP Server Conventions
 - Tool names in `schemas.py` and `server.py` are now unified via `TOOL_SCHEMAS`
@@ -222,12 +228,21 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `MAX_TEXT_LENGTH` is enforced on `math_eval` tool
 - Error messages are sanitized for non-ASCII characters
 - Case-insensitive tool matching with suggestions for unknown tools
+- `mcp_main` is a build-time alias created by `build_single.py`, not a native export
 
 ### Unit Conversion Conventions
 - Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`
 - Temperature conversions use offset math, not multiplicative factors
 - `mps` (meters per second) is in `UNIT_CATEGORIES` as "speed"
 - Temperature-to-non-temperature conversions produce a warning
+
+### Known Bugs (Do Not Add to Tests - Fix Instead)
+- `UnitValue.convert_to()` doesn't handle temperature properly (uses multiplication instead of offset formula)
+- `kilonewton` alias maps to `"N"` instead of `"kN"` (line ~923 in units.py)
+- `_cbrt()` doesn't handle complex numbers (unlike `_sqrt()` which uses `_complex_aware` decorator)
+- REPL mode `show_expression` defaults to `False` but docstring says "(default for interactive)"
+- `-v` flag is `--version`, not verbose; no `--verbose` flag exists
+- `scripts/generate_confusables.py` header detection skips lines starting with "0" (could skip valid data)
 
 ### API Usage Reminder
 For testing NL/unit features:
