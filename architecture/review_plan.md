@@ -1,132 +1,68 @@
 # Architecture Review Plan
 
-**Status:** INCOMPLETE - Review completed, improvements pending implementation
+## Overview
 
-This document outlines a comprehensive review plan for the architecture documents in this directory. Each module will be reviewed by a dedicated subagent that will verify claims against the implementation code, identify bugs, and propose improvements.
+This plan coordinates a comprehensive review of all architecture documents in this directory, excluding this file itself. Each module will be reviewed by a dedicated subagent that will:
+
+1. Read the architecture document for the module
+2. Verify claims against the actual source code
+3. Identify potential bugs, improvements, and inconsistencies
+4. Write an improvement plan to `plans/<module>_review.md`
 
 ## Modules to Review
 
-1. **api.md** - API design and interfaces
-2. **cli.md** - Command-line interface architecture
-3. **confusables.md** - Confusable character handling
-4. **diff.md** - Diff calculation and display
-5. **evaluator.md** - Expression evaluation engine
-6. **exact.md** - Exact arithmetic and fractions
-7. **mcp_server.md** - MCP server implementation
-8. **measure.md** - Measurement and unit handling
-9. **normalize.md** - Text normalization
-10. **overview.md** - Architecture overview
-11. **primitives.md** - Primitive operations
-12. **synthesis.md** - Synthesis engine
-13. **unicode_tools.md** - Unicode utilities
-14. **units.md** - Unit definitions and conversions
-15. **validate.md** - Validation logic
+| # | Module | Architecture Doc | Source Location | Review Output |
+|---|--------|-----------------|-----------------|---------------|
+| 1 | normalize | [normalize.md](normalize.md) | `nl_calc/normalize.py` | `plans/normalize_review.md` |
+| 2 | evaluator | [evaluator.md](evaluator.md) | `nl_calc/evaluator.py` | `plans/evaluator_review.md` |
+| 3 | units | [units.md](units.md) | `nl_calc/units.py` | `plans/units_review.md` |
+| 4 | cli | [cli.md](cli.md) | `nl_calc/__main__.py` | `plans/cli_review.md` |
+| 5 | primitives | [primitives.md](primitives.md) | `nl_calc/exact/primitives.py` | `plans/primitives_review.md` |
+| 6 | unicode_tools | [unicode_tools.md](unicode_tools.md) | `nl_calc/exact/unicode_tools.py` | `plans/unicode_tools_review.md` |
+| 7 | confusables | [confusables.md](confusables.md) | `nl_calc/exact/confusables.py` | `plans/confusables_review.md` |
+| 8 | validate | [validate.md](validate.md) | `nl_calc/exact/validate.py` | `plans/validate_review.md` |
+| 9 | diff | [diff.md](diff.md) | `nl_calc/exact/diff.py` | `plans/diff_review.md` |
+| 10 | measure | [measure.md](measure.md) | `nl_calc/exact/measure.py` | `plans/measure_review.md` |
+| 11 | synthesis | [synthesis.md](synthesis.md) | `nl_calc/exact/synthesis.py` | `plans/synthesis_review.md` |
+| 12 | mcp_server | [mcp_server.md](mcp_server.md) | `nl_calc/mcp/server.py` | `plans/mcp_server_review.md` |
 
-## Review Process
+## Subagent Instructions
 
-Each subagent will:
-1. Read the architecture document for their assigned module
-2. Examine the corresponding source code in `nl_calc/`
-3. Verify claims made in the document against actual implementation
-4. Identify bugs, inconsistencies, or potential issues
-5. Propose specific improvements with code references
-6. Write the improvement plan to `plans/<module>_review.md`
+Each subagent should perform the following for their designated module:
 
-## Subagent Assignments
+### Phase 1: Document Analysis
+- Read the architecture document thoroughly
+- Extract all claims about functionality, behavior, and implementation details
+- Note any specific algorithms, data structures, or edge cases mentioned
 
-### 1. API Module Reviewer
-Task: Review `architecture/api.md` against implementation
-Target: `nl_calc/` API interfaces
-Output: `plans/api_review.md`
+### Phase 2: Code Verification
+- Read the corresponding source code file
+- Cross-reference each claim in the architecture doc with the actual implementation
+- Identify any discrepancies between documentation and code
+- Verify that all documented features are actually implemented
 
-### 2. CLI Module Reviewer
-Task: Review `architecture/cli.md` against implementation
-Target: `nl_calc/__main__.py` and CLI handling
-Output: `plans/cli_review.md`
+### Phase 3: Bug and Improvement Identification
+- Look for potential bugs (off-by-one errors, missing error handling, etc.)
+- Identify improvement opportunities (performance, code clarity, edge cases)
+- Check for security concerns (AST evaluation safety, input validation)
+- Verify API consistency with other modules
 
-### 3. Confusables Module Reviewer
-Task: Review `architecture/confusables.md` against implementation
-Target: Confusable character detection code
-Output: `plans/confusables_review.md`
-
-### 4. Diff Module Reviewer
-Task: Review `architecture/diff.md` against implementation
-Target: Diff calculation implementation
-Output: `plans/diff_review.md`
-
-### 5. Evaluator Module Reviewer
-Task: Review `architecture/evaluator.md` against implementation
-Target: `nl_calc/evaluator.py`
-Output: `plans/evaluator_review.md`
-
-### 6. Exact Module Reviewer
-Task: Review `architecture/exact.md` against implementation
-Target: Exact arithmetic implementation
-Output: `plans/exact_review.md`
-
-### 7. MCP Server Module Reviewer
-Task: Review `architecture/mcp_server.md` against implementation
-Target: MCP server implementation
-Output: `plans/mcp_server_review.md`
-
-### 8. Measure Module Reviewer
-Task: Review `architecture/measure.md` against implementation
-Target: Measurement handling code
-Output: `plans/measure_review.md`
-
-### 9. Normalize Module Reviewer
-Task: Review `architecture/normalize.md` against implementation
-Target: `nl_calc/normalize.py`
-Output: `plans/normalize_review.md`
-
-### 10. Overview Module Reviewer
-Task: Review `architecture/overview.md` against implementation
-Target: Cross-cutting architecture concerns
-Output: `plans/overview_review.md`
-
-### 11. Primitives Module Reviewer
-Task: Review `architecture/primitives.md` against implementation
-Target: Primitive operations implementation
-Output: `plans/primitives_review.md`
-
-### 12. Synthesis Module Reviewer
-Task: Review `architecture/synthesis.md` against implementation
-Target: Synthesis engine implementation
-Output: `plans/synthesis_review.md`
-
-### 13. Unicode Tools Module Reviewer
-Task: Review `architecture/unicode_tools.md` against implementation
-Target: Unicode utility functions
-Output: `plans/unicode_tools_review.md`
-
-### 14. Units Module Reviewer
-Task: Review `architecture/units.md` against implementation
-Target: `nl_calc/units.py`
-Output: `plans/units_review.md`
-
-### 15. Validate Module Reviewer
-Task: Review `architecture/validate.md` against implementation
-Target: Validation logic implementation
-Output: `plans/validate_review.md`
-
-## Review Focus Areas
-
-For each module, reviewers should examine:
-
-1. **Completeness**: Are all features described in the doc actually implemented?
-2. **Correctness**: Do the implementation match the documented behavior?
-3. **Consistency**: Are there contradictions between doc and code?
-4. **Edge Cases**: Are there unhandled edge cases?
-5. **Performance**: Any efficiency concerns?
-6. **Security**: Potential security issues?
-7. **Maintainability**: Code quality and organization issues?
-8. **Test Coverage**: Are there adequate tests?
+### Phase 4: Write Improvement Plan
+- Create a markdown file in `plans/` with the naming convention `plans/<module>_review.md`
+- Structure the plan with sections:
+  - **Verified Claims**: What the documentation correctly states
+  - **Discrepancies**: Where documentation differs from implementation
+  - **Bugs Found**: Actual bugs or issues in the code
+  - **Improvements**: Suggested enhancements with rationale
+  - **Priority**: High/Medium/Low for each item
 
 ## Execution
 
-Reviewers will be launched concurrently to maximize efficiency. Each reviewer will receive detailed instructions to:
-- Read the architecture document fully
-- Locate and examine relevant source code
-- Cross-reference claims with actual implementation
-- Document findings with specific file:line references
-- Provide actionable improvement recommendations
+Launch subagents in parallel for modules 1-12, then aggregate results.
+
+## Verification Commands
+
+After all reviews complete, run:
+```bash
+python3 -m pytest tests/
+```
