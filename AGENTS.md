@@ -55,12 +55,50 @@ evaluate("1km in m")                          # ✗ Fails (invalid Python)
 | `nl_calc/units.py` | Unit definitions, conversion factors, temperature conversions |
 | `nl_calc/__main__.py` | CLI interface |
 
+### Supporting Modules (exact/)
+
+Located in `nl_calc/exact/` - Provides low-level Unicode text primitives for detecting hidden characters, confusables, and text metrics:
+
+| Module | Purpose |
+|--------|---------|
+| `primitives.py` | UTF-8 encoding, codepoint iteration, Unicode normalization |
+| `unicode_tools.py` | Script detection, confusable character detection |
+| `confusables.py` | Confusable character identification (homoglyphs) - large file (~180KB) |
+| `validate.py` | JSON/bracket/regex validation |
+| `diff.py` | String diffing algorithms |
+| `measure.py` | Text metrics (words, lines, categories) |
+| `synthesis.py` | Higher-level text analysis tools |
+
+### Supporting Modules (mcp/)
+
+Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool access:
+
+| Module | Purpose |
+|--------|---------|
+| `server.py` | MCP server implementation, stdio-based request handling |
+| `tools.py` | MCP tool definitions |
+| `schemas.py` | JSON schemas for MCP tool definitions |
+
 ### Key Data Structures
 
 - **`NUMBER_WORDS`** - Dictionary mapping number values to word variants ("one", "five", etc.)
 - **`OPERATOR_CONVERSIONS`** - Maps operator words to symbols ("plus" → "+")
+- **`FUNCTION_MAPPINGS`** - Maps function name variants to canonical names (e.g., "square root" → "sqrt")
+- **`CONSTANT_WORDS`** - Maps physical constant names (avogadro, planck, etc.) to symbols
+- **`STRIPPED_PHRASES`** - Filler words removed during normalization ("what's", "calculate", etc.)
 - **`UNIT_BASE`** - Base units and their conversion factors
 - **`UNIT_CONVERSIONS`** - Cached pairwise conversion factors
+- **`UNIT_ALIASES`** - Maps all unit variants to canonical forms
+
+### Known Issues (from Architecture Review)
+
+1. **Force/Voltage/Current UNIT_ALIASES bug** (`units.py:900-931`): Prefixed units like `kN`, `mV`, `mA` are incorrectly aliased to their base unit (`N`, `V`, `A`), causing conversion failures. `get_conversion_factor("kN", "N")` returns `1.0` instead of `1000.0`.
+
+2. **Temperature F→C offset precision** (`units.py:1038`): The offset `-17.777778` has rounding error; should be `-17.77777777777778` for exact freezing point conversion.
+
+3. **CLI --mcp flag missing** (`normalize.py:1220-1252`): The `--mcp` argument only exists in the built single-file version, not when running via `python -m nl_calc`.
+
+4. **evaluate_cached not in __all__** (`evaluator.py:29-43`): Function is public but not exported in the module's `__all__` list.
 
 ## Guardrails
 
