@@ -1204,6 +1204,7 @@ UNIT_CATEGORIES: dict[str, str] = {
     "F": "temperature",
     "R": "temperature",
     "m/s": "speed",
+    "mps": "speed",
     "km/h": "speed",
     "mph": "speed",
     "kn": "speed",

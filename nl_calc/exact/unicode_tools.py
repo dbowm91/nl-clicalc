@@ -11,6 +11,7 @@ The full confusables.txt can be loaded at build time for comprehensive detection
 
 from __future__ import annotations
 
+import functools
 import unicodedata
 from typing import TypedDict
 
@@ -58,6 +59,7 @@ _SCRIPT_RANGES: list[tuple[int, int, str]] = [
 ]
 
 
+@functools.lru_cache(maxsize=128)
 def _get_script_heuristic(char: str) -> str:
     """Determine script for a character using codepoint ranges.
 

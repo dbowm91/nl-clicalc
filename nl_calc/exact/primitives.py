@@ -269,10 +269,12 @@ def visible_repr(s: str) -> str:
         elif char in _INVISIBLE_CHARS:
             _, display = _INVISIBLE_CHARS[char]
             result.append(f"⟦{display}⟧")
-        elif unicodedata.category(char).startswith("M"):
-            result.append(f"◌{char}")
         elif 0xfe00 <= ord(char) <= 0xfe0f:
             result.append("⟦VS⟧")
+        elif unicodedata.category(char).startswith("M"):
+            result.append(f"◌{char}")
+        elif char == "\u2060":
+            result.append("⟦WORD JOINER⟧")
         elif 0x2060 <= ord(char) <= 0x206f:
             bidi_names = {
                 0x2066: "LRI", 0x2067: "RLI", 0x2068: "FSI", 0x2069: "PDI",
