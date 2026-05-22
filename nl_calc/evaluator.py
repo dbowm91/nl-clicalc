@@ -40,6 +40,17 @@ __all__ = [
     "load_user_config",
     "PyCalcApp",
     "TimeoutError",
+    "memory_store",
+    "memory_recall",
+    "memory_add",
+    "memory_subtract",
+    "memory_clear",
+    "memory_list",
+    "setvar",
+    "getvar",
+    "delvar",
+    "listvars",
+    "clearvars",
 ]
 
 
