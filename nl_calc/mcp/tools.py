@@ -37,6 +37,10 @@ from ..exact.synthesis import (
 from ..exact.synthesis import (
     text_equal as _text_equal,
 )
+from ..exact.primitives import (
+    truncate_to_grapheme as _truncate_to_grapheme,
+    count_graphemes as _count_graphemes,
+)
 from .schemas import ErrorEnvelope
 
 MAX_TEXT_LENGTH = 100_000
@@ -107,7 +111,7 @@ def text_measure(text: str, include_codepoints: bool = False) -> dict:
         )
 
     try:
-        result = _measure_text(text, include_codepoints)
+        result = _measure_text(text)
         return _success_response(result)
     except ValueError as e:
         return _error_response("ValidationError", str(e))
@@ -366,5 +370,50 @@ def list_compare(
     try:
         result = _list_compare(a, b, ignore_order, casefold, normalization)
         return _success_response(result)
+    except Exception as e:
+        return _error_response("UnexpectedError", str(e))
+
+
+def text_truncate(text: str, max_graphemes: int) -> dict:
+    """Truncate a string to a specified number of grapheme clusters.
+
+    Args:
+        text: Input string to truncate.
+        max_graphemes: Maximum number of grapheme clusters to return.
+
+    Returns:
+        Success envelope with truncation result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "InputTooLarge",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+        )
+
+    if max_graphemes < 0:
+        return _error_response(
+            "ValidationError",
+            f"max_graphemes must be non-negative, got {max_graphemes}",
+            ["Set max_graphemes to 0 or higher"],
+        )
+
+    try:
+        original_graphemes = _count_graphemes(text)
+        if original_graphemes <= max_graphemes:
+            return _success_response({
+                "original_graphemes": original_graphemes,
+                "truncated_graphemes": original_graphemes,
+                "truncated": False,
+                "text": text,
+            })
+
+        truncated_text = _truncate_to_grapheme(text, max_graphemes)
+        return _success_response({
+            "original_graphemes": original_graphemes,
+            "truncated_graphemes": max_graphemes,
+            "truncated": True,
+            "text": truncated_text,
+        })
     except Exception as e:
         return _error_response("UnexpectedError", str(e))

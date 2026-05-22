@@ -33,6 +33,9 @@ from .measure import (
 )
 from .primitives import casefold_text as _casefold_text
 from .primitives import (
+    count_graphemes as _count_graphemes,
+)
+from .primitives import (
     find_invisibles as _find_invisibles,
 )
 from .primitives import (
@@ -79,7 +82,7 @@ class MeasureTextResult(TypedDict):
     """Complete text measurement result."""
     bytes_utf8: int
     codepoints: int
-    graphemes: None
+    graphemes: int
     words: int
     unique_words_casefolded: int
     lines: int
@@ -186,11 +189,12 @@ def measure_text(text: str) -> MeasureTextResult:
     categories = _char_category_metrics(text)
     invisibles = _find_invisibles(text)
     scripts = _detect_mixed_scripts(text)
+    grapheme_count = _count_graphemes(text)
 
     return MeasureTextResult(
         bytes_utf8=basic["bytes_utf8"],
         codepoints=basic["codepoints"],
-        graphemes=None,
+        graphemes=grapheme_count,
         words=words["words"],
         unique_words_casefolded=words["unique_words_casefolded"],
         lines=lines["lines"],

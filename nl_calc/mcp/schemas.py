@@ -149,6 +149,21 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "required": ["text"],
         },
     },
+    "text_truncate": {
+        "description": "Truncate a string to a specified number of grapheme clusters (user-perceived characters). Preserves emoji, combining sequences, and flag sequences intact. Useful for AI agent prompts where visual length matters.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string to truncate"},
+                "max_graphemes": {
+                    "type": "integer",
+                    "description": "Maximum number of grapheme clusters to return",
+                    "minimum": 0,
+                },
+            },
+            "required": ["text", "max_graphemes"],
+        },
+    },
     "validate_brackets": {
         "description": "Check whether delimiters are structurally balanced and report unmatched delimiters with line/column positions.",
         "inputSchema": {
