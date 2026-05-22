@@ -249,12 +249,20 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 
 ### Session Learnings (2026-05-22 Review)
 
-**Completed Fixes:**
+**Completed Fixes (2026-05-22):**
 - Dead code `_advance_past_sequence()` at `primitives.py` removed (was defined but never called)
 - Duplicate assignment `same_length_codepoints` in `explain_diff()` consolidated to single location
 - `_handle_negative_token()` at `normalize.py` now has proper bounds checking
 - Control characters counting now includes Co and Cn per UTS #55 (Cf remains excluded)
 - BIDI control characters (U+202A-202E, U+2066-2069) are properly detected via `_INVISIBLE_CHARS`
+- `combine_number_parts()` now properly skips parts that were combined (added skip_next flag)
+- `_classify_difference()` now checks NFC equality before casefold equality (fixes unreachable unicode_normalization_only case)
+
+**Completed Documentation/Removal:**
+- Removed unused `SuccessEnvelope` from `schemas.py`
+- Added `get_unit_category()` to architecture/overview.md Key Data Structures table
+- Fixed `check_brackets` and `RegexMatch` examples in architecture/validate.md
+- Added `unicode_scripts()` and `confusables_count()` to unicode_tools.md index
 
 **TypedDict `__slots__`:**
 - TypedDict classes do NOT support `__slots__`. Valid for regular classes (like `BracketError`, `CheckBracketsResult` in validate.py), invalid for TypedDicts (like `WordMetrics`, `LineMetrics`, `CharCategoryMetrics` in measure.py).

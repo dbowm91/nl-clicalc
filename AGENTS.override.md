@@ -25,9 +25,6 @@ Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`. Word f
 **visible_repr() Check Order is Correct:**
 The variation selector check (0xfe00-0xfe0f) comes BEFORE the combining mark check in `visible_repr()`. This is the correct order per AGENTS.md conventions. The code at primitives.py:273-276 is correct.
 
-**SuccessEnvelope is Defined but Unused:**
-The `SuccessEnvelope` TypedDict in `schemas.py` is never imported or used in `tools.py`. Only `ErrorEnvelope` is used. Consider using consistently or removing.
-
 ### Known Issues (Low Priority - Deferred)
 
 These items are documented but not critical:

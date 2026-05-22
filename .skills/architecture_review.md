@@ -56,34 +56,35 @@ For each module, examine:
 - TypedDict vs NamedTuple mismatches (documentation shows one, code uses other)
 - Missing function aliases (documentation shows `normalize_main`, `mcp_main` but they don't exist)
 - ErrorEnvelope class documented but doesn't exist in code
-- Data structure field mismatches (CheckBracketsResult, WordMetrics) - most fixed
-- Classification labels in synthesis.py now match documentation (`accent_or_diacritic_difference` implemented)
+- Data structure field mismatches (CheckBracketsResult, WordMetrics) - all fixed
+- Classification labels in synthesis.py (`accent_or_diacritic_difference`, `unicode_normalization_only`) now properly reachable
 
 ## Architecture Review Findings (2026-05-22)
 
-During comprehensive architecture review of all 15 modules, the following issues were identified and fixed:
+During comprehensive architecture review of all modules, the following issues were identified and fixed:
 
 **Critical Bugs Fixed:**
-1. `units.py.__rsub__` - operand reversal behavior intentional; `5 - UnitValue(3, 'ft')` returns `2 ft`
-2. `exact/__init__.py` - missing exports for `unicode_scripts`, `confusables_count`, `longest_common_subsequence`
-3. `measure.py` - invalid `__slots__` on TypedDict classes removed
-4. `primitives.py` - BIDI control chars (U+202A-202E, U+2066-2069) already in `_INVISIBLE_CHARS`
-5. `normalize.py` - REPL history condition already checks `_ is not None`
-6. `build_single.py` - `mcp_main = main` alias fix when main is renamed to mcp_main during build
+1. `normalize.py.combine_number_parts()` - Added skip_next flag to prevent duplicate processing of merged number parts
+2. `synthesis.py._classify_difference()` - Reordered checks so NFC equality is checked before casefold equality
+3. `exact/__init__.py` - missing exports for `unicode_scripts`, `confusables_count`, `longest_common_subsequence`
+4. `measure.py` - invalid `__slots__` on TypedDict classes removed
+5. `primitives.py` - BIDI control chars (U+202A-202E, U+2066-2069) already in `_INVISIBLE_CHARS`
+6. `normalize.py` - REPL history condition already checks `_ is not None`
 
 **Medium Priority Fixed:**
-- `synthesis.py._generate_agent_instruction` - missing case for `accent_or_diacritic_difference` classification
-- `validate.py` - unused `signal` import removed
+- `synthesis.py._generate_agent_instruction` - missing case for `accent_or_diacritic_difference` classification now handled
 - `primitives.py` - dead `_advance_past_sequence()` function removed
-- `evaluator.py` - redundant local import of `convert_temperature` removed
 - `measure.py` - control_chars now counts Co and Cn per UTS #55
-- `normalize.py` - `combine_number_parts()` fixed for "ten six" case
 - `normalize.py` - `_handle_negative_token()` bounds checking added
+- `schemas.py` - removed unused `SuccessEnvelope` TypedDict
+- `validate.md` - fixed check_brackets examples and RegexMatch naming
+- `unicode_tools.md` - added `unicode_scripts()` and `confusables_count()` to index
+- `overview.md` - added `get_unit_category()` to Key Data Structures table
 
 **Design Decisions (Not Bugs):**
-- `are_units_compatible()` returns `True` for unknown categories by design (allows custom units)
+- `are_units_compatible()` returns `False` when one category is known but other is unknown (safe behavior)
 - `evaluate_cached` caching doesn't invalidate on variable changes (stable expressions expected)
-- `__rsub__` behavior for scalar minus UnitValue is intentional
+- `__rsub__` behavior for scalar minus UnitValue is intentional (result in unit's unit)
 
 ## Architecture Files Location
 - `architecture/` - Module-level documentation
