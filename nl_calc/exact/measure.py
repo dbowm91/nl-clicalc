@@ -231,11 +231,10 @@ def char_category_metrics(s: str) -> CharCategoryMetrics:
         elif cat.startswith("Z"):  # Separators (spaces)
             spaces += 1
         elif cat.startswith("C"):  # Other (control, format, etc.)
-            if cat == "Cc":  # Control characters
-                control_chars += 1
-            elif cat == "Cf":  # Format characters (e.g., U+FEFF BOM)
+            if cat == "Cf":  # Format characters (e.g., U+FEFF BOM)
                 pass  # Cf excluded from control_chars count per UTS #55
-            # Other C* (like surrogate) skip
+            else:
+                control_chars += 1  # Cc, Co, Cn all count
         elif cat.startswith("M"):  # Mark categories
             combining_marks += 1
 

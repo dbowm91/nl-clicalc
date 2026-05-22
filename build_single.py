@@ -254,6 +254,7 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     # Only replace when it's specifically the MCP server main (has MCP docstring)
     if '"""Main entry point for MCP server.' in code:
         code = code.replace("def main() -> int:", "def mcp_main() -> int:")
+        code = code.replace("mcp_main = main", "# MCP main already renamed to mcp_main")
 
     # Exact imports into synthesis
     code = code.replace("from ..exact import", "from exact import")
@@ -295,6 +296,7 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     code = code.replace("_line_metrics(", "line_metrics(")
     code = code.replace("_word_metrics(", "word_metrics(")
     code = code.replace("_find_invisibles(", "find_invisibles(")
+    code = code.replace("_count_graphemes(", "count_graphemes(")
     code = code.replace("_casefold_text(", "casefold_text(")
     code = code.replace("_normalize_unicode(", "normalize_unicode(")
     code = code.replace("_normalized_equal(", "normalized_equal(")

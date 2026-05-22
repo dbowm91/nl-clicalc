@@ -499,6 +499,8 @@ def combine_number_parts(
         if i == 0:
             if i != len(number_parts) - 1 and part < 10 and number_parts[i + 1] == 10:
                 result.append(f"{part + number_parts[i + 1]}")
+            elif i != len(number_parts) - 1 and part == 10 and number_parts[i + 1] < 10:
+                result.append(f"{part + number_parts[i + 1]}")
             elif part != 10:
                 result.append(str(part))
         else:
@@ -653,6 +655,8 @@ def _handle_negative_token(
     patterns: Mapping[str, Pattern[str]],
 ) -> tuple[list, list]:
     """Handle negative token patterns like 'five-six' or '5.-2'."""
+    if index < 2 or index >= len(tokens) or (index - 1) >= len(tokens) or (index - 2) >= len(tokens):
+        return tokens, []
     temp = tokens[index].split("-")
     tokens[index - 2] = f"{tokens[index - 2]}.{temp[0]}"
     tokens[index - 1] = ""
