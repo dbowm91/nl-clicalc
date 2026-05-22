@@ -99,6 +99,8 @@ Detection algorithm:
 3. If text contains \n → "LF"
 4. Otherwise → "none"
 
+Note: `average_word_length` is rounded to 2 decimal places.
+
 ## Index
 
 See [overview.md](overview.md) for the module index.

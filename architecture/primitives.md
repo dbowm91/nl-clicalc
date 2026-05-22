@@ -99,7 +99,7 @@ Return basic text measurements as a TypedDict:
 class MeasureBasic(TypedDict):
     bytes_utf8: int           # UTF-8 byte count
     codepoints: int          # Total codepoints
-    graphemes_estimate: None # Not implemented
+    graphemes_estimate: int  # Grapheme cluster count
     chars_no_whitespace: int # Non-whitespace characters
     ascii: int               # ASCII characters
     non_ascii: int           # Non-ASCII characters
