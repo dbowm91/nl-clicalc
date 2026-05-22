@@ -331,13 +331,15 @@ def _classify_difference(
     if raw_equal:
         return "exact_match"
 
-    if casefold_equal:
-        return "case_only"
-
     if nfc_equal:
+        if byte_equal:
+            return "exact_match"
         if not casefold_equal:
             return "accent_or_diacritic_difference"
         return "unicode_normalization_only"
+
+    if casefold_equal:
+        return "case_only"
 
     if length_diff:
         return "length_only"

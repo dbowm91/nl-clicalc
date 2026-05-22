@@ -495,17 +495,24 @@ def combine_number_parts(
 ) -> list:
     """Combine number parts into a single mathematical expression."""
     result = []
+    skip_next = False
     for i, part in enumerate(number_parts):
+        if skip_next:
+            skip_next = False
+            continue
         if i == 0:
             if i != len(number_parts) - 1 and part < 10 and number_parts[i + 1] == 10:
                 result.append(f"{part + number_parts[i + 1]}")
+                skip_next = True
             elif i != len(number_parts) - 1 and part == 10 and number_parts[i + 1] < 10:
                 result.append(f"{part + number_parts[i + 1]}")
+                skip_next = True
             elif part != 10:
                 result.append(str(part))
         else:
             if i != len(number_parts) - 1 and part < 10 and number_parts[i + 1] == 10:
                 result.append(f"{part + number_parts[i + 1]}")
+                skip_next = True
             elif part == 10 and number_parts[i - 1] < 10:
                 pass
             elif part < 10:
