@@ -1,23 +1,5 @@
 # Architecture Review Plan
 
-## Status: COMPLETED
-
-All 12 modules reviewed:
-- normalize: Documentation needs minor updates (duplicate data structures, missing functions)
-- evaluator: Missing constants in docs, missing functions (degrees, radians)
-- units: Missing TEMPERATURE_CONVERSIONS doc and helper functions
-- cli: Documentation errors (normalize_main alias, verbose mode flag)
-- primitives: Minor VS handling clarification
-- unicode_tools: Minor doc formatting issues
-- confusables: Large file size not documented
-- validate: CheckBracketsResult structure completely wrong in docs
-- diff: TypedDict vs NamedTuple mismatch, algorithm description incorrect
-- measure: WordMetrics example has field that doesn't exist (max_word_length)
-- synthesis: Classification labels incorrect (accent_or_diacritic vs case_only)
-- mcp_server: ErrorEnvelope doesn't exist, mcp_main alias doesn't exist
-
-All 346 tests pass.
-
 ## Overview
 
 This plan coordinates a comprehensive review of all architecture documents in this directory, excluding this file itself. Each module will be reviewed by a dedicated subagent that will:
@@ -31,18 +13,21 @@ This plan coordinates a comprehensive review of all architecture documents in th
 
 | # | Module | Architecture Doc | Source Location | Review Output |
 |---|--------|-----------------|-----------------|---------------|
-| 1 | normalize | [normalize.md](normalize.md) | `nl_calc/normalize.py` | `plans/normalize_review.md` |
-| 2 | evaluator | [evaluator.md](evaluator.md) | `nl_calc/evaluator.py` | `plans/evaluator_review.md` |
-| 3 | units | [units.md](units.md) | `nl_calc/units.py` | `plans/units_review.md` |
-| 4 | cli | [cli.md](cli.md) | `nl_calc/__main__.py` | `plans/cli_review.md` |
-| 5 | primitives | [primitives.md](primitives.md) | `nl_calc/exact/primitives.py` | `plans/primitives_review.md` |
-| 6 | unicode_tools | [unicode_tools.md](unicode_tools.md) | `nl_calc/exact/unicode_tools.py` | `plans/unicode_tools_review.md` |
-| 7 | confusables | [confusables.md](confusables.md) | `nl_calc/exact/confusables.py` | `plans/confusables_review.md` |
-| 8 | validate | [validate.md](validate.md) | `nl_calc/exact/validate.py` | `plans/validate_review.md` |
-| 9 | diff | [diff.md](diff.md) | `nl_calc/exact/diff.py` | `plans/diff_review.md` |
-| 10 | measure | [measure.md](measure.md) | `nl_calc/exact/measure.py` | `plans/measure_review.md` |
-| 11 | synthesis | [synthesis.md](synthesis.md) | `nl_calc/exact/synthesis.py` | `plans/synthesis_review.md` |
-| 12 | mcp_server | [mcp_server.md](mcp_server.md) | `nl_calc/mcp/server.py` | `plans/mcp_server_review.md` |
+| 1 | overview | [overview.md](overview.md) | N/A (overview only) | `plans/overview_review.md` |
+| 2 | normalize | [normalize.md](normalize.md) | `nl_calc/normalize.py` | `plans/normalize_review.md` |
+| 3 | evaluator | [evaluator.md](evaluator.md) | `nl_calc/evaluator.py` | `plans/evaluator_review.md` |
+| 4 | units | [units.md](units.md) | `nl_calc/units.py` | `plans/units_review.md` |
+| 5 | cli | [cli.md](cli.md) | `nl_calc/__main__.py` | `plans/cli_review.md` |
+| 6 | primitives | [primitives.md](primitives.md) | `nl_calc/exact/primitives.py` | `plans/primitives_review.md` |
+| 7 | unicode_tools | [unicode_tools.md](unicode_tools.md) | `nl_calc/exact/unicode_tools.py` | `plans/unicode_tools_review.md` |
+| 8 | confusables | [confusables.md](confusables.md) | `nl_calc/exact/confusables.py` | `plans/confusables_review.md` |
+| 9 | validate | [validate.md](validate.md) | `nl_calc/exact/validate.py` | `plans/validate_review.md` |
+| 10 | diff | [diff.md](diff.md) | `nl_calc/exact/diff.py` | `plans/diff_review.md` |
+| 11 | measure | [measure.md](measure.md) | `nl_calc/exact/measure.py` | `plans/measure_review.md` |
+| 12 | synthesis | [synthesis.md](synthesis.md) | `nl_calc/exact/synthesis.py` | `plans/synthesis_review.md` |
+| 13 | exact | [exact.md](exact.md) | `nl_calc/exact/` | `plans/exact_review.md` |
+| 14 | mcp | [mcp.md](mcp.md) | `nl_calc/mcp/` | `plans/mcp_review.md` |
+| 15 | mcp_server | [mcp_server.md](mcp_server.md) | `nl_calc/mcp/server.py` | `plans/mcp_server_review.md` |
 
 ## Subagent Instructions
 
@@ -54,7 +39,7 @@ Each subagent should perform the following for their designated module:
 - Note any specific algorithms, data structures, or edge cases mentioned
 
 ### Phase 2: Code Verification
-- Read the corresponding source code file
+- Read the corresponding source code file(s)
 - Cross-reference each claim in the architecture doc with the actual implementation
 - Identify any discrepancies between documentation and code
 - Verify that all documented features are actually implemented
@@ -76,7 +61,7 @@ Each subagent should perform the following for their designated module:
 
 ## Execution
 
-Launch subagents in parallel for modules 1-12, then aggregate results.
+Launch subagents in parallel for all modules, then aggregate results.
 
 ## Verification Commands
 
