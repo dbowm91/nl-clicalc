@@ -1,68 +1,79 @@
 # Architecture Review Plan
 
-## Status: Incomplete - Implementation Phase
+This document outlines the review plan for architecture documentation in this directory.
 
-The review phase is complete. All 15 module reviews have been completed and saved to `plans/<module>_review.md`. This document now tracks the implementation phase to address findings from the reviews.
+## Review Strategy
 
----
+For each discrete architecture module:
+1. Read the architecture documentation for the module
+2. Locate and read the corresponding source code
+3. Verify claims made in the documentation against the code
+4. Interrogate the code for improvements and potential bugs
+5. Write an improvement plan to `plans/review_improvements_<modulename>.md`
 
-## Implementation Waves
+## Discrete Architecture Modules
 
-### Wave 1: Critical Bugs (Code Fixes) - ✅ COMPLETED
+| Module | Documentation | Source Files |
+|--------|--------------|--------------|
+| overview | architecture/overview.md | (top-level) |
+| normalize | architecture/normalize.md | nl_calc/normalize.py |
+| evaluator | architecture/evaluator.md | nl_calc/evaluator.py |
+| units | architecture/units.md | nl_calc/units.py |
+| primitives | architecture/primitives.md, architecture/exact-primitives.md | nl_calc/exact/primitives.py |
+| unicode_tools | architecture/unicode_tools.md, architecture/exact-unicode_tools.md | nl_calc/exact/unicode_tools.py |
+| confusables | architecture/confusables.md | nl_calc/exact/confusables.py |
+| validate | architecture/validate.md | nl_calc/exact/validate.py |
+| diff | architecture/diff.md | nl_calc/exact/diff.py |
+| measure | architecture/measure.md | nl_calc/exact/measure.py |
+| synthesis | architecture/synthesis.md | nl_calc/exact/synthesis.py |
+| cli | architecture/cli.md | nl_calc/__main__.py |
+| mcp | architecture/mcp.md, architecture/mcp_server.md | nl_calc/mcp/server.py, tools.py, schemas.py |
+| api | architecture/api.md | (various) |
+| exact | architecture/exact.md | nl_calc/exact/*.py |
 
-| # | Module | Issue | Status |
-|---|--------|-------|--------|
-| 1.1 | units | `__rsub__` operand reversal bug (line 81-82) | ✅ Fixed |
-| 1.2 | exact | Missing exports in `__init__.py` (unicode_scripts, confusables_count, longest_common_subsequence) | ✅ Fixed |
-| 1.3 | measure | Invalid `__slots__` on TypedDict classes (lines 26, 38, 52) | ✅ Fixed |
-| 1.4 | primitives | Invalid emoji range 0x1FFFF → 0x10FFFF (line 382) | ✅ Fixed |
-| 1.5 | cli | REPL history stores None on eval failure (line 1029) | ✅ Fixed |
-| 1.6 | mcp | Missing `mcp_main` alias in server.py | ✅ Fixed |
+## Subagent Assignments
 
-### Wave 2: Medium Priority Fixes - ✅ COMPLETED
+Each subagent will review one module and write improvement plans to `plans/review_improvements_<modulename>.md`.
 
-| # | Module | Issue | Status |
-|---|--------|-------|--------|
-| 2.1 | units | Missing micro-unit categories (uA, μA, uV, μV) | ✅ Already present |
-| 2.2 | synthesis | Missing accent_or_diacritic_difference case in `_generate_agent_instruction` | ✅ Fixed |
-| 2.3 | exact | Remove unused imports (signal in validate.py) | ✅ Fixed |
-| 2.4 | evaluator | Cache invalidation issue with user variables | ⏸️ By design |
-| 2.5 | units | `are_units_compatible()` treats unknown categories as compatible | ⏸️ By design |
+### Module Review Tasks
 
-### Wave 3: Documentation & Low Priority - ✅ COMPLETED
+1. **normalize**: Review architecture/normalize.md against nl_calc/normalize.py. Verify all documented functions, data structures, and behaviors exist and work as documented.
 
-| # | Module | Issue | Status |
-|---|--------|-------|--------|
-| 3.1 | All | Update architecture docs to reflect TypedDict usage | 📋 Deferred to separate task |
-| 3.2 | All | Add missing function documentation | 📋 Deferred to separate task |
-| 3.3 | evaluate | Export memory/variable functions via `__all__` | ✅ Fixed |
-| 3.4 | mcp | Update SuccessEnvelope usage or remove dead code | 📋 Deferred |
+2. **evaluator**: Review architecture/evaluator.md against nl_calc/evaluator.py. Verify AST-based evaluation logic, operator handling, and function implementations.
 
----
+3. **units**: Review architecture/units.md against nl_calc/units.py. Verify unit definitions, conversion factors, and temperature conversion logic.
 
-## Modules Reviewed
+4. **primitives**: Review architecture/primitives.md and architecture/exact-primitives.md against nl_calc/exact/primitives.py. Verify UTF-8 handling, codepoint iteration, and Unicode normalization.
 
-| # | Module | Architecture Doc | Source Location | Review Output |
-|---|--------|-----------------|-----------------|---------------|
-| 1 | overview | [overview.md](overview.md) | N/A (overview only) | `plans/overview_review.md` |
-| 2 | normalize | [normalize.md](normalize.md) | `nl_calc/normalize.py` | `plans/normalize_review.md` |
-| 3 | evaluator | [evaluator.md](evaluator.md) | `nl_calc/evaluator.py` | `plans/evaluator_review.md` |
-| 4 | units | [units.md](units.md) | `nl_calc/units.py` | `plans/units_review.md` |
-| 5 | cli | [cli.md](cli.md) | `nl_calc/__main__.py` | `plans/cli_review.md` |
-| 6 | primitives | [primitives.md](primitives.md) | `nl_calc/exact/primitives.py` | `plans/primitives_review.md` |
-| 7 | unicode_tools | [unicode_tools.md](unicode_tools.md) | `nl_calc/exact/unicode_tools.py` | `plans/unicode_tools_review.md` |
-| 8 | confusables | [confusables.md](confusables.md) | `nl_calc/exact/confusables.py` | `plans/confusables_review.md` |
-| 9 | validate | [validate.md](validate.md) | `nl_calc/exact/validate.py` | `plans/validate_review.md` |
-| 10 | diff | [diff.md](diff.md) | `nl_calc/exact/diff.py` | `plans/diff_review.md` |
-| 11 | measure | [measure.md](measure.md) | `nl_calc/exact/measure.py` | `plans/measure_review.md` |
-| 12 | synthesis | [synthesis.md](synthesis.md) | `nl_calc/exact/synthesis.py` | `plans/synthesis_review.md` |
-| 13 | exact | [exact.md](exact.md) | `nl_calc/exact/` | `plans/exact_review.md` |
-| 14 | mcp | [mcp.md](mcp.md) | `nl_calc/mcp/` | `plans/mcp_review.md` |
-| 15 | mcp_server | [mcp_server.md](mcp_server.md) | `nl_calc/mcp/server.py` | `plans/mcp_server_review.md` |
+5. **unicode_tools**: Review architecture/unicode_tools.md and architecture/exact-unicode_tools.md against nl_calc/exact/unicode_tools.py. Verify script detection and confusable detection functions.
 
-## Verification Commands
+6. **confusables**: Review architecture/confusables.md against nl_calc/exact/confusables.py. Verify confusable character identification logic.
 
-After all reviews complete, run:
-```bash
-python3 -m pytest tests/
-```
+7. **validate**: Review architecture/validate.md against nl_calc/exact/validate.py. Verify JSON/bracket/regex validation implementations.
+
+8. **diff**: Review architecture/diff.md against nl_calc/exact/diff.py. Verify string diffing algorithms and longest common subsequence implementation.
+
+9. **measure**: Review architecture/measure.md against nl_calc/exact/measure.py. Verify text metrics (words, lines, categories) implementations.
+
+10. **synthesis**: Review architecture/synthesis.md against nl_calc/exact/synthesis.py. Verify higher-level text analysis tools.
+
+11. **cli**: Review architecture/cli.md against nl_calc/__main__.py. Verify CLI interface implementation.
+
+12. **mcp**: Review architecture/mcp.md and architecture/mcp_server.md against nl_calc/mcp/. Verify MCP server implementation, tool definitions, and JSON schemas.
+
+13. **api**: Review architecture/api.md. Verify documented API surface matches actual exports from modules.
+
+14. **exact**: Review architecture/exact.md as overview of nl_calc/exact/ subpackage.
+
+15. **overview**: Review architecture/overview.md as top-level architecture documentation.
+
+## Output Files
+
+Each subagent will write their improvement plan to:
+- `plans/review_improvements_<modulename>.md`
+
+Plans should include:
+- Verified claims (with code references)
+- Discrepancies between documentation and code
+- Potential bugs identified
+- Improvement suggestions with priority
