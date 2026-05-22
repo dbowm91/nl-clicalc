@@ -125,9 +125,9 @@ dp[i][j] = min(
 
 ### Diff Span Generation
 
-1. Compute Levenshtein distance matrix
-2. Backtrack to find optimal edit operations
-3. Convert operations to diff spans, merging consecutive operations of the same type
+1. Uses `difflib.SequenceMatcher` to compute optimal edit script
+2. Converts SequenceMatcher opcodes to diff spans
+3. Merges consecutive operations of the same type
 
 ## Index
 

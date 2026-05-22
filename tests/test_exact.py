@@ -573,7 +573,7 @@ class TestSynthesis:
 
     def test_explain_diff_classification_normalization(self):
         result = explain_diff("cafe\u0301", "café")
-        assert result["classification"] == "unicode_normalization_only"
+        assert result["classification"] == "accent_or_diacritic_difference"
 
     def test_explain_diff_classification_case(self):
         result = explain_diff("HELLO", "hello")

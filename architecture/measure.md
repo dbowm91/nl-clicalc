@@ -48,7 +48,8 @@ class WordMetrics(NamedTuple):
 ```python
 >>> word_metrics("hello world hello")
 WordMetrics(words=3, unique_words_casefolded=2,
-            max_word_length=5, avg_word_length=5.0)
+            sentences_estimate=1, paragraphs=1,
+            average_word_length=5.0)
 ```
 
 ### `char_category_metrics(text: str) -> CharCategoryMetrics`
@@ -63,7 +64,7 @@ class CharCategoryMetrics(NamedTuple):
     punctuation: int     # Category P* (Pc, Pd, Ps, Pe, Pi, Pf, Po)
     symbols: int          # Category S* (Sm, Sc, Sk, So)
     spaces: int           # Category Zs (and other Z*)
-    control_chars: int    # Category C* (Cc, Cf, Cs, Co, Cn)
+    control_chars: int    # Category C* (Cc, Cs, Co, Cn) - Cf excluded per UTS #55
     combining_marks: int # Category M* (Mn, Mc, Me)
 ```
 

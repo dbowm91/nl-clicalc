@@ -79,7 +79,8 @@ def first_diff(a: str, b: str) -> FirstDiff | None:
 def common_prefix_suffix(a: str, b: str) -> CommonPrefixSuffix:
     """Find common prefix and suffix lengths of two strings.
 
-    Avoids overlapping prefix/suffix.
+    Avoids overlapping prefix/suffix. If the entire string would be
+    overlapped, both prefix and suffix are zero.
 
     Args:
         a: First string.
@@ -87,6 +88,14 @@ def common_prefix_suffix(a: str, b: str) -> CommonPrefixSuffix:
 
     Returns:
         Dictionary with common_prefix_len and common_suffix_len.
+
+    Example:
+        >>> common_prefix_suffix("prefix_middle_suffix", "xxx_middle_yyy")
+        {'common_prefix_len': 0, 'common_suffix_len': 0}
+        >>> common_prefix_suffix("hello world", "hello there")
+        {'common_prefix_len': 6, 'common_suffix_len': 0}
+        >>> common_prefix_suffix("testing", "ing")
+        {'common_prefix_len': 0, 'common_suffix_len': 0}
     """
     # Find common prefix
     prefix_len = 0

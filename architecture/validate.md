@@ -11,14 +11,14 @@ Provides validation utilities for checking brackets, JSON syntax, and testing re
 Check whether delimiters are structurally balanced.
 
 ```python
-@dataclass
+@ dataclass
 class CheckBracketsResult(NamedTuple):
     balanced: bool
-    error: str | None          # Error message if unbalanced
-    position: int | None      # Position of error
-    expected: str | None      # What was expected
-    unexpected: str | None    # What was unexpected
+    unmatched_openers: list[BracketError]  # Unmatched opening brackets
+    unmatched_closers: list[BracketError]  # Unmatched closing brackets
 ```
+
+**`BracketError`** contains: `char`, `index`, `line`, `column`
 
 **Default bracket pairs**:
 ```python

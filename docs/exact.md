@@ -284,7 +284,7 @@ result = common_prefix_suffix("hello world", "hello there")
 result = common_prefix_suffix("prefix_middle_suffix", "xxx_middle_yyy")
 # CommonPrefixSuffix(
 #   common_prefix_len=0,
-#   common_suffix_len=6   # "_suffix"
+#   common_suffix_len=0   # no common prefix or suffix
 # )
 ```
 
