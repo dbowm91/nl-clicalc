@@ -56,8 +56,8 @@ For each module, examine:
 - TypedDict vs NamedTuple mismatches (documentation shows one, code uses other)
 - Missing function aliases (documentation shows `normalize_main`, `mcp_main` but they don't exist)
 - ErrorEnvelope class documented but doesn't exist in code
-- Data structure field mismatches (CheckBracketsResult, WordMetrics)
-- Classification labels in synthesis.py don't match documentation
+- Data structure field mismatches (CheckBracketsResult, WordMetrics) - most fixed
+- Classification labels in synthesis.py now match documentation (`accent_or_diacritic_difference` implemented)
 
 ## Architecture Files Location
 - `architecture/` - Module-level documentation

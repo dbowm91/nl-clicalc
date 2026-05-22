@@ -46,6 +46,16 @@ if is_bitwise and (isinstance(left_val, float) or isinstance(right_val, float)):
     raise EvaluationError("Bitwise operations require integer operands, not floats")
 ```
 
+#### Text classification (accent/diacritic vs case)
+The `_classify_difference()` function in synthesis.py returns different classifications:
+- `exact_match` - strings are identical
+- `case_only` - casefold makes them equal (e.g., "HELLO" vs "hello")
+- `accent_or_diacritic_difference` - NFC equal but casefold differs (e.g., "café" vs "cafe\u0301")
+- `unicode_normalization_only` - NFC equal and casefold equal but not raw equal
+- `length_only` - different lengths
+- `invisible_character` - invisible characters detected
+- `ordinary_text_difference` - other differences
+
 ### Module Organization
 
 #### Core modules (combined by build_single.py)

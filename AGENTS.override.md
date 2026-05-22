@@ -42,9 +42,15 @@ These items are documented but not critical:
 - `notifications/cancel` and `notifications/progress` not implemented in MCP server
 - `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
 - Bidirectional confusable detection not implemented
-- `difflib.SequenceMatcher` used for diff (not pure Levenshtein)
-- Temperature-to-non-temperature conversions silently fall through (no warning)
-- Redundant double length check in mcp/tools.py (lines 77-80)
-- DEBUG flag in validate.py causes side effects (prints to stderr)
 
-(End of file - 67 lines)
+### Recently Fixed Issues (2026-05-22)
+
+The following were fixed as part of the plan implementation:
+- `accent_or_diacritic_difference` classification now correctly returned when NFC equal but casefold differs (synthesis.py `_classify_difference`)
+- `common_prefix_suffix()` docstring now has working examples
+- Architecture docs updated to reflect actual CheckBracketsResult (with unmatched_openers/unmatched_closers)
+- WordMetrics architecture doc fixed (max_word_length example removed - field doesn't exist)
+- diff_spans algorithm architecture doc updated (uses SequenceMatcher, not Levenshtein backtrack)
+- TypedDict __slots__ added to validate.py and measure.py classes
+
+(End of file - 73 lines)

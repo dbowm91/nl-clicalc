@@ -209,10 +209,12 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 
 ## Implementation Notes
 
+### Implementation Notes
+
 ### exact/ Module Conventions
 - **`utf8_bytes()` returns `bytes`** - Not an int count, returns actual UTF-8 encoded bytes
 - **`visible_repr()` display order matters** - Variation selector checks must come BEFORE combining mark checks (U+FE00-U+FE0F should be checked before category 'M'). The code at primitives.py:273-276 is correct.
-- **WORD JOINER (U+2060)** - Code at lines 277-278 in primitives.py is redundant dead code; removed in fix
+- **WORD JOINER (U+2060)** - Now handled by `_INVISIBLE_CHARS` dict lookup, redundant explicit check removed
 - **Newline detection `mixed` value** - The `mixed` newline style can be returned but was not properly detected in original implementation
 - **`_get_script_heuristic()` benefits from caching** - Now has `@functools.lru_cache` decorator
 - **Cf (format) characters intentionally excluded** - `control_chars` in `measure.py` excludes `Cf` category; format characters are silently ignored per UTS #55
@@ -221,6 +223,8 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - **`confusables_count()` helper** - Fast function to count confusables without building full list (unicode_tools.py)
 - **`unicode_scripts()` batch function** - Returns script list for all chars in string (unicode_tools.py)
 - **`longest_common_subsequence()`** - Implemented in diff.py using dynamic programming
+- **`accent_or_diacritic_difference` classification** - Returned when NFC equal but casefold differs (e.g., "café" vs "cafe\u0301")
+- **`common_prefix_suffix()` examples fixed** - Docstring now has working examples showing overlap prevention behavior
 
 ### TypedDict vs NamedTuple
 - Architecture docs may show `@dataclass class Xxx(NamedTuple)` but code uses `class Xxx(TypedDict)`
