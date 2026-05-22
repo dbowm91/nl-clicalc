@@ -29,6 +29,7 @@ from nl_calc.normalize import main, normalize_main  # Both refer to same functio
 | `--json` | Output result as JSON |
 | `-i`, `--interactive` | Start interactive REPL mode |
 | `--mcp` | Run as MCP server for exact text tools |
+| `--verbose` | Show detailed error information and tracebacks |
 
 ## Text Commands
 

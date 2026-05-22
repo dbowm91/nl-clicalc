@@ -82,6 +82,23 @@ class DiffSpan(TypedDict):
     b_text: str
 ```
 
+### FirstDiff (TypedDict)
+
+```python
+class FirstDiff(TypedDict):
+    position: int
+    a_char: str
+    b_char: str
+```
+
+### CommonPrefixSuffix (TypedDict)
+
+```python
+class CommonPrefixSuffix(TypedDict):
+    common_prefix_len: int
+    common_suffix_len: int
+```
+
 **Algorithm**: Uses difflib.SequenceMatcher to compute optimal edit script, then converts to diff spans.
 
 ```python

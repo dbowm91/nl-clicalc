@@ -352,7 +352,8 @@ def _is_extend_char(char: str) -> bool:
     """Check if char is an Extend-class character per UAX #29 GB9.
 
     Note: ZWJ (U+200D) is NOT included here because it's part of emoji
-    ZWJ sequences (GB11) and must be handled specially in _advance_past_sequence.
+    ZWJ sequences (GB11) and must be handled specially in grapheme
+    boundary detection.
     """
     cat = unicodedata.category(char)
     cp = ord(char)

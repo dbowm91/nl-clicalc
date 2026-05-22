@@ -16,7 +16,7 @@ Comprehensive text measurement combining multiple primitives.
 class MeasureTextResult(TypedDict):
     bytes_utf8: int
     codepoints: int
-    graphemes: None
+    graphemes: int
     words: int
     unique_words_casefolded: int
     lines: int

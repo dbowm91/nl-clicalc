@@ -67,11 +67,11 @@ class CharCategoryMetrics(TypedDict):
 
 Uses Unicode category ranges for classification:
 - Letters: unicodedata.category starts with "L"
-- Digits: category "Nd"
+- Digits: category starts with "N" (includes Nd, Nl, No)
 - Punctuation: category starts with "P"
 - Symbols: category starts with "S"
 - Spaces: category starts with "Z"
-- Control chars: category starts with "C" (excluding newlines/tabs)
+- Control chars: category starts with "C" (excluding Cf per UTS #55)
 - Combining marks: category starts with "M"
 
 ```python

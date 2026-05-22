@@ -17,22 +17,22 @@ Detects:
 
 ```python
 class ScriptInfo(TypedDict):
+    index: int        # Index in string
+    char: str         # The character
     script: str       # Script name (e.g., "Latin", "Cyrillic")
-    count: int        # Number of characters in this script
-    start: int        # Starting index in string
-    end: int          # Ending index in string
+    codepoint: str    # "U+XXXX" format
 ```
 
 ### ConfusableInfo (TypedDict)
 
 ```python
 class ConfusableInfo(TypedDict):
+    index: int             # Index in string
     char: str              # The confusable character
     codepoint: str         # "U+XXXX" format
     name: str              # Unicode name
-    confusable_for: str    # What it might be confused with
-    confusable_codepoint: str  # Confusing character's codepoint
-    script: str            # Script of the character
+    confusable_with: str   # What it might be confused with
+    confusable_name: str    # Confusing character's name
 ```
 
 ## Functions
@@ -62,15 +62,15 @@ unicode_scripts("Привет")    # → ["Cyrillic", ...]
 unicode_scripts("abc123")    # → ["Latin", "Latin", "Latin", "Latin", "Latin", "Latin"]
 ```
 
-### `detect_mixed_scripts(s: str) -> list[ScriptInfo]`
+### `detect_mixed_scripts(s: str) -> dict`
 
 Detects runs of mixed scripts in a string.
+Returns dict with keys: `mixed_scripts` (list of ScriptInfo), `scripts` (list), `positions` (list).
 
 ```python
-detect_mixed_scripts("Hello")       # → [] (all Latin)
-detect_mixed_scripts("Привет")     # → [] (all Cyrillic)
-detect_mixed_scripts("abcЯзык")     # → [ScriptInfo(script="Latin", count=3, start=0, end=3),
-                                    #     ScriptInfo(script="Cyrillic", count=4, start=3, end=7)]
+detect_mixed_scripts("Hello")       # → {'mixed_scripts': [], 'scripts': [...], 'positions': [...]}
+detect_mixed_scripts("Привет")       # → {'mixed_scripts': [], ...}
+detect_mixed_scripts("abcЯзык")      # → {'mixed_scripts': [ScriptInfo(index=3, char='Я', script='Cyrillic', codepoint='U+042F'), ...], ...}
 ```
 
 **Security use case:** Detecting homoglyph attacks (e.g., "p@ypass.com" using Cyrillic 'a')
