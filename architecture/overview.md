@@ -1,89 +1,41 @@
 # Architecture Overview
 
-nl-clicalc is a natural language math expression calculator that uses only Python's standard library.
+nl-clicalc is a natural language math expression calculator that uses only Python's standard library. It parses math expressions in English ("five plus three") and converts them to numeric results, with support for unit conversions.
 
-## System Architecture
-
-```
-                                    ┌─────────────────────────────────────────┐
-                                    │              nl_calc.__init__            │
-                                    │   (Public API surface, re-exports)     │
-                                    └─────────────────────────────────────────┘
-                                                       │
-                ┌──────────────────────────────────────┼──────────────────────────────────────┐
-                │                                      │                                      │
-                ▼                                      ▼                                      ▼
-┌───────────────────────────────────────┐  ┌───────────────────────────────────────┐  ┌───────────────────┐
-│            normalize.py               │  │            evaluator.py                 │  │     units.py      │
-│   (NL parsing, text normalization)    │  │   (AST-based expression evaluation)   │  │ (Unit definitions)│
-└───────────────────────────────────────┘  └───────────────────────────────────────┘  └───────────────────┘
-                │                                      │
-                │          ┌───────────────────────────┘
-                │          │
-                ▼          ▼
-┌───────────────────────────────────────────────────────┐
-│                    exact/                              │
-│   (Unicode text inspection tools)                    │
-│   ┌──────────┬──────────┬──────────┬──────────┐      │
-│   │primitives│unicode_  │ confusables│ validate │     │
-│   │          │ tools    │           │          │      │
-│   └──────────┴──────────┴──────────┴──────────┘      │
-│   ┌──────────┬──────────┬──────────┐                  │
-│   │  diff    │ measure  │synthesis │                  │
-│   └──────────┴──────────┴──────────┘                  │
-└───────────────────────────────────────────────────────┘
-                │
-                ▼
-┌───────────────────────────────────────────────────────┐
-│                     mcp/                              │
-│   (MCP server for AI agent tool access)              │
-│   ┌──────────┬──────────┬──────────┐                  │
-│   │ server   │  tools   │ schemas │                  │
-│   └──────────┴──────────┴──────────┘                  │
-└───────────────────────────────────────────────────────┘
-```
-
-## Processing Pipelines
-
-nl-clicalc supports two evaluation paths:
-
-### 1. Full Pipeline (for Natural Language Input)
+## High-Level Architecture
 
 ```
-Input → run() → normalize_expression() → normalize() → evaluate() → Result
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              nl_calc                                       │
+│                    (Single-file build output)                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │  normalize   │  │  evaluator   │  │    units     │  │     mcp      │  │
+│  │   (NL→math)  │  │  (AST eval)  │  │  (converts)  │  │   (server)   │  │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘  │
+│                              │                                              │
+│                              ▼                                              │
+│                    ┌──────────────────┐                                   │
+│                    │      exact/       │                                   │
+│                    │  (text tools)     │                                   │
+│                    └──────────────────┘                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Steps:
-1. **run()** (`normalize.py`): Orchestrates the full pipeline
-2. **normalize_expression()**: Applies word replacements, converts number words, handles functions
-3. **normalize()**: Final cleanup of the expression string
-4. **AST Evaluation** (`evaluator.py`): Parse and evaluate the normalized expression
+## Core Components
 
-### 2. Direct Evaluation (for Pre-normalized Input)
+### 1. Calculator Pipeline
 
-```
-Input → evaluate() → Result
-```
+| Component | File | Purpose |
+|-----------|------|---------|
+| **Normalize** | [normalize.md](normalize.md) | Converts NL expressions to normalized math strings |
+| **Evaluator** | [evaluator.md](evaluator.md) | AST-based safe expression evaluation |
+| **Units** | [units.md](units.md) | Unit definitions and conversion |
+| **CLI** | [cli.md](cli.md) | Command-line interface |
 
-Skips normalization, directly parses via Python AST. Used when input is already normalized.
+### 2. Text/Unicode Tools (exact/)
 
-## Core Modules
-
-| Module | Purpose |
-|--------|---------|
-| [normalize.py](normalize.md) | Natural language tokenization, number word conversion, expression normalization |
-| [evaluator.py](evaluator.md) | AST parsing and evaluation, mathematical operations |
-| [units.py](units.md) | Unit definitions, conversion factors, temperature conversions |
-| [__main__.py](cli.md) | CLI entry point |
-| [__init__.py](api.md) | Public API surface |
-
-## Supporting Modules
-
-## Supporting Modules
-
-### exact/ - Text Inspection Tools
-
-Provides low-level Unicode text primitives for detecting hidden characters, confusables, and text metrics.
+Low-level Unicode text primitives for detecting hidden characters, confusables, and text metrics.
 
 | Module | Purpose |
 |--------|---------|
@@ -95,61 +47,144 @@ Provides low-level Unicode text primitives for detecting hidden characters, conf
 | [measure.md](measure.md) | Text metrics (words, lines, categories) |
 | [synthesis.md](synthesis.md) | Higher-level text analysis tools |
 
-### mcp/ - MCP Server
+### 3. MCP Server (mcp/)
 
-Model Context Protocol server for exposing text tools to AI agents.
+Model Context Protocol server for AI agent tool access via stdio.
 
 | Module | Purpose |
 |--------|---------|
-| [mcp_server.md](mcp_server.md) | MCP server implementation |
-| [server.md](mcp_server.md) | stdio-based MCP request handling |
-| [tools.md](mcp_server.md) | MCP tool definitions |
-| [schemas.md](mcp_server.md) | JSON schemas for MCP tool definitions |
+| [mcp_server.md](mcp_server.md) | MCP server implementation, JSON-RPC request handling |
 
-## Data Structures
+## Processing Pipelines
 
-### Key Constants and Mappings
+### Full Pipeline (Natural Language Input)
 
-- **`NUMBER_WORDS`** - Dictionary mapping number values to word variants ("one" → "1", "five" → "5")
-- **`OPERATOR_CONVERSIONS`** - Maps operator words to symbols ("plus" → "+")
-- **`UNIT_BASE`** - Base units and their conversion factors
-- **`UNIT_CONVERSIONS`** - Cached pairwise conversion factors
-- **`UNIT_ALIASES`** - Maps all unit variants to canonical forms
-- **`FUNCTION_MAPPINGS`** - Maps function name variants to canonical names
+```
+Input → run() → normalize_expression() → normalize() → evaluate() → Result
+```
 
-### Types
+1. **run()** - Orchestrates the full pipeline
+2. **normalize_expression()** - Tokenizes, converts words, handles functions
+3. **normalize()** - Final cleanup (percentages, complex suffix, whitespace)
+4. **evaluate()** - AST parsing and evaluation
 
-- **`UnitValue`** - Represents a numeric value with optional units (`60.48 m`)
-- **`EvaluationError`** - Raised when an expression is invalid
-- **`TimeoutError`** - Raised when evaluation exceeds timeout
+### Direct Evaluation (Pre-normalized Input)
+
+```
+Input → evaluate() → Result
+```
+
+Skips normalization, directly parses via Python AST. Used when input is already normalized.
+
+### Unit Conversion Pipeline
+
+```
+Input → run() → _handle_unit_conversion_from_tokens() → convert() → Result
+```
+
+Detects patterns like `2m in feet` and generates `convert(2*m, ft)` calls.
+
+## Data Flow
+
+```
+                    ┌─────────────────┐
+                    │   User Input    │
+                    │ "30m + 100ft"  │
+                    └────────┬────────┘
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │   normalize.normalize()        │
+              │   - word_to_operator          │
+              │   - word_to_number            │
+              │   - percentage handling      │
+              └──────────────┬───────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │   normalize_expression()     │
+              │   - split_at_operators      │
+              │   - convert_from_human      │
+              │   - apply_math_functions   │
+              │   - _preprocess_units       │
+              └──────────────┬───────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │   evaluator.evaluate()       │
+              │   - AST parse               │
+              │   - visit_* methods        │
+              │   - UnitValue arithmetic   │
+              └──────────────┬───────────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │     Result      │
+                    │   130.48 m      │
+                    └─────────────────┘
+```
+
+## Key Data Structures
+
+### NUMBER_WORDS
+Maps number values to word variants:
+- `1` → ["one"]
+- `100` → ["hundred"]
+- `1000` → ["thousand"]
+
+### OPERATOR_CONVERSIONS
+Maps operator words to symbols:
+- `"+"` → ["plus", "positive"]
+- `"*"` → ["times", "multiplied by", "of"]
+
+### UNIT_BASE
+Base units with conversion factors to canonical form:
+- `m` (meters) with conversions to km, cm, ft, in, etc.
+
+### UNIT_ALIASES
+Maps all unit variants to canonical forms:
+- `"kilometer"` → `"km"`
+- `"feet"` → `"ft"`
+
+### FUNCTION_MAPPINGS
+Maps function name variants to canonical names:
+- `"square root"` → `"sqrt"`
+- `"absolute"` → `"abs"`
 
 ## Security Model
 
-nl-clicalc uses AST-based parsing instead of `eval()`:
-- No arbitrary code execution
-- Controlled function access via whitelist
-- Built-in DoS protection (max nesting, exponent, factorial limits)
-- Timeout support for untrusted input
+1. **AST-based evaluation** - No `eval()`, only whitelisted operations
+2. **Node validation** - Forbidden node types blocked (Lambda, Subscript, etc.)
+3. **DoS protection** - Limits on exponent (10000), factorial (1000), nesting (100)
+4. **Timeout support** - `evaluate_with_timeout()` for untrusted input
+5. **Unit safety** - Incompatible units raise errors on add/subtract
 
 ## Build Process
 
-The codebase is designed to be assembled into a **single self-contained Python script**:
+```
+build_single.py                    nl_calc.py
+─────────────────────────►  ─────────────────────────────
+                              - units.py (inlined)
+                              - evaluator.py (inlined)
+                              - normalize.py (inlined)
+                              - exact/* (inlined)
+                              - mcp/* (inlined)
+```
 
-1. **`build_single.py`** - Combines modules into `nl_calc.py`
-2. **`install.py`** - Calls `build_single.py` then installs to `~/.local/bin/calc`
-
-All code must be in one of the core modules for assembly to work.
+The `build_single.py` script combines all modules into a single `nl_calc.py` for portability.
 
 ## Index
 
-- [normalize.md](normalize.md) - Natural language processing pipeline
-- [evaluator.md](evaluator.md) - AST-based expression evaluator
+### Core Modules
+- [normalize.md](normalize.md) - NL processing pipeline
+- [evaluator.md](evaluator.md) - AST-based evaluator
 - [units.md](units.md) - Unit definitions and conversions
 - [cli.md](cli.md) - Command-line interface
-- [api.md](api.md) - Public API surface
+
+### Supporting Modules
 - [primitives.md](primitives.md) - Unicode text primitives
 - [unicode_tools.md](unicode_tools.md) - Script and confusable detection
-- [confusables.md](confusables.md) - Homoglyph identification table
+- [confusables.md](confusables.md) - Homoglyph identification
 - [validate.md](validate.md) - Validation utilities
 - [diff.md](diff.md) - String diffing algorithms
 - [measure.md](measure.md) - Text measurement
