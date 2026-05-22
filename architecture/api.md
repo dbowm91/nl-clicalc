@@ -119,10 +119,11 @@ User-defined variables:
 ## Utility Functions
 
 ```python
-normalize_unit("meters")          # "m"
+# Note: normalize_unit() exists in units.py but is not part of public API
 get_conversion_factor("ft", "m")   # 0.3048
 get_all_units()                    # ['A', 'B', 'BTU', ...]
 is_unit("m")                       # True
+get_unit_category("m")             # "length"
 ```
 
 ## Types

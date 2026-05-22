@@ -171,10 +171,13 @@ Groups characters by Unicode category:
 
 ```python
 LineMetrics(
-    count=int,              # Number of lines
-    newline_style=str,      # "LF", "CRLF", "CR", "mixed"
-    has_trailing_newline=bool,
-    blank_lines=int
+    lines=int,                      # Total number of lines
+    nonempty_lines=int,             # Lines with content
+    blank_lines=int,                # Empty lines
+    max_line_length_codepoints=int, # Longest line length
+    trailing_whitespace_lines=list[int],  # Indices of lines with trailing whitespace
+    newline_style=str,              # "LF", "CRLF", "CR", "mixed", "none"
+    ends_with_newline=bool          # Whether string ends with newline
 )
 ```
 
@@ -234,12 +237,12 @@ common_prefix_suffix("abc123", "abc456")
 ```python
 CheckBracketsResult(
     balanced=bool,
-    message=str,           # Error message if unbalanced
-    position=int | None,  # Position of error
-    expected=str | None,  # Expected closing bracket
-    found=str | None      # Found character
+    unmatched_openers=list[BracketError],  # Opening brackets without matching close
+    unmatched_closers=list[BracketError]    # Closing brackets without matching open
 )
 ```
+
+Where `BracketError` contains: `char` (the bracket character), `position` (index in string).
 
 Handles bracket types: `()`, `[]`, `{}`, `<>`
 
@@ -247,11 +250,22 @@ Handles bracket types: `()`, `[]`, `{}`, `<>`
 
 ```python
 RegexTestResult(
-    valid=bool,           # Pattern is valid regex
-    error=str | None,     # Error message if invalid
-    match_count=int,      # Number of matching samples
-    matches=list[str],    # Matched samples
-    non_matches=list[str] # Non-matching samples
+    valid_pattern=bool,      # Whether regex pattern is valid
+    results=list[RegexMatch],  # List of per-sample match results
+    error=str | None         # Error message if pattern invalid
+)
+```
+
+### RegexMatch
+
+```python
+RegexMatch(
+    sample=str,              # The input sample string
+    matches=bool,            # Whether pattern matched (anywhere)
+    fullmatch=bool,          # Whether entire string matched
+    span=list[int] | None,   # (start, end) of match if any
+    groups=list[str],        # Captured groups
+    groupdict=dict[str, str] # Named groups dict
 )
 ```
 
