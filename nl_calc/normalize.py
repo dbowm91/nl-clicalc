@@ -493,28 +493,49 @@ def validate_for_eval(tokens: list, patterns: Mapping[str, Pattern[str]]) -> boo
 def combine_number_parts(
     number_parts: list, patterns: Mapping[str, Pattern[str]], split_tokens: list
 ) -> list:
-    """Combine number parts into a single mathematical expression."""
+    """Combine number parts into a single mathematical expression.
+
+    Rules:
+    - Consecutive small numbers (tens + ones) combine: [20, 2] -> [22], [30, 5] -> [35]
+    - Hundreds chain with multiplication: [3, 100, 20, 2] -> [3, '*', 100, '+', 20, '+', 2]
+    """
+    if not number_parts:
+        return []
+
     result = []
     skip_next = False
+
     for i, part in enumerate(number_parts):
         if skip_next:
             skip_next = False
             continue
+
+        if i == len(number_parts) - 1:
+            result.append(str(part))
+            continue
+
+        next_part = number_parts[i + 1]
+
         if i == 0:
-            if i != len(number_parts) - 1 and part < 10 and number_parts[i + 1] == 10:
-                result.append(f"{part + number_parts[i + 1]}")
+            if part < 10 and next_part == 10:
+                result.append(str(part + next_part))
                 skip_next = True
-            elif i != len(number_parts) - 1 and part == 10 and number_parts[i + 1] < 10:
-                result.append(f"{part + number_parts[i + 1]}")
+            elif part == 10 and next_part < 10:
+                result.append(str(part + next_part))
+                skip_next = True
+            elif _is_tens(part) and next_part < 10:
+                result.append(str(part + next_part))
                 skip_next = True
             elif part != 10:
                 result.append(str(part))
+            else:
+                result.append(str(part))
         else:
-            if i != len(number_parts) - 1 and part < 10 and number_parts[i + 1] == 10:
-                result.append(f"{part + number_parts[i + 1]}")
-                skip_next = True
-            elif part == 10 and number_parts[i - 1] < 10:
+            if part == 10 and number_parts[i - 1] < 10:
                 pass
+            elif _is_tens(part) and next_part < 10:
+                result.append(f"+{part + next_part}")
+                skip_next = True
             elif part < 10:
                 result.append(f"+{part}")
             elif number_parts[i - 1] < 10 and part < 100:
@@ -524,10 +545,15 @@ def combine_number_parts(
             else:
                 result.append(f"+{part}")
 
-    if patterns["negative"].match(split_tokens[0]):
+    if split_tokens and patterns["negative"].match(split_tokens[0]):
         result.insert(0, "-")
 
     return result
+
+
+def _is_tens(value: int) -> bool:
+    """Check if value is a tens (20, 30, 40, etc.)"""
+    return 20 <= value < 100 and value % 10 == 0
 
 
 def convert_numbers(number_info: list, patterns: Mapping[str, Pattern[str]]) -> str:
@@ -730,6 +756,9 @@ def split_at_operators(
                 tokens[i] = parts[0]
                 tokens.insert(i + 1, "-")
                 tokens.insert(i + 2, parts[1])
+            elif _should_split_number_sequence(tokens[i]):
+                parts = tokens[i].split()
+                tokens[i:i+1] = parts
             elif tokens[i][:1] != "-" and tokens[i - 1] != ".":
                 tokens[i] = tokens[i].replace("-", "")
             elif patterns["negative"].match(tokens[i][:1]):
@@ -740,6 +769,24 @@ def split_at_operators(
             tokens.pop(idx)
 
     return tokens
+
+
+def _should_split_number_sequence(token: str) -> bool:
+    """Check if token is a space-separated number sequence that should be split.
+
+    For example, "3 100 20 2" should be split into ['3', '100', '20', '2']
+    so each can be properly converted as a number word.
+    """
+    if ' ' not in token:
+        return False
+    parts = token.split()
+    if len(parts) < 2:
+        return False
+    for part in parts:
+        stripped = part.strip('+-')
+        if not stripped.replace('.', '').replace('e', '').replace('E', '').isdigit():
+            return False
+    return True
 
 
 def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str:
@@ -767,6 +814,10 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Handle standalone 'i' preceded by operators or at start
     expression = re.sub(r"(^|[+\-*/(])i\b", r"\g<1>1j", expression)
 
+    # Join space-separated number sequences with + for proper evaluation
+    # This must happen BEFORE whitespace removal so we get "3+100+20+2" instead of "3100202"
+    expression = _join_number_parts(expression)
+
     # Replace whitespace outside parentheses with nothing
     # Preserve whitespace inside parentheses to separate function args
     result = []
@@ -790,6 +841,52 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     expression = "".join(result)
 
     return expression
+
+
+def _join_number_parts(expression: str) -> str:
+    """Join space-separated number parts with + operators.
+
+    Detects sequences of space-separated tokens that are all numbers
+    (or simple expressions evaluating to numbers) and joins them with +.
+    This ensures "three hundred twenty two" -> 3+100+20+2 -> 125,
+    not 3100202.
+    """
+    tokens = expression.split()
+    if len(tokens) <= 1:
+        return expression
+
+    result = []
+    current_number_seq = []
+
+    for token in tokens:
+        if token in ('+', '-'):
+            if current_number_seq:
+                if len(current_number_seq) == 1:
+                    result.append(current_number_seq[0])
+                else:
+                    result.append('+'.join(current_number_seq))
+                current_number_seq = []
+            result.append(token)
+        else:
+            stripped = token.strip('+-')
+            if stripped.replace('.', '').replace('e', '').replace('E', '').isdigit():
+                current_number_seq.append(token)
+            else:
+                if current_number_seq:
+                    if len(current_number_seq) == 1:
+                        result.append(current_number_seq[0])
+                    else:
+                        result.append('+'.join(current_number_seq))
+                    current_number_seq = []
+                result.append(token)
+
+    if current_number_seq:
+        if len(current_number_seq) == 1:
+            result.append(current_number_seq[0])
+        else:
+            result.append('+'.join(current_number_seq))
+
+    return ''.join(result)
 
 
 def _preprocess_units(expression: str) -> str:
