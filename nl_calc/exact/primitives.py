@@ -395,57 +395,6 @@ def _is_extended_pictographic(char: str) -> bool:
     return False
 
 
-def _advance_past_sequence(s: str, i: int) -> int:
-    """Handle special grapheme sequence rules after a base character.
-
-    Handles:
-    - Emoji ZWJ sequences (GB11): Extended_Pictographic (ZWJ Extend*)* ZWJ Extended_Pictographic
-    - Regional indicator pairs (flags): must stay together (GB12/GB13)
-    - Hangul LVT+T sequences
-    - Emoji modifier sequences (skin tones U+1F3FB-U+1F3FF)
-
-    Args:
-        s: Input string.
-        i: Current index after base and extend chars.
-
-    Returns:
-        New index after handling any special sequences.
-    """
-    if i >= len(s):
-        return i
-
-    cp = ord(s[i])
-
-    # GB11: Emoji ZWJ sequences
-    # Pattern: Extended_Pictographic (ZWJ Extend*)* ZWJ Extended_Pictographic
-    # Check if we have ZWJ followed by Extended_Pictographic
-    if cp == 0x200D:  # ZWJ
-        # Check if previous char (which should be after base+extends) was pictographic
-        # Actually, we need to check if current position is ZWJ and next is Extended_Pictographic
-        if i + 1 < len(s) and _is_extended_pictographic(s[i + 1]):
-            # This is an emoji ZWJ sequence - skip the ZWJ and the following pictographic
-            return i + 2
-
-    # Regional Indicator (RI) pairs for flags - GB12/GB13
-    # U+1F1E6 to U+1F1FF are RI characters
-    if 0x1F1E6 <= cp <= 0x1F1FF:
-        # Check for second RI to form a flag pair
-        if i + 1 < len(s) and 0x1F1E6 <= ord(s[i + 1]) <= 0x1F1FF:
-            return i + 2  # Skip both RIs
-        return i + 1
-
-    # Emoji modifier (Fitzpatrick skin tone modifiers U+1F3FB to U+1F3FF)
-    # These modify the preceding emoji
-    if 0x1F3FB <= cp <= 0x1F3FF:
-        return i + 1
-
-    # Hangul syllables: U+AC00 to U+D7AF
-    if 0xAC00 <= cp <= 0xD7AF:
-        return i + 1
-
-    return i
-
-
 def truncate_to_grapheme(s: str, max_graphemes: int) -> str:
     """Truncate a string to at most max_grapheme grapheme clusters.
 

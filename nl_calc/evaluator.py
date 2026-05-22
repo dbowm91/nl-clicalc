@@ -289,9 +289,6 @@ def _convert(value: Any, to_unit: str) -> Any:
 
     if isinstance(value, UnitValue):
         # Check for temperature conversions (special handling needed)
-        from .units import get_unit_category
-        from .units import convert_temperature
-
         cat = get_unit_category(value.unit) if value.unit else None
         if cat == "temperature" and value.unit:
             try:
