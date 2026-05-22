@@ -1,0 +1,134 @@
+# diff.py - String Diffing Algorithms
+
+## Purpose
+
+Provides algorithms for computing differences between strings, including edit distance calculation, first difference detection, and diff span generation.
+
+## Core Functions
+
+### `levenshtein_distance(a: str, b: str) -> int`
+
+Calculate the Levenshtein (edit) distance between two strings.
+
+The edit distance is the minimum number of operations (insertions, deletions, substitutions) required to transform `a` into `b`.
+
+```python
+>>> levenshtein_distance("kitten", "sitting")
+3
+>>> levenshtein_distance("hello", "hello")
+0
+```
+
+**Algorithm**: Uses dynamic programming with O(mn) time and O(min(m,n)) space optimization.
+
+### `first_diff(a: str, b: str) -> FirstDiff | None`
+
+Find the first difference between two strings.
+
+```python
+@dataclass
+class FirstDiff(NamedTuple):
+    a_index: int
+    b_index: int
+    a_char: str
+    b_char: str
+    a_context: str  # Surrounding text
+    b_context: str
+```
+
+Returns `None` if strings are identical.
+
+```python
+>>> first_diff("hello", "hallo")
+FirstDiff(a_index=1, b_index=1, a_char='e', b_char='a',
+         a_context='...ello...', b_context='...allo...')
+>>> first_diff("hello", "hello")
+None
+```
+
+### `common_prefix_suffix(a: str, b: str) -> dict`
+
+Find common prefix and suffix lengths between two strings.
+
+```python
+>>> common_prefix_suffix("hello", "hell")
+{'common_prefix_len': 3, 'common_suffix_len': 0}
+>>> common_prefix_suffix("testing", "ing")
+{'common_prefix_len': 0, 'common_suffix_len': 2}
+>>> common_prefix_suffix("testing", "testing")
+{'common_prefix_len': 7, 'common_suffix_len': 0}
+```
+
+### `diff_spans(a: str, b: str, max_diffs: int = 50) -> list[DiffSpan]`
+
+Generate a list of diff spans between two strings.
+
+```python
+@dataclass
+class DiffSpan(NamedTuple):
+    kind: str           # "equal", "insert", "delete", "replace"
+    a_span: list[int]   # [start, end) in string a
+    b_span: list[int]   # [start, end) in string b
+    a_text: str
+    b_text: str
+```
+
+**Algorithm**: Uses Levenshtein distance to compute optimal edit script, then converts to diff spans.
+
+```python
+>>> list(diff_spans("hello", "hallo"))
+[DiffSpan(kind='equal', a_span=[0, 2], b_span=[0, 2], a_text='he', b_text='he'),
+ DiffSpan(kind='replace', a_span=[2, 3], b_span=[2, 3], a_text='l', b_text='a'),
+ DiffSpan(kind='equal', a_span=[3, 5], b_span=[3, 5], a_text='lo', b_text='lo')]
+```
+
+## Data Structures
+
+### `FirstDiff`
+
+Named tuple containing:
+- `a_index`: Position in first string
+- `b_index`: Position in second string  
+- `a_char`: Character at position in first string
+- `b_char`: Character at position in second string
+- `a_context`: Surrounding context in first string (5 chars before/after)
+- `b_context`: Surrounding context in second string
+
+### `DiffSpan`
+
+Named tuple containing:
+- `kind`: Type of diff ("equal", "insert", "delete", "replace")
+- `a_span`: [start, end) indices in string a
+- `b_span`: [start, end) indices in string b
+- `a_text`: The text from string a in this span
+- `b_text`: The text from string b in this span
+
+### `CommonPrefixSuffix`
+
+Named tuple (returned as dict) containing:
+- `common_prefix_len`: Length of common prefix
+- `common_suffix_len`: Length of common suffix
+
+## Algorithm Details
+
+### Levenshtein Distance
+
+Uses dynamic programming with the recurrence:
+
+```
+dp[i][j] = min(
+    dp[i-1][j] + 1,           # deletion
+    dp[i][j-1] + 1,           # insertion
+    dp[i-1][j-1] + (0 if a[i-1] == b[j-1] else 1)  # substitution
+)
+```
+
+### Diff Span Generation
+
+1. Compute Levenshtein distance matrix
+2. Backtrack to find optimal edit operations
+3. Convert operations to diff spans, merging consecutive operations of the same type
+
+## Index
+
+See [overview.md](overview.md) for the module index.

@@ -79,6 +79,8 @@ Skips normalization, directly parses via Python AST. Used when input is already 
 
 ## Supporting Modules
 
+## Supporting Modules
+
 ### exact/ - Text Inspection Tools
 
 Provides low-level Unicode text primitives for detecting hidden characters, confusables, and text metrics.
@@ -99,9 +101,10 @@ Model Context Protocol server for exposing text tools to AI agents.
 
 | Module | Purpose |
 |--------|---------|
-| [server.md](server.md) | stdio-based MCP request handling |
-| [tools.md](tools.md) | MCP tool definitions |
-| [schemas.md](schemas.md) | JSON schemas for MCP tool definitions |
+| [mcp_server.md](mcp_server.md) | MCP server implementation |
+| [server.md](mcp_server.md) | stdio-based MCP request handling |
+| [tools.md](mcp_server.md) | MCP tool definitions |
+| [schemas.md](mcp_server.md) | JSON schemas for MCP tool definitions |
 
 ## Data Structures
 
@@ -146,6 +149,7 @@ All code must be in one of the core modules for assembly to work.
 - [api.md](api.md) - Public API surface
 - [primitives.md](primitives.md) - Unicode text primitives
 - [unicode_tools.md](unicode_tools.md) - Script and confusable detection
+- [confusables.md](confusables.md) - Homoglyph identification table
 - [validate.md](validate.md) - Validation utilities
 - [diff.md](diff.md) - String diffing algorithms
 - [measure.md](measure.md) - Text measurement

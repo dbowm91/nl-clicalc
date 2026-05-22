@@ -1,98 +1,158 @@
-# mcp/ - MCP Server for AI Agents
+# mcp_server.md - MCP Server Implementation
 
 ## Purpose
 
-Model Context Protocol server for exposing exact text tools to AI agents via stdio.
+Model Context Protocol (MCP) server for exposing nl-calc exact tools to AI agents via stdio-based communication.
 
-## Module Structure
+## Architecture
 
 ```
-mcp/
-├── __init__.py      # Re-exports, package init
-├── server.py        # stdio request handling
-├── tools.py         # MCP tool definitions
-└── schemas.py       # JSON schemas for tools
+AI Agent <--JSON-RPC--> MCP Server <---> nl-calc exact tools
+                              |
+                              +-- primitives
+                              +-- unicode_tools
+                              +-- diff
+                              +-- validate
+                              +-- measure
+                              +-- synthesis
 ```
 
-## Running the MCP Server
+## Protocol
 
-```bash
-calc --mcp
-```
+Uses JSON-RPC 2.0 over stdio:
+- Requests read from stdin
+- Responses written to stdout
+- Errors written to stderr with JSON-RPC error format
 
-The server reads JSON-RPC requests from stdin and writes responses to stdout.
+## Request Handling
 
-## Server Implementation (server.py)
+### `handle_request(request: Any) -> dict | None`
 
-### `handle_request(request: dict) -> dict`
+Routes MCP requests to appropriate handlers:
 
-Main request handler:
+| Method | Handler | Description |
+|--------|---------|-------------|
+| `initialize` | `_handle_initialize()` | Initialize connection |
+| `tools/list` | `_handle_list_tools()` | List available tools |
+| `tools/call` | `_handle_call_tool()` | Execute a tool |
+| `notifications/initialized` | None | Acknowledgment |
+
+### `_handle_list_tools(request: dict) -> dict`
+
+Returns tool definitions with schemas:
 
 ```python
 {
     "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-        "name": "math_eval",
-        "arguments": {"expression": "5 + 3"}
+    "id": request["id"],
+    "result": {
+        "tools": [
+            {
+                "name": "math_eval",
+                "description": "...",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {...},
+                    "required": [...]
+                }
+            },
+            ...
+        ]
     }
 }
 ```
 
-### `main() -> int`
+### `_handle_call_tool(request: dict) -> dict`
 
-Entry point for `--mcp` mode.
-
-## Available Tools (tools.py)
-
-| Tool | Description |
-|------|-------------|
-| `math_eval` | Evaluate math expressions |
-| `text_measure` | Text metrics (UTF-8 bytes, codepoints, words, lines) |
-| `text_equal` | String comparison with normalization |
-| `text_diff_explain` | Explain differences between strings |
-| `text_inspect` | Hidden characters, confusables, mixed scripts |
-| `text_count` | Character counting and frequency |
-| `validate_brackets` | Bracket pair matching |
-| `validate_json` | JSON parsing validation |
-| `validate_regex` | Regex pattern testing |
-| `list_compare` | List comparison |
-
-## Tool Schemas (schemas.py)
-
-JSON schemas defining tool inputs/outputs:
+Executes a tool and returns results:
 
 ```python
-TOOL_SCHEMAS = {
-    "math_eval": {
-        "name": "math_eval",
-        "description": "Evaluate a mathematical expression",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "expression": {"type": "string"}
-            },
-            "required": ["expression"]
-        }
-    },
-    ...
+{
+    "jsonrpc": "2.0",
+    "id": request["id"],
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(result)
+            }
+        ]
+    }
 }
 ```
 
-## Protocol Details
+## Available Tools
 
-Uses JSON-RPC 2.0 over stdio:
+### `math_eval`
 
-1. Initialize handshake on startup
-2. Tools/list to enumerate available tools
-3. Tools/call to execute a tool
-4. Notifications for progress/cancel
+Evaluate arithmetic, unit conversions, constants, and scientific expressions.
 
-## Security
+### `text_measure`
 
-The MCP server inherits the security model of the underlying tools:
-- Math evaluation uses AST-based parser
-- Text tools are read-only primitives
-- No arbitrary code execution
-- Input validation on all tools
+Measure exact text properties (UTF-8 bytes, codepoints, words, lines, etc.).
+
+### `text_equal`
+
+Compare two strings under raw, Unicode-normalized, casefolded, or trimmed modes.
+
+### `text_diff_explain`
+
+Explain why two strings differ with diff spans, codepoints, and classification.
+
+### `text_inspect`
+
+Inspect a string for hidden characters, confusables, mixed scripts.
+
+### `text_count`
+
+Count exact characters or produce frequency table.
+
+### `validate_brackets`
+
+Check bracket balance.
+
+### `validate_json`
+
+Validate JSON syntax.
+
+### `validate_regex`
+
+Test regex patterns against samples.
+
+### `list_compare`
+
+Compare two lists with optional ignore_order, casefold, normalization.
+
+## Error Handling
+
+Errors are wrapped in standardized envelopes:
+
+```python
+class ErrorEnvelope(TypedDict):
+    ok: Literal[False]
+    error_type: str      # "ValidationError", "InputTooLarge", etc.
+    error: str           # Error message
+    hints: list[str]    # Suggestions for fixing
+```
+
+## Entry Point
+
+### `main() -> int`
+
+Main entry point:
+1. Reads JSON-RPC requests from stdin (line by line)
+2. Handles each request
+3. Writes responses to stdout
+4. Returns exit code
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `server.py` | MCP protocol handling |
+| `tools.py` | Tool implementations |
+| `schemas.py` | JSON schemas for tool definitions |
+
+## Index
+
+See [overview.md](overview.md) for the module index.
