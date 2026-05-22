@@ -2,69 +2,82 @@
 
 ## Session-Specific Overrides and Extensions
 
-This file contains overrides and additions specific to this planning/consolidation session. Items here take precedence over AGENTS.md for this codebase.
+This file contains overrides and additions specific to this codebase. Items here take precedence over AGENTS.md.
 
-### Corrected/Resolved Items
+### Verified/Corrected Information
 
-The following items from AGENTS.md Known Issues are now **RESOLVED** and should not be worked on:
+The following items have been verified against the codebase and should be considered accurate:
 
-- ~~**evaluate_cached not in __all__**~~ - Already present in `__all__` at `evaluator.py:34`
+1. **`evaluate_cached` in `__all__`** - Already present at `evaluator.py:34`
+2. **`get_default_evaluator` in `__all__`** - Already present at `__init__.py:96`
+3. **`mps` is in UNIT_CATEGORIES** - Already present at `units.py:1206` as `"m/s": "speed"` and aliases map `"mps"` to `"m/s"` at line 953
 
-### Key Fixes Needed (from Consolidated Plan)
+### Critical Bugs Requiring Fix
 
-See `plans/plan.md` for the full consolidated implementation plan. Critical items:
+When implementing fixes, refer to `plans/plan.md` for detailed instructions. Key items:
 
-1. **Wave 1 (Critical Bugs)** - Fix these first sequentially:
-   - UNIT_ALIASES bug (kN, mV, mA mapping to base units)
-   - Temperature F→C offset precision
-   - Newline detection bug in measure.py
-   - RegexTestResult missing `error` field
-   - CLI --mcp flag missing from normalize.py
-   - visible_repr() variation selector display order
-   - visible_repr() missing WORD JOINER (U+2060)
-   - mps missing from UNIT_CATEGORIES
+**Wave 1 (Must fix sequentially):**
+- **1.1 UNIT_ALIASES**: `"kN": "N"` should be `"kN": "kN"` (lines 900-931 in units.py)
+- **1.2 Temperature offset**: `-17.777778` should be `-32.0/1.8` (line 1038 in units.py)
+- **1.3 Newline detection**: `"\r" not in "\n"` is broken (lines 45-62 in measure.py)
+- **1.4 RegexTestResult**: Missing `error` field (lines 50-53, 237-241 in validate.py)
+- **1.5 CLI --mcp**: Missing from normalize.py argparse (lines 1215-1268)
 
-2. **Wave 2 (High Priority)** - Can parallelize with Wave 1:
-   - MCP double-wrapped response structure
-   - MCP math_eval missing MAX_TEXT_LENGTH
-   - utf8_bytes return type ambiguity
-   - invisibles_detected always False in synthesis.py
-   - Unit conversion space-separated detection bug
+**Wave 2 (Can parallelize with Wave 1):**
+- **2.1 MCP double-wrapped response** in server.py
+- **2.2 math_eval missing MAX_TEXT_LENGTH** in tools.py
+- **2.4 invisibles_detected=False** hardcoded in synthesis.py:280
+- **2.5 Space-separated unit conversion** broken in normalize.py
 
-### Architecture Notes for exact/ Module
+**Wave 3 (Exact module fixes):**
+- **3.1 visible_repr() VS order** - check VS before combining marks (primitives.py:272-275)
+- **3.2 visible_repr() missing WORD JOINER** - add case for U+2060 (primitives.py:269-285)
+- **3.3 _get_script_heuristic needs @lru_cache** (unicode_tools.py:61-95)
 
-When working on exact/ module fixes:
+### Implementation Guidance
 
-- `primitives.py:utf8_bytes()` - Returns `bytes` object, not int
-- `primitives.py:visible_repr()` - VS checks must come BEFORE combining mark checks
-- `unicode_tools.py:_get_script_heuristic()` - Needs `@lru_cache` decorator
-- `measure.py:newline_style()` - `mixed` detection logic at lines 45-62 is broken
+When fixing the UNIT_ALIASES bug (1.1), each prefixed unit should map to itself, not the base unit:
+```python
+# Force
+"kN": "kN",  # was "N"
+"dyne": "dyne",  # was "N"
+# Voltage
+"kV": "kV",  # was "V"
+"mV": "mV",  # was "V"
+# Current
+"mA": "mA",  # was "A"
+```
 
-### MCP Server Issues
+For newline detection fix (1.3), the correct approach is to count standalone CR and LF:
+```python
+standalone_cr = s.count("\r") - s.count("\r\n")
+standalone_lf = s.count("\n") - s.count("\r\n")
+if standalone_cr > 0 and standalone_lf > 0:
+    return "mixed"
+```
 
-When working on MCP server:
+For visibles_repr() fix (3.1), VS check must come BEFORE combining mark check:
+```python
+elif 0xfe00 <= ord(char) <= 0xfe0f:
+    result.append("⟦VS⟧")
+elif unicodedata.category(char).startswith("M"):
+    result.append(f"◌{char}")
+```
 
-- `server.py` uses non-prefixed tool names (e.g., `math_eval`)
-- `schemas.py` has prefixed names (`nl_calculate`) but TOOL_SCHEMAS is **dead code**
-- `tools.py:math_eval` lacks `MAX_TEXT_LENGTH` enforcement
-- Error messages not sanitized for non-ASCII characters
+### Verification Commands
 
-### Documentation Bugs to Fix
+After implementing Wave 1 fixes:
+```bash
+python -c "from nl_calc.units import get_conversion_factor; print(get_conversion_factor('kN', 'N'))"  # Should be 1000.0
+python -c "from nl_calc.units import convert_temperature; print(convert_temperature(32, 'F', 'C'))"  # Should be 0.0
+python -c "from nl_calc.exact.measure import line_metrics; print(line_metrics('a\r\nb').newline_style)"  # Should be CRLF
+python -m nl_calc --help | grep mcp  # Should show --mcp flag
+```
 
-Many documentation files reference wrong field names or outdated info:
+### Known Resolved Items
 
-- `architecture/diff.md`: `a_context`/`b_context` should be `a_codepoint`/`b_codepoint`
-- `docs/exact.md`: confusables return format shows codepoint instead of character
-- `docs/exact.md`: "~1800 entries" should be "~6500 entries"
-- `architecture/unicode_tools.md`: detect_confusables example shows 2 confusables, only 1 exists
-- `architecture/unicode_tools.md`: detect_mixed_scripts example incomplete
-
-### API Usage Reminder
-
-For testing NL/unit features:
-- Use `run()` or CLI, NOT `evaluate()`
-- `evaluate()` only works with valid Python syntax
-
-For pure math:
-- Use `evaluate()`
-- Results may be `UnitValue` - extract with `.value`
+These items from past discussions have been verified as already correct:
+- `evaluate_cached` is exported in `__all__`
+- `get_default_evaluator` is exported in `__all__`
+- `mps` exists in UNIT_BASE and aliases to "m/s"
+- `utf8_bytes()` correctly returns `bytes` object (not int count)

@@ -42,8 +42,8 @@ Understanding the two evaluation paths is critical:
 run("five plus three", NORMALIZE, PATTERNS)  # ✓ Works
 run("30m + 100ft", NORMALIZE, PATTERNS)      # ✓ Works
 evaluate("5 + 3")                            # ✓ Works
-evaluate("five plus three")                    # ✗ Fails (invalid Python)
-evaluate("1km in m")                          # ✗ Fails (invalid Python)
+evaluate("five plus three")                  # ✗ Fails (invalid Python)
+evaluate("1km in m")                         # ✗ Fails (invalid Python)
 ```
 
 ### Core Modules
@@ -89,37 +89,6 @@ Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool acce
 - **`UNIT_BASE`** - Base units and their conversion factors
 - **`UNIT_CONVERSIONS`** - Cached pairwise conversion factors
 - **`UNIT_ALIASES`** - Maps all unit variants to canonical forms
-
-### Known Issues (from Architecture Review)
-
-1. **Force/Voltage/Current UNIT_ALIASES bug** (`units.py:900-931`): Prefixed units like `kN`, `mV`, `mA` are incorrectly aliased to their base unit (`N`, `V`, `A`), causing conversion failures. `get_conversion_factor("kN", "N")` returns `1.0` instead of `1000.0`.
-
-2. **Temperature F→C offset precision** (`units.py:1038`): The offset `-17.777778` has rounding error; should be `-17.77777777777778` for exact freezing point conversion.
-
-3. **CLI --mcp flag missing** (`normalize.py:1220-1252`): The `--mcp` argument only exists in the built single-file version, not when running via `python -m nl_calc`.
-
-4. **evaluate_cached in __all__** (`evaluator.py:34`): ~~Function is public but not exported~~ - RESOLVED: Already present in `__all__`.
-
-5. **confusables.py table size**: Actual table has ~6500 entries (not "~1800" as sometimes documented). File size is ~180KB.
-
-6. **load_user_config_extended not exported** (`evaluator.py:157`): Function exists for extended config but is NOT exported from `__init__.py`. Only `load_user_config` is public.
-
-### Working with the exact/ Module
-
-The `exact/` subpackage provides low-level Unicode text primitives. Key conventions:
-
-- **`utf8_bytes()` returns `bytes`** - Not an int count, returns actual UTF-8 encoded bytes
-- **`visible_repr()` display order matters** - Variation selector checks must come BEFORE combining mark checks
-- **WORD JOINER (U+2060) handled separately** - Detected by `find_invisibles()` but `visible_repr()` needed explicit handling
-- **Newline detection `mixed` value** - The `mixed` newline style can be returned but was not properly detected in original implementation
-- **`_get_script_heuristic()` benefits from caching** - Called per-character in `detect_mixed_scripts`; add `@lru_cache`
-
-### MCP Server Conventions
-
-- Tool names in `schemas.py` use `nl_` prefix (e.g., `nl_calculate`) but `server.py` uses non-prefixed names - **TOOL_SCHEMAS is largely dead code**
-- Response double-wrapping occurs - Success responses are nested with JSON string inside text content block
-- `MAX_TEXT_LENGTH` enforced on most tools but **missing from `math_eval`**
-- Error messages are **not sanitized** for non-ASCII characters
 
 ## Guardrails
 
@@ -237,3 +206,32 @@ from nl_calc.units import get_conversion_factor
 factor = get_conversion_factor("km", "m")
 print(f"km to m factor: {factor}")  # Should be 1000.0
 ```
+
+## Implementation Notes
+
+### exact/ Module Conventions
+- **`utf8_bytes()` returns `bytes`** - Not an int count, returns actual UTF-8 encoded bytes
+- **`visible_repr()` display order matters** - Variation selector checks must come BEFORE combining mark checks (U+FE00-U+FE0F should be checked before category 'M')
+- **WORD JOINER (U+2060) needs explicit handling** - Detected by `find_invisibles()` but `visible_repr()` needs separate case
+- **Newline detection `mixed` value** - The `mixed` newline style can be returned but was not properly detected in original implementation
+- **`_get_script_heuristic()` benefits from caching** - Called per-character in `detect_mixed_scripts`; needs `@lru_cache` decorator
+
+### MCP Server Conventions
+- Tool names in `schemas.py` use `nl_` prefix (e.g., `nl_calculate`) but `server.py` uses non-prefixed names - **TOOL_SCHEMAS is largely dead code**
+- Response double-wrapping occurs - Success responses are nested with JSON string inside text content block
+- `MAX_TEXT_LENGTH` enforced on most tools but **missing from `math_eval`**
+- Error messages are **not sanitized** for non-ASCII characters
+
+### Unit Conversion Conventions
+- Prefixed units like `kN`, `mV`, `mA` should map to themselves in `UNIT_ALIASES`, not to base units
+- Temperature conversions use offset math, not multiplicative factors
+- `mps` (meters per second) should be in `UNIT_CATEGORIES` as "speed"
+
+### API Usage Reminder
+For testing NL/unit features:
+- Use `run()` or CLI, NOT `evaluate()`
+- `evaluate()` only works with valid Python syntax
+
+For pure math:
+- Use `evaluate()`
+- Results may be `UnitValue` - extract with `.value`
