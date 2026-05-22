@@ -86,7 +86,7 @@ def math_eval(expression: str) -> dict:
             result_val = result.value
         else:
             result_val = result
-        return {"result": str(result_val), "type": type(result_val).__name__}
+        return _success_response({"result": str(result_val), "type": type(result_val).__name__})
     except EvaluationError as e:
         return _error_response("EvaluationError", str(e), ["Check expression syntax"])
     except Exception as e:

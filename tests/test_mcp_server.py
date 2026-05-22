@@ -85,7 +85,9 @@ class TestToolsCall:
         })
         assert "result" in response
         content = json.loads(response["result"]["content"][0]["text"])
-        assert content["result"] == "8"
+        assert content["ok"] is True
+        assert content["result"]["result"] == "8"
+        assert content["result"]["type"] == "int"
 
     def test_call_text_measure_valid_input(self):
         response = handle_request({

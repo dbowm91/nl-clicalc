@@ -180,6 +180,14 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "balanced": {"type": "boolean"},
+                "unmatched_openers": {"type": "array"},
+                "unmatched_closers": {"type": "array"},
+            },
+        },
     },
     "validate_json": {
         "description": "Validate JSON and report precise parse errors or top-level structure information.",
@@ -189,6 +197,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "text": {"type": "string", "description": "Input string to validate as JSON"},
             },
             "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid": {"type": "boolean"},
+                "error": {"type": "string"},
+                "line": {"type": "integer"},
+                "column": {"type": "integer"},
+            },
         },
     },
     "validate_regex": {
@@ -209,6 +226,14 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "required": ["pattern", "samples"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid_pattern": {"type": "boolean"},
+                "results": {"type": "array"},
+                "error": {"type": "string"},
+            },
         },
     },
     "list_compare": {

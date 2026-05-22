@@ -146,6 +146,24 @@ def _handle_list_tools(request: dict) -> dict:
     }
 
 
+def _handle_initialize(request: dict) -> dict:
+    """Handle an initialize MCP request."""
+    return {
+        "jsonrpc": "2.0",
+        "id": request.get("id"),
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+                "tools": {"listChanged": False},
+            },
+            "serverInfo": {
+                "name": "nl-calc-exact",
+                "version": "1.0.0",
+            },
+        },
+    }
+
+
 def handle_request(request: Any) -> dict | None:
     """Route MCP request to appropriate handler."""
     if not isinstance(request, dict):
@@ -158,20 +176,7 @@ def handle_request(request: Any) -> dict | None:
     elif method == "tools/call":
         return _handle_call_tool(request)
     elif method == "initialize":
-        return {
-            "jsonrpc": "2.0",
-            "id": request.get("id"),
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {"listChanged": False},
-                },
-                "serverInfo": {
-                    "name": "nl-calc-exact",
-                    "version": "1.0.0",
-                },
-            },
-        }
+        return _handle_initialize(request)
     elif method == "notifications/initialized":
         return None
     else:
