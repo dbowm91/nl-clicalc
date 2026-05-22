@@ -106,7 +106,7 @@ Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool acce
 - New tests must use the correct API:
   - For NL/unit functionality → use `run()` or test through CLI
   - For pure math expressions → use `evaluate()`
-- 318 tests currently pass (as of last run)
+- 346 tests currently pass (as of last run)
 
 ### Code Style
 - Follow existing patterns in the codebase
@@ -214,18 +214,20 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - **`visible_repr()` display order matters** - Variation selector checks must come BEFORE combining mark checks (U+FE00-U+FE0F should be checked before category 'M')
 - **WORD JOINER (U+2060) needs explicit handling** - Detected by `find_invisibles()` but `visible_repr()` needs separate case
 - **Newline detection `mixed` value** - The `mixed` newline style can be returned but was not properly detected in original implementation
-- **`_get_script_heuristic()` benefits from caching** - Called per-character in `detect_mixed_scripts`; needs `@lru_cache` decorator
+- **`_get_script_heuristic()` benefits from caching** - Now has `@functools.lru_cache` decorator
 
 ### MCP Server Conventions
-- Tool names in `schemas.py` use `nl_` prefix (e.g., `nl_calculate`) but `server.py` uses non-prefixed names - **TOOL_SCHEMAS is largely dead code**
-- Response double-wrapping occurs - Success responses are nested with JSON string inside text content block
-- `MAX_TEXT_LENGTH` enforced on most tools but **missing from `math_eval`**
-- Error messages are **not sanitized** for non-ASCII characters
+- Tool names in `schemas.py` and `server.py` are now unified via `TOOL_SCHEMAS`
+- Response handling is now consistent - `math_eval` returns direct result dict
+- `MAX_TEXT_LENGTH` is enforced on `math_eval` tool
+- Error messages are sanitized for non-ASCII characters
+- Case-insensitive tool matching with suggestions for unknown tools
 
 ### Unit Conversion Conventions
-- Prefixed units like `kN`, `mV`, `mA` should map to themselves in `UNIT_ALIASES`, not to base units
+- Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`
 - Temperature conversions use offset math, not multiplicative factors
-- `mps` (meters per second) should be in `UNIT_CATEGORIES` as "speed"
+- `mps` (meters per second) is in `UNIT_CATEGORIES` as "speed"
+- Temperature-to-non-temperature conversions produce a warning
 
 ### API Usage Reminder
 For testing NL/unit features:

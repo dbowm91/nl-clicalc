@@ -107,10 +107,13 @@ tests/
 ├── test_security_fuzz.py # Security tests (22 tests)
 ├── test_tokenization.py  # Tokenization edge cases (54 tests)
 ├── test_math_identities.py # Mathematical laws verification (28 tests)
+├── test_mcp_server.py     # MCP server integration tests (20 tests)
+├── test_exact.py          # Exact module tests
+└── test_cli_text.py       # CLI text tools tests
 ```
 
 ## Current Test Count
-- 177 tests pass
+- 346 tests pass (as of latest run)
 - All must continue to pass
 
 ## Common Issues When Testing
