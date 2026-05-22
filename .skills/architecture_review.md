@@ -7,7 +7,7 @@ Guide agents through systematic architecture document review against implementat
 - Reviewing architecture documents (`.md` files in `architecture/`)
 - Verifying implementation matches documentation
 - Identifying bugs, inconsistencies, or missing features
-- Writing improvement plans
+- Adding new features to the codebase
 
 ## Review Process
 
@@ -17,37 +17,13 @@ Guide agents through systematic architecture document review against implementat
 cat architecture/<module>.md
 
 # Read corresponding implementation
-cat nl_calc/<module>.py  # or appropriate path
+cat nl_calc/<module>.py
 
 # List all architecture docs
 ls architecture/
 ```
 
-### 2. Create Review File
-Write findings to `plans/<module>_review.md` following this structure:
-
-```markdown
-# <Module> Module Review
-
-## Summary
-Brief description of what the module does.
-
-## Verified Claims
-Table of claims from doc vs implementation status.
-
-## Issues Found
-### Issue N: [Title]
-**Location:** file:line
-**Problem:** Description
-**Impact:** What breaks or is misleading
-
-## Improvement Recommendations
-### Priority: Description
-**File:** path
-**Fix:** Specific change needed
-```
-
-### 3. Focus Areas Checklist
+### 2. Focus Areas Checklist
 For each module, examine:
 1. **Completeness** - All documented features implemented?
 2. **Correctness** - Implementation matches behavior?
@@ -58,26 +34,34 @@ For each module, examine:
 7. **Maintainability** - Code quality?
 8. **Test Coverage** - Adequate tests?
 
-### 4. Verification Steps
+### 3. Verification Steps
 - Use `grep` to find specific function definitions
-- Use `python -c "from module import function"` to verify exports
+- Use `python3 -c "from module import function"` to verify exports
 - Check `__all__` lists for public API consistency
 - Run tests to verify functionality
 
-### 5. Important Notes
-- **Do NOT modify codebase** - only write reviews
-- Use specific `file:line` references
+### 4. Important Notes
+- Use specific `file:line` references when reporting issues
 - Distinguish between bugs (code wrong) vs doc issues (doc wrong)
 - For bugs, verify the issue actually causes failure before documenting
 
-## Output Location
-All reviews go into `plans/<module>_review.md`
+## Common Issues Found in This Codebase
 
-## Common Issues Found
-- Functions in `__all__` but not exported
-- Functions exported but not in `__all__`
+- Functions in `__all__` but not exported correctly
 - Documentation claims features not in code
 - Code has features not documented
 - Alias mappings that break functionality (e.g., prefixed units aliased to base)
 - Precision errors in constants
 - Missing CLI flags between built vs source versions
+
+## Architecture Files Location
+- `architecture/` - Module-level documentation
+- `docs/exact.md` - exact/ module documentation
+- `plans/` - Implementation plans and reviews
+
+## Documentation Maintenance
+When updating code:
+1. Check if corresponding architecture doc needs update
+2. Ensure `build_single.py` still works (code must be in core modules)
+3. Run all tests to verify no regressions
+4. Update AGENTS.md if new conventions are introduced

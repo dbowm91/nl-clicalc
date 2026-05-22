@@ -102,14 +102,15 @@ python -m pytest tests/ -v
 ## Test File Structure
 ```
 tests/
-├── conftest.py           # Shared fixtures
-├── test_clicalc.py       # Original functional tests (95 tests)
-├── test_security_fuzz.py # Security tests (22 tests)
-├── test_tokenization.py  # Tokenization edge cases (54 tests)
-├── test_math_identities.py # Mathematical laws verification (28 tests)
-├── test_mcp_server.py     # MCP server integration tests (20 tests)
-├── test_exact.py          # Exact module tests
-└── test_cli_text.py       # CLI text tools tests
+├── conftest.py              # Shared fixtures
+├── README.md                # Test documentation
+├── test_clicalc.py          # Core functional tests
+├── test_security_fuzz.py   # Security/fuzz tests
+├── test_tokenization.py    # Tokenization edge cases
+├── test_math_identities.py  # Mathematical laws verification
+├── test_mcp_server.py       # MCP server integration tests
+├── test_exact.py            # Exact module tests
+└── test_cli_text.py        # CLI text tools tests
 ```
 
 ## Current Test Count
