@@ -274,10 +274,15 @@ def text_equal(
         first_difference["a_visible"] = _visible_repr(a_work[first_difference["a_index"]:first_difference["a_index"]+1])
         first_difference["b_visible"] = _visible_repr(b_work[first_difference["b_index"]:first_difference["b_index"]+1])
 
+    # Detect invisibles before classification
+    invisibles_a = _find_invisibles(a_work)
+    invisibles_b = _find_invisibles(b_work)
+    invisibles_detected = bool(invisibles_a or invisibles_b)
+
     # Classification
     classification = _classify_difference(
         raw_equal, nfc_equal, casefold_equal, byte_equal,
-        len(a_work) != len(b_work), first_difference, invisibles_detected=False
+        len(a_work) != len(b_work), first_difference, invisibles_detected=invisibles_detected
     )
 
     # Determine overall equality based on mode

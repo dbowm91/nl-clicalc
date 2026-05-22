@@ -66,15 +66,17 @@ def math_eval(expression: str) -> dict:
         expression: Math expression (e.g., "5 + 3", "30m + 100ft", "five plus three").
 
     Returns:
-        Success envelope with result, or error envelope.
+        Success response with result, or error envelope.
     """
+    if len(expression) > MAX_TEXT_LENGTH:
+        return _error_response("InputError", f"Input exceeds maximum length of {MAX_TEXT_LENGTH}")
     try:
         result = evaluate_raw(expression)
         if hasattr(result, 'value'):
             result_val = result.value
         else:
             result_val = result
-        return _success_response({"result": str(result_val), "type": type(result_val).__name__})
+        return {"result": str(result_val), "type": type(result_val).__name__}
     except EvaluationError as e:
         return _error_response("EvaluationError", str(e), ["Check expression syntax"])
     except Exception as e:
