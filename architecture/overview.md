@@ -260,6 +260,7 @@ Output: UnitValue(60.48, "m")
 | `UNIT_BASE` | units.py | Base units and their conversion factors |
 | `UNIT_CONVERSIONS` | units.py | Cached pairwise conversion factors |
 | `UNIT_ALIASES` | units.py | Maps unit variants to canonical forms |
+| `get_unit_category` | units.py | Returns unit category (length, mass, etc.) |
 | `UnitValue` | units.py | Numeric value with optional units |
 | `Memory` | evaluator.py | Calculator memory registers |
 | `TOOL_SCHEMAS` | mcp/schemas.py | MCP tool definitions |

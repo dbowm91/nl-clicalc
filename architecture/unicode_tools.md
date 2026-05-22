@@ -142,4 +142,10 @@ These tools help detect:
 
 ## Index
 
+- `unicode_script()`
+- `detect_mixed_scripts()`
+- `detect_confusables()`
+- `unicode_scripts()`
+- `confusables_count()`
+
 See [overview.md](overview.md) for the module index.

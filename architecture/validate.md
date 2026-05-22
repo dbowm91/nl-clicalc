@@ -31,11 +31,11 @@ class CheckBracketsResult(TypedDict):
 
 ```python
 >>> check_brackets("({[]})")
-CheckBracketsResult(balanced=True, error=None, position=None,
-                    expected=None, unexpected=None)
+CheckBracketsResult(balanced=True, unmatched_openers=[],
+                    unmatched_closers=[])
 >>> check_brackets("({]})")
-CheckBracketsResult(balanced=False, error='Mismatched bracket',
-                    position=2, expected='}', unexpected=']')
+CheckBracketsResult(balanced=False, unmatched_openers=[...],
+                    unmatched_closers=[...])
 ```
 
 ### `validate_json(text: str) -> ValidateJsonResult`
@@ -90,11 +90,11 @@ RegexTestResult(
     valid_pattern=True,
     error=None,
     results=[
-        RegexSampleResult(sample='123', matches=True, fullmatch=True,
+        RegexMatch(sample='123', matches=True, fullmatch=True,
                           span=[0, 3], groups=[], groupdict={}),
-        RegexSampleResult(sample='abc', matches=False, fullmatch=False,
+        RegexMatch(sample='abc', matches=False, fullmatch=False,
                           span=None, groups=[], groupdict={}),
-        RegexSampleResult(sample='12a', matches=True, fullmatch=False,
+        RegexMatch(sample='12a', matches=True, fullmatch=False,
                           span=[0, 2], groups=[], groupdict={})
     ]
 )

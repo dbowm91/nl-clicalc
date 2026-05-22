@@ -18,12 +18,6 @@ class ErrorEnvelope(TypedDict):
     hints: list[str]
 
 
-class SuccessEnvelope(TypedDict):
-    """Standard success envelope for MCP tool responses."""
-    ok: bool
-    result: dict[str, Any]
-
-
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "math_eval": {
         "description": "Deterministically evaluate arithmetic, unit conversions, constants, and simple scientific expressions. Use for math and unit tasks instead of asking the model to calculate.",
