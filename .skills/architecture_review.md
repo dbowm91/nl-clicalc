@@ -81,10 +81,19 @@ During comprehensive architecture review of all modules, the following issues we
 - `unicode_tools.md` - added `unicode_scripts()` and `confusables_count()` to index
 - `overview.md` - added `get_unit_category()` to Key Data Structures table
 
+**Wave 3 Documentation Fixes (2026-05-22):**
+- exact.md: CheckBracketsResult now correctly documented with `unmatched_openers`/`unmatched_closers` (not message/position/expected/found)
+- exact.md: RegexTestResult now correctly documented with `valid_pattern` and `results: list[RegexMatch]` (not match_count/matches/non_matches)
+- exact.md: Added RegexMatch TypedDict definition (sample, matches, fullmatch, span, groups, groupdict)
+- exact.md: LineMetrics now correctly documented with full field list (lines, nonempty_lines, blank_lines, max_line_length_codepoints, trailing_whitespace_lines, newline_style, ends_with_newline)
+- api.md: Added `get_unit_category()` to utility functions
+- api.md: Clarified that `normalize_unit()` exists in units.py but is not part of public API
+
 **Design Decisions (Not Bugs):**
 - `are_units_compatible()` returns `False` when one category is known but other is unknown (safe behavior)
 - `evaluate_cached` caching doesn't invalidate on variable changes (stable expressions expected)
 - `__rsub__` behavior for scalar minus UnitValue is intentional (result in unit's unit)
+- TypedDict classes in this codebase have `__slots__` defined but they are ignored (dict-based access is used). While unusual, this doesn't cause errors but provides no memory benefit.
 
 ## Architecture Files Location
 - `architecture/` - Module-level documentation

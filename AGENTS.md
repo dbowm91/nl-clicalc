@@ -264,8 +264,16 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - Fixed `check_brackets` and `RegexMatch` examples in architecture/validate.md
 - Added `unicode_scripts()` and `confusables_count()` to unicode_tools.md index
 
+**Architecture Documentation Fixes (2026-05-22 Wave 3):**
+- exact.md: CheckBracketsResult now correctly documented with `unmatched_openers`/`unmatched_closers` (not message/position/expected/found)
+- exact.md: RegexTestResult now correctly documented with `valid_pattern` and `results: list[RegexMatch]` (not match_count/matches/non_matches)
+- exact.md: Added RegexMatch TypedDict definition (sample, matches, fullmatch, span, groups, groupdict)
+- exact.md: LineMetrics now correctly documented with full field list (lines, nonempty_lines, blank_lines, max_line_length_codepoints, trailing_whitespace_lines, newline_style, ends_with_newline)
+- api.md: Added `get_unit_category()` to utility functions
+- api.md: Clarified that `normalize_unit()` exists in units.py but is not part of public API
+
 **TypedDict `__slots__`:**
-- TypedDict classes do NOT support `__slots__`. Valid for regular classes (like `BracketError`, `CheckBracketsResult` in validate.py), invalid for TypedDicts (like `WordMetrics`, `LineMetrics`, `CharCategoryMetrics` in measure.py).
+- TypedDict classes do NOT support `__slots__`. Valid for regular classes (like `BracketError`), invalid for TypedDicts (like `WordMetrics`, `LineMetrics`, `CharCategoryMetrics`, `CheckBracketsResult`).
 
 **Variation Selector Detection:**
 - Both `visible_repr()` (range check 0xFE00-0xFE0F) and `find_invisibles()` (set membership) handle VS detection, but differently. Both work correctly for their purposes.
