@@ -503,6 +503,8 @@ def _generate_agent_instruction(classification: str, raw_equal: bool, nfc_equal:
         return "Treat these strings as equivalent only if NFC normalization is acceptable. They are not byte-identical."
     if classification == "case_only":
         return "Strings differ only by case. Case-insensitive comparison should treat them as equal."
+    if classification == "accent_or_diacritic_difference":
+        return "Strings differ by accents or diacritics only (same letters, different marks). NFC normalization will make them equal."
     if classification == "compatibility_normalization_only":
         return "Strings differ in compatibility normalization (NFKC). Treat as equivalent if compatibility normalization is acceptable."
     if not byte_equal:
