@@ -93,8 +93,10 @@ __all__ = [
     "InvisibleCharInfo",
     # Unicode tools
     "unicode_script",
+    "unicode_scripts",
     "detect_mixed_scripts",
     "detect_confusables",
+    "confusables_count",
     "ScriptInfo",
     "ConfusableInfo",
     # Diff
@@ -102,6 +104,7 @@ __all__ = [
     "common_prefix_suffix",
     "levenshtein_distance",
     "diff_spans",
+    "longest_common_subsequence",
     "FirstDiff",
     "CommonPrefixSuffix",
     "DiffSpan",

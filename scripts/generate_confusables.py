@@ -81,14 +81,14 @@ def parse_confusables(content: str) -> dict[str, str]:
     result: dict[str, str] = {}
     lines = content.split("\n")
 
-    # Skip header comments
     data_started = False
     for line in lines:
         stripped = line.strip()
         if not data_started:
-            if stripped.startswith("0") or stripped.startswith("#"):
+            if stripped.startswith("#") or not stripped:
                 continue
-            # First non-comment, non-header line onwards is data
+            if ";" not in stripped:
+                continue
             data_started = True
 
         parsed = parse_line(line)

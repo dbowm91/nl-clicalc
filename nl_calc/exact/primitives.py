@@ -274,8 +274,6 @@ def visible_repr(s: str) -> str:
             result.append("⟦VS⟧")
         elif unicodedata.category(char).startswith("M"):
             result.append(f"◌{char}")
-        elif char == "\u2060":
-            result.append("⟦WORD JOINER⟧")
         elif 0x2060 <= ord(char) <= 0x206f:
             bidi_names = {
                 0x2066: "LRI", 0x2067: "RLI", 0x2068: "FSI", 0x2069: "PDI",

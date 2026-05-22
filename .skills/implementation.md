@@ -1,0 +1,75 @@
+# Implementation Patterns for nl-clicalc
+
+## Purpose
+Guide agents implementing fixes and features across the codebase.
+
+## Key Conventions
+
+### Branching Strategy
+When implementing multiple fixes in parallel:
+- Create separate branches for each logical unit of work
+- Never commit directly to main
+- Merge completed branches via PR after review
+
+### Testing API Selection
+Critical distinction between `evaluate()` and `run()`:
+
+| Use Case | API | Example |
+|----------|-----|---------|
+| Pure math | `evaluate()` | `evaluate("5 + 3")` |
+| Natural language | CLI or `run()` | `run("five plus three", NORMALIZE, PATTERNS)` |
+| Units with operators | CLI or `run()` | `run("30m + 100ft", NORMALIZE, PATTERNS)` |
+
+### Common Fix Patterns
+
+#### Adding complex-aware math function
+1. Create wrapper with `_complex_aware()` decorator
+2. Update FUNCTIONS dict to use wrapper
+```python
+_sinh = _complex_aware(math.sinh, cmath.sinh)
+FUNCTIONS["sinh"] = _sinh
+```
+
+#### Temperature conversion fix
+Temperature units use offset math, not multiplicative factors. When converting within temperature category:
+```python
+if cat == "temperature" and target_cat == "temperature":
+    converted = convert_temperature(self.value, self.unit, target_unit)
+    return UnitValue(converted, target_unit)
+```
+
+#### Bitwise float check
+Add check in `visit_BinOp` before calling BINOPS:
+```python
+is_bitwise = op_class in (ast.BitAnd, ast.BitOr, ast.BitXor, ast.LShift, ast.RShift)
+if is_bitwise and (isinstance(left_val, float) or isinstance(right_val, float)):
+    raise EvaluationError("Bitwise operations require integer operands, not floats")
+```
+
+### Module Organization
+
+#### Core modules (combined by build_single.py)
+- `nl_calc/normalize.py` - NL processing
+- `nl_calc/evaluator.py` - AST evaluation
+- `nl_calc/units.py` - Unit definitions
+- `nl_calc/__main__.py` - CLI entry
+
+#### exact/ modules (always separate)
+- `primitives.py` - UTF-8, codepoints, visible_repr
+- `unicode_tools.py` - Script detection, confusables
+- `diff.py` - Levenshtein, diff_spans
+- `measure.py` - Line/word metrics
+- `validate.py` - Bracket/JSON/regex validation
+- `synthesis.py` - Text comparison/explanation
+
+### Always Run Tests
+After any change:
+```bash
+python3 build_single.py && python3 -m pytest tests/ -x -q
+```
+
+### Docstring Updates
+When adding new functions, update:
+1. The function docstring
+2. `nl_calc/exact/__init__.py` exports if public API
+3. AGENTS.md Implementation Notes if notable pattern

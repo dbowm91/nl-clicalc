@@ -1232,6 +1232,7 @@ def main() -> int:
     )
     parser.add_argument("-v", "--version", action="store_true", help="Show version information")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress expression in output")
+    parser.add_argument("--verbose", action="store_true", help="Show expression in output")
     parser.add_argument("--json", action="store_true", help="Output result as JSON")
     parser.add_argument(
         "-e",
@@ -1272,7 +1273,7 @@ def main() -> int:
         return 0
 
     if args.interactive:
-        return _run_repl(show_expression=args.show)
+        return _run_repl(show_expression=True)
 
     if args.single_expr:
         expression = args.single_expr
@@ -1311,6 +1312,8 @@ def main() -> int:
     output_format = "json" if args.json else "plain"
     if args.quiet:
         show_expression = False
+    elif args.verbose:
+        show_expression = True
     elif args.show:
         show_expression = True
     elif quiet_by_default:

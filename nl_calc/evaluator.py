@@ -203,13 +203,6 @@ def _safe_factorial(n: int) -> int:
     return math.factorial(n)
 
 
-def _cbrt(x: float) -> float:
-    """Cube root that correctly handles negative numbers."""
-    if x >= 0:
-        return x ** (1 / 3)
-    return -((-x) ** (1 / 3))
-
-
 def _mean(*args: float) -> float:
     """Calculate arithmetic mean."""
     if not args:
@@ -575,6 +568,8 @@ def _as_percent(x: float, total: float) -> float:
     """Calculate what percent x is of total."""
     if total == 0:
         raise EvaluationError("Cannot divide by zero")
+    if abs(total) < 1e-100:
+        raise EvaluationError("Near-zero divisor could cause overflow")
     return (x / total) * 100
 
 
@@ -653,6 +648,13 @@ _tan = _complex_aware(math.tan, cmath.tan)
 _asin = _complex_aware(math.asin, cmath.asin, use_complex_for_abs_gt_one=True)
 _acos = _complex_aware(math.acos, cmath.acos, use_complex_for_abs_gt_one=True)
 _atan = _complex_aware(math.atan, cmath.atan)
+_sinh = _complex_aware(math.sinh, cmath.sinh)
+_cosh = _complex_aware(math.cosh, cmath.cosh)
+_tanh = _complex_aware(math.tanh, cmath.tanh)
+_asinh = _complex_aware(math.asinh, cmath.asinh)
+_acosh = _complex_aware(math.acosh, cmath.acosh)
+_atanh = _complex_aware(math.atanh, cmath.atanh)
+_cbrt = _complex_aware(lambda x: x ** (1 / 3), lambda x: x ** (1 / 3), use_complex_for_negative=True)
 
 
 class EvaluationError(Exception):
@@ -882,13 +884,13 @@ class Evaluator(ast.NodeVisitor):
         "acos": _acos,
         "atan": _atan,
         "atan2": math.atan2,
-        # Hyperbolic
-        "sinh": math.sinh,
-        "cosh": math.cosh,
-        "tanh": math.tanh,
-        "asinh": math.asinh,
-        "acosh": math.acosh,
-        "atanh": math.atanh,
+        # Hyperbolic (complex-aware)
+        "sinh": _sinh,
+        "cosh": _cosh,
+        "tanh": _tanh,
+        "asinh": _asinh,
+        "acosh": _acosh,
+        "atanh": _atanh,
         # Logarithmic (complex-aware)
         "log": _log,
         "log10": _log10,
@@ -914,7 +916,7 @@ class Evaluator(ast.NodeVisitor):
         "comb": _comb,
         "nPr": _perm,
         "nCr": _comb,
-        "cbrt": lambda x: _cbrt(x),
+        "cbrt": _cbrt,
         # Angle conversion
         "degrees": math.degrees,
         "radians": math.radians,
@@ -1005,9 +1007,9 @@ class Evaluator(ast.NodeVisitor):
         # Bitwise operators
         ast.LShift: (lambda a, b: int(a) << int(b)),
         ast.RShift: (lambda a, b: int(a) >> int(b)),
-        ast.BitOr: (lambda a, b: int(a) | int(b)),
-        ast.BitXor: (lambda a, b: int(a) ^ int(b)),
-        ast.BitAnd: (lambda a, b: int(a) & int(b)),
+        ast.BitOr: (lambda a, b: a | b),
+        ast.BitXor: (lambda a, b: a ^ b),
+        ast.BitAnd: (lambda a, b: a & b),
     }
 
     # Safe unary operators
@@ -1136,6 +1138,10 @@ class Evaluator(ast.NodeVisitor):
                     pass
 
         result_unit = left_unit or right_unit
+
+        is_bitwise = op_class in (ast.BitAnd, ast.BitOr, ast.BitXor, ast.LShift, ast.RShift)
+        if is_bitwise and (isinstance(left_val, float) or isinstance(right_val, float)):
+            raise EvaluationError("Bitwise operations require integer operands, not floats")
 
         if op_class not in self.BINOPS:
             raise EvaluationError(f"Unsupported binary operator: '{node.op.__class__.__name__}'")

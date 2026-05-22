@@ -74,8 +74,6 @@ def math_eval(expression: str) -> dict:
     Returns:
         Success response with result, or error envelope.
     """
-    if len(expression) > MAX_TEXT_LENGTH:
-        return _error_response("InputError", f"Input exceeds maximum length of {MAX_TEXT_LENGTH}")
     if len(expression) > MAX_EXPRESSION_LENGTH:
         return _error_response("InputError", f"Expression exceeds maximum length of {MAX_EXPRESSION_LENGTH}")
     try:

@@ -54,6 +54,12 @@ _SCRIPT_RANGES: list[tuple[int, int, str]] = [
     (0x0600, 0x06ff, "Arabic"),
     (0x0590, 0x05ff, "Hebrew"),
     (0x0900, 0x097f, "Devanagari"),
+    (0x0e00, 0x0e7f, "Thai"),
+    (0xac00, 0xd7af, "Hangul"),
+    (0x10a0, 0x10ff, "Georgian"),
+    (0x0530, 0x058f, "Armenian"),
+    (0x13a0, 0x13ff, "Cherokee"),
+    (0x1400, 0x167f, "Canadian_Aboriginal"),
 ]
 
 
@@ -114,18 +120,32 @@ def unicode_script(char: str) -> str:
     return _get_script_heuristic(char)
 
 
+def unicode_scripts(s: str) -> list[str]:
+    """Determine the Unicode scripts for all characters in a string.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        List of script names for each character.
+    """
+    return [_get_script_heuristic(char) for char in s]
+
+
 def detect_mixed_scripts(s: str) -> dict:
     """Detect if string contains mixed scripts.
 
-    Ignores Common and Inherited scripts for the mixed-script verdict.
+    Ignores Common, Inherited, and Other scripts for the mixed-script
+    verdict. Characters classified as "Other" (digits, punctuation,
+    whitespace, etc.) are excluded from the mixed-script analysis.
 
     Args:
         s: Input string.
 
     Returns:
         Dictionary with mixed_scripts (bool), scripts (list of distinct
-        scripts excluding Common/Inherited), and positions (list of
-        ScriptInfo dicts for non-Common/Inherited chars).
+        scripts excluding Common/Inherited/Other), and positions (list of
+        ScriptInfo dicts for non-Common/Inherited/Other chars).
     """
     positions: list[ScriptInfo] = []
     scripts: set[str] = set()
@@ -193,3 +213,20 @@ def detect_confusables(s: str) -> list[ConfusableInfo]:
             ))
 
     return result
+
+
+def confusables_count(s: str) -> int:
+    """Count confusable homoglyph characters in the string.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        Count of confusable characters.
+    """
+    count = 0
+    for char in s:
+        key = f"U+{ord(char):04X}"
+        if key in CONFUSABLES:
+            count += 1
+    return count

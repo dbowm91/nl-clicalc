@@ -7,6 +7,7 @@ word metrics, and combined character categorization metrics.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from typing import TypedDict
 
@@ -167,7 +168,6 @@ def word_metrics(s: str) -> WordMetrics:
 
     # Estimate sentences (count . ! ? that are not ellipses or decimals)
     # Simple heuristic: count sentence-ending punctuation
-    import re
     sentence_pattern = r"[.!?]+(?:\s|$)"
     sentences = re.findall(sentence_pattern, s)
     sentences_estimate = len(sentences) if sentences else 0
@@ -233,8 +233,8 @@ def char_category_metrics(s: str) -> CharCategoryMetrics:
         elif cat.startswith("C"):  # Other (control, format, etc.)
             if cat == "Cc":  # Control characters
                 control_chars += 1
-            elif cat == "Cf":  # Format characters
-                pass  # Don't count as control
+            elif cat == "Cf":  # Format characters (e.g., U+FEFF BOM)
+                pass  # Cf excluded from control_chars count per UTS #55
             # Other C* (like surrogate) skip
         elif cat.startswith("M"):  # Mark categories
             combining_marks += 1

@@ -2,7 +2,8 @@
 Diff and span primitives.
 
 Provides low-level diff operations including Levenshtein distance,
-first difference detection, common prefix/suffix, and diff_spans.
+first difference detection, common prefix/suffix, and diff_spans using
+difflib.SequenceMatcher.
 """
 
 from __future__ import annotations
@@ -151,6 +152,47 @@ def levenshtein_distance(a: str, b: str, max_len: int = MAX_LEVENSHTEIN_LEN) -> 
     return prev_row[len(b)]
 
 
+def longest_common_subsequence(a: str, b: str) -> str:
+    """Find the longest common subsequence of two strings.
+
+    Args:
+        a: First string.
+        b: Second string.
+
+    Returns:
+        The longest common subsequence as a string.
+    """
+    if not a or not b:
+        return ""
+
+    m, n = len(a), len(b)
+    prev_row = [0] * (n + 1)
+
+    for i in range(1, m + 1):
+        curr_row = [0] * (n + 1)
+        for j in range(1, n + 1):
+            if a[i - 1] == b[j - 1]:
+                curr_row[j] = prev_row[j - 1] + 1
+            else:
+                curr_row[j] = max(prev_row[j], curr_row[j - 1])
+        prev_row = curr_row
+
+    lcs_len = prev_row[n]
+    result = []
+    i, j = m, n
+    while i > 0 and j > 0:
+        if a[i - 1] == b[j - 1]:
+            result.append(a[i - 1])
+            i -= 1
+            j -= 1
+        elif prev_row[j - 1] > prev_row[j]:
+            i -= 1
+        else:
+            j -= 1
+
+    return "".join(reversed(result))
+
+
 def diff_spans(a: str, b: str, max_diffs: int = 50) -> list[DiffSpan]:
     """Find diff spans between two strings using SequenceMatcher.
 
@@ -158,6 +200,7 @@ def diff_spans(a: str, b: str, max_diffs: int = 50) -> list[DiffSpan]:
         a: First string.
         b: Second string.
         max_diffs: Maximum number of diff spans to return (default 50).
+        Larger strings will have diffs truncated to this limit.
 
     Returns:
         List of DiffSpan dicts with kind (replace/insert/delete),

@@ -212,12 +212,15 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 ### exact/ Module Conventions
 - **`utf8_bytes()` returns `bytes`** - Not an int count, returns actual UTF-8 encoded bytes
 - **`visible_repr()` display order matters** - Variation selector checks must come BEFORE combining mark checks (U+FE00-U+FE0F should be checked before category 'M'). The code at primitives.py:273-276 is correct.
-- **WORD JOINER (U+2060)** - Code at lines 277-278 in primitives.py is redundant dead code; already handled by `_INVISIBLE_CHARS` dict lookup at line 270
+- **WORD JOINER (U+2060)** - Code at lines 277-278 in primitives.py is redundant dead code; removed in fix
 - **Newline detection `mixed` value** - The `mixed` newline style can be returned but was not properly detected in original implementation
 - **`_get_script_heuristic()` benefits from caching** - Now has `@functools.lru_cache` decorator
-- **Cf (format) characters intentionally excluded** - `control_chars` in `measure.py` excludes `Cf` category; format characters are silently ignored
+- **Cf (format) characters intentionally excluded** - `control_chars` in `measure.py` excludes `Cf` category; format characters are silently ignored per UTS #55
 - **confusables.py is a data file** - The file `nl_calc/exact/confusables.py` is auto-generated data only (~180KB, 6581 lines). TypedDict classes are in their logical modules, NOT in confusables.py
 - **`SuccessEnvelope` unused** - Defined in `schemas.py` but never imported or used in `tools.py`
+- **`confusables_count()` helper** - Fast function to count confusables without building full list (unicode_tools.py)
+- **`unicode_scripts()` batch function** - Returns script list for all chars in string (unicode_tools.py)
+- **`longest_common_subsequence()`** - Implemented in diff.py using dynamic programming
 
 ### TypedDict vs NamedTuple
 - Architecture docs may show `@dataclass class Xxx(NamedTuple)` but code uses `class Xxx(TypedDict)`
@@ -238,15 +241,7 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `mps` (meters per second) is in `UNIT_CATEGORIES` as "speed"
 - Temperature-to-non-temperature conversions produce a warning
 
-### Known Bugs (Do Not Add to Tests - Fix Instead)
-- `UnitValue.convert_to()` doesn't handle temperature properly (uses multiplication instead of offset formula)
-- `kilonewton` alias maps to `"N"` instead of `"kN"` (line ~923 in units.py)
-- `_cbrt()` doesn't handle complex numbers (unlike `_sqrt()` which uses `_complex_aware` decorator)
-- Hyperbolic functions (`sinh`, `cosh`, `tanh`, etc.) not complex-aware (unlike other trig functions)
-- REPL mode `show_expression` defaults to `False` but docstring says "(default for interactive)"
-- `-v` flag is `--version`, not verbose; no `--verbose` flag exists
-- `scripts/generate_confusables.py` header detection skips lines starting with "0" (could skip valid data)
-- Negative nesting depth possible in `_check_pattern_complexity` (validate.py)
+### Known Bugs (None - all fixed as of implementation)
 
 ### API Usage Reminder
 For testing NL/unit features:

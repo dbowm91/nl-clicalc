@@ -141,6 +141,9 @@ class UnitValue:
 
         cat = get_unit_category(self.unit)
         target_cat = get_unit_category(target_unit)
+        if cat == "temperature" and target_cat == "temperature":
+            converted = convert_temperature(self.value, self.unit, target_unit)
+            return UnitValue(converted, target_unit)
         if cat == "temperature":
             if target_cat != "temperature":
                 warnings.warn(
@@ -149,13 +152,12 @@ class UnitValue:
                     UserWarning,
                     stacklevel=2,
                 )
-            elif self.value < 0 and cat == "temperature":
-                if self.unit in ("K", "kelvin", "kelvins") and self.value < 0:
-                    warnings.warn(
-                        f"Absolute zero is 0 K. Converting negative Kelvin value {self.value} K will give incorrect results.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
+            elif self.value < 0 and self.unit in ("K", "kelvin", "kelvins") and self.value < 0:
+                warnings.warn(
+                    f"Absolute zero is 0 K. Converting negative Kelvin value {self.value} K will give incorrect results.",
+                    UserWarning,
+                    stacklevel=2,
+                )
         factor = get_conversion_factor(self.unit, target_unit)
         return UnitValue(self.value * factor, target_unit)
 
@@ -920,7 +922,7 @@ UNIT_ALIASES: dict[str, str] = {
     "newton": "N",
     "newtons": "N",
     "kN": "kN",
-    "kilonewton": "N",
+    "kilonewton": "kN",
     "dyne": "dyne",
     "dynes": "dyne",
     "lbf": "lbf",
