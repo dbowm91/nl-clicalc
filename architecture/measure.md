@@ -11,15 +11,14 @@ Provides functions for measuring text properties including line metrics, word me
 Analyze line structure in text.
 
 ```python
-@dataclass
-class LineMetrics(NamedTuple):
-    lines: int                       # Total line count
-    nonempty_lines: int              # Lines with content
-    blank_lines: int                 # Empty lines
-    max_line_length_codepoints: int  # Longest line length
-    trailing_whitespace_lines: list[int]  # 1-based line numbers with trailing whitespace
-    newline_style: str               # "LF", "CRLF", "CR", "mixed", "none"
-    ends_with_newline: bool          # Does text end with newline?
+class LineMetrics(TypedDict):
+    lines: int
+    nonempty_lines: int
+    blank_lines: int
+    max_line_length_codepoints: int
+    trailing_whitespace_lines: list[int]
+    newline_style: str
+    ends_with_newline: bool
 ```
 
 ```python
@@ -34,13 +33,12 @@ LineMetrics(lines=2, nonempty_lines=2, blank_lines=0,
 Analyze word structure in text.
 
 ```python
-@dataclass
-class WordMetrics(NamedTuple):
-    words: int                       # Total word count
-    unique_words_casefolded: int     # Unique words (casefolded)
-    sentences_estimate: int           # Estimated sentence count
-    paragraphs: int                  # Number of paragraphs (separated by blank lines)
-    average_word_length: float       # Average word length in characters
+class WordMetrics(TypedDict):
+    words: int
+    unique_words_casefolded: int
+    sentences_estimate: int
+    paragraphs: int
+    average_word_length: float
 ```
 
 **Word Definition**: Sequences of non-whitespace characters.
@@ -57,15 +55,14 @@ WordMetrics(words=3, unique_words_casefolded=2,
 Break down characters by Unicode category.
 
 ```python
-@dataclass
-class CharCategoryMetrics(NamedTuple):
-    letters: int          # Category L* (Lu, Ll, Lt, Lm, Lo)
-    digits: int           # Category Nd
-    punctuation: int     # Category P* (Pc, Pd, Ps, Pe, Pi, Pf, Po)
-    symbols: int          # Category S* (Sm, Sc, Sk, So)
-    spaces: int           # Category Zs (and other Z*)
-    control_chars: int    # Category C* (Cc, Cs, Co, Cn) - Cf excluded per UTS #55
-    combining_marks: int # Category M* (Mn, Mc, Me)
+class CharCategoryMetrics(TypedDict):
+    letters: int
+    digits: int
+    punctuation: int
+    symbols: int
+    spaces: int
+    control_chars: int
+    combining_marks: int
 ```
 
 Uses Unicode category ranges for classification:

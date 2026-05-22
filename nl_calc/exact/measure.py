@@ -168,7 +168,7 @@ def word_metrics(s: str) -> WordMetrics:
 
     # Estimate sentences (count . ! ? that are not ellipses or decimals)
     # Simple heuristic: count sentence-ending punctuation
-    sentence_pattern = r"[.!?]+(?:\s|$)"
+    sentence_pattern = r"[.!?]+(?:\s|$)|[.!?]+(?=[A-Z])"
     sentences = re.findall(sentence_pattern, s)
     sentences_estimate = len(sentences) if sentences else 0
 

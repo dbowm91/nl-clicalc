@@ -1240,6 +1240,10 @@ class Evaluator(ast.NodeVisitor):
             ast.BoolOp,
         )
         if node_type in forbidden:
+            if node_type == ast.Compare:
+                raise EvaluationError("Comparison operators are not supported")
+            if node_type == ast.BoolOp:
+                raise EvaluationError("Boolean operators are not supported")
             raise EvaluationError(f"Unsupported node type: '{node_type.__name__}'")
 
         # Attribute access (for math.*)

@@ -60,17 +60,18 @@ The `Evaluator` class implements `visit_*` methods for each AST node type:
 
 | Node Type | Handler | Operation |
 |-----------|---------|-----------|
-| `ast.Num` | visit_Num | Literals |
-| `ast.BinOp` | visit_BinOp | +, -, *, /, ** |
-| `ast.UnaryOp` | visit_UnaryOp | +, - |
-| `ast.Compare` | visit_Compare | <, >, <=, >=, ==, != |
-| `ast.BoolOp` | visit_BoolOp | and, or, not |
+| `ast.Constant` | visit_Constant | Literals (numbers, strings) |
+| `ast.BinOp` | visit_BinOp | +, -, *, /, //, %, ** |
+| `ast.UnaryOp` | visit_UnaryOp | +, -, ~ |
 | `ast.Call` | visit_Call | Function calls |
 | `ast.Name` | visit_Name | Variables/constants |
-| `ast.Attribute` | visit_Attribute | Module constants (math.pi) |
-| `ast.Subscript` | visit_Subscript | List/dict access |
-| `ast.List` | visit_List | List construction |
-| `ast.Dict` | visit_Dict | Dict construction |
+
+**Forbidden node types** (raise `EvaluationError`):
+- `ast.Compare` — comparison operators
+- `ast.BoolOp` — boolean operations
+- `ast.Subscript` — list/dict indexing
+- `ast.List`, `ast.Dict`, `ast.Set` — container literals
+- `ast.ListComp`, `ast.DictComp` — comprehensions
 
 ## Safe Math Functions
 

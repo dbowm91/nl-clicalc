@@ -163,6 +163,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text", "max_graphemes"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Result string (truncated if truncation occurred)"},
+                "original_graphemes": {"type": "integer", "description": "Original grapheme count"},
+                "truncated_graphemes": {"type": "integer", "description": "Grapheme count in result"},
+                "truncated": {"type": "boolean", "description": "True if text was truncated"},
+            },
+        },
     },
     "validate_brackets": {
         "description": "Check whether delimiters are structurally balanced and report unmatched delimiters with line/column positions.",

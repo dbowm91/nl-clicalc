@@ -11,14 +11,18 @@ Provides validation utilities for checking brackets, JSON syntax, and testing re
 Check whether delimiters are structurally balanced.
 
 ```python
-@ dataclass
-class CheckBracketsResult(NamedTuple):
-    balanced: bool
-    unmatched_openers: list[BracketError]  # Unmatched opening brackets
-    unmatched_closers: list[BracketError]  # Unmatched closing brackets
-```
+class BracketError(TypedDict):
+    char: str
+    index: int
+    line: int
+    column: int
 
-**`BracketError`** contains: `char`, `index`, `line`, `column`
+
+class CheckBracketsResult(TypedDict):
+    balanced: bool
+    unmatched_openers: list[BracketError]
+    unmatched_closers: list[BracketError]
+```
 
 **Default bracket pairs**:
 ```python
@@ -39,14 +43,14 @@ CheckBracketsResult(balanced=False, error='Mismatched bracket',
 Validate JSON syntax and report precise parse errors.
 
 ```python
-@dataclass
-class ValidateJsonResult(NamedTuple):
+class ValidateJsonResult(TypedDict):
     valid: bool
-    error: str | None          # Error message if invalid
-    position: int | None      # Character position of error
-    line: int | None           # Line number of error
-    column: int | None         # Column number of error
-    type: str | None           # "object", "array", "string", "number", etc.
+    error: str | None
+    line: int | None
+    column: int | None
+    position: int | None
+    type: str | None
+    top_level_keys: list[str] | None
 ```
 
 ```python
@@ -64,23 +68,19 @@ ValidateJsonResult(valid=False, error='Expecting property name',
 Test a Python regular expression against sample strings.
 
 ```python
-@dataclass
-class RegexTestResult(NamedTuple):
-    valid_pattern: bool
-    error: str | None
-    results: list[RegexSampleResult]
-```
-
-Where `RegexSampleResult` contains:
-```python
-@dataclass
-class RegexSampleResult(NamedTuple):
+class RegexMatch(TypedDict):
     sample: str
     matches: bool
     fullmatch: bool
-    span: list[int] | None      # [start, end] of match
-    groups: list[str]                 # Captured groups
-    groupdict: dict[str, str]         # Named groups
+    span: list[int] | None
+    groups: list[str]
+    groupdict: dict[str, str]
+
+
+class RegexTestResult(TypedDict):
+    valid_pattern: bool
+    results: list[RegexMatch]
+    error: str | None
 ```
 
 Example:

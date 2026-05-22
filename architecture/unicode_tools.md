@@ -66,14 +66,13 @@ class ScriptInfo(TypedDict):
 Detect confusable homoglyph characters.
 
 ```python
-@dataclass
 class ConfusableInfo(TypedDict):
     index: int
     char: str
-    codepoint: str            # "U+XXXX"
-    name: str                 # Unicode name
-    confusable_with: str      # Character it looks like
-    confusable_name: str      # Unicode name of confusable
+    codepoint: str
+    name: str
+    confusable_with: str
+    confusable_name: str
 ```
 
 ```python
@@ -82,6 +81,24 @@ class ConfusableInfo(TypedDict):
   'name': 'CYRILLIC SMALL LETTER A',
   'confusable_with': 'a',
   'confusable_name': 'LATIN SMALL LETTER A'}]
+```
+
+### `unicode_scripts(s: str) -> list[str]`
+
+Return the Unicode script name for each character in the string.
+
+```python
+>>> unicode_scripts("HelloПривет")
+['Latin', 'Latin', 'Latin', 'Latin', 'Latin', 'Cyrillic', 'Cyrillic', 'Cyrillic', 'Cyrillic', 'Cyrillic']
+```
+
+### `confusables_count(s: str) -> int`
+
+Count the number of confusable homoglyph characters in the string.
+
+```python
+>>> confusables_count("pаypal")  # Cyrillic 'а' instead of Latin 'a'
+1
 ```
 
 ## Data Source

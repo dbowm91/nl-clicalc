@@ -26,13 +26,12 @@ The edit distance is the minimum number of operations (insertions, deletions, su
 Find the first difference between two strings.
 
 ```python
-@dataclass
-class FirstDiff(NamedTuple):
+class FirstDiff(TypedDict):
     a_index: int
     b_index: int
     a_char: str
     b_char: str
-    a_codepoint: str  # U+XXXX format
+    a_codepoint: str
     b_codepoint: str
 ```
 
@@ -59,16 +58,26 @@ Find common prefix and suffix lengths between two strings.
 {'common_prefix_len': 0, 'common_suffix_len': 0}
 ```
 
+### `longest_common_subsequence(a: str, b: str) -> str`
+
+Find the longest common subsequence of two strings using dynamic programming.
+
+```python
+>>> longest_common_subsequence("abcde", "ace")
+'ace'
+>>> longest_common_subsequence("abc", "def")
+''
+```
+
 ### `diff_spans(a: str, b: str, max_diffs: int = 50) -> list[DiffSpan]`
 
 Generate a list of diff spans between two strings.
 
 ```python
-@dataclass
-class DiffSpan(NamedTuple):
-    kind: str           # "equal", "insert", "delete", "replace"
-    a_span: list[int]   # [start, end) in string a
-    b_span: list[int]   # [start, end) in string b
+class DiffSpan(TypedDict):
+    kind: str
+    a_span: list[int]
+    b_span: list[int]
     a_text: str
     b_text: str
 ```

@@ -494,6 +494,7 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "mV": 0.001,
         "millivolt": 0.001,
         "uV": 1e-6,
+        "μV": 1e-6,
         "microvolt": 1e-6,
     },
     "A": {
@@ -505,7 +506,9 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "milliamp": 0.001,
         "milliampere": 0.001,
         "uA": 1e-6,
+        "μA": 1e-6,
         "microamp": 1e-6,
+        "microampere": 1e-6,
     },
     "rad": {
         "rad": 1.0,
@@ -1217,9 +1220,11 @@ UNIT_CATEGORIES: dict[str, str] = {
     "kV": "voltage",
     "mV": "voltage",
     "uV": "voltage",
+    "μV": "voltage",
     "A": "current",
     "mA": "current",
     "uA": "current",
+    "μA": "current",
     "rad": "angle",
     "deg": "angle",
     "K": "temperature",
@@ -1261,10 +1266,12 @@ def are_units_compatible(unit1: str | None, unit2: str | None) -> bool:
 
     Returns True if:
     - Both units are None (dimensionless)
-    - One unit is None and the other is not
+    - One unit is None and the other is not (dimensionless can mix with units)
     - Both units belong to the same category (e.g., both length)
 
-    Returns False if units are from different categories.
+    Returns False if:
+    - Units are from different categories
+    - One category is known but the other is unknown
     """
     if unit1 is None or unit2 is None:
         return True
@@ -1273,7 +1280,7 @@ def are_units_compatible(unit1: str | None, unit2: str | None) -> bool:
     cat2 = get_unit_category(unit2)
 
     if cat1 is None or cat2 is None:
-        return True
+        return False
 
     return cat1 == cat2
 

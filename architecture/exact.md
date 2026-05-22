@@ -196,13 +196,11 @@ LineMetrics(
 
 ```python
 DiffSpan(
-    a_start=int,
-    a_end=int,
+    kind=str,            # "equal", "insert", "delete", "replace"
+    a_span=list[int],    # [start, end) in string a
+    b_span=list[int],    # [start, end) in string b
     a_text=str,
-    b_start=int,
-    b_end=int,
     b_text=str,
-    diff_type=str  # "equal", "insert", "delete", "replace"
 )
 ```
 

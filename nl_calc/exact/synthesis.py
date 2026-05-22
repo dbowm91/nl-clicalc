@@ -411,8 +411,6 @@ def explain_diff(
     confusables_a = _detect_confusables(a)
     confusables_b = _detect_confusables(b)
 
-    same_length_codepoints = len(a) == len(b)
-
     classification = _classify_difference(
         raw_equal, nfc_equal, casefold_equal, byte_equal,
         not same_length_codepoints, None, invisibles_detected
@@ -667,6 +665,7 @@ def list_compare(
     # Use set-based matching for O(n) instead of O(n²)
     near_matches: list[dict] = []
     seen_pairs: set[tuple[str, str]] = set()
+    seen_a_positions: set[int] = set()
 
     casefold_groups: dict[str, list[tuple[int, str, str]]] = {}
     for i, (item, t) in enumerate(zip(a, a_transformed, strict=True)):
@@ -691,7 +690,10 @@ def list_compare(
     for cf_key, a_group in casefold_groups.items():
         if cf_key in b_casefold_index:
             b_item = b_casefold_index[cf_key]
-            for _, a_item, _ in a_group:
+            for a_pos, a_item, _ in a_group:
+                if a_pos in seen_a_positions:
+                    continue
+                seen_a_positions.add(a_pos)
                 pair = (a_item, b_item) if a_item <= b_item else (b_item, a_item)
                 if pair not in seen_pairs:
                     seen_pairs.add(pair)
@@ -700,7 +702,10 @@ def list_compare(
     for nfc_key, a_group in norm_groups.items():
         if nfc_key in b_norm_index:
             b_item = b_norm_index[nfc_key]
-            for _, a_item, _ in a_group:
+            for a_pos, a_item, _ in a_group:
+                if a_pos in seen_a_positions:
+                    continue
+                seen_a_positions.add(a_pos)
                 pair = (a_item, b_item) if a_item <= b_item else (b_item, a_item)
                 if pair not in seen_pairs:
                     seen_pairs.add(pair)

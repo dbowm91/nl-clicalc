@@ -83,7 +83,7 @@ Units are organized by category (length, mass, time, etc.):
 | Energy | J | kJ, cal, kcal, Wh, kWh, BTU, eV |
 | Power | W | kW, MW, hp |
 | Speed | m/s | km/h, mph, knot |
-| Temperature | K | C, F |
+| Temperature | K | C, F, R |
 | Frequency | Hz | kHz, MHz, GHz |
 | Force | N | kN, mN |
 | Voltage | V | mV, kV |
@@ -137,11 +137,14 @@ convert_temperature(0, "K", "C")  # → -273.15
 
 ### Temperature Scale Formulas
 
-| From/To | Celsius (C) | Fahrenheit (F) | Kelvin (K) |
-|---------|-------------|----------------|------------|
-| Celsius | — | C × 9/5 + 32 | C + 273.15 |
-| Fahrenheit | (F - 32) × 5/9 | — | (F - 32) × 5/9 + 273.15 |
-| Kelvin | K - 273.15 | K × 9/5 - 459.67 | — |
+The calculator supports four temperature scales:
+
+| From/To | Celsius (C) | Fahrenheit (F) | Kelvin (K) | Rankine (R) |
+|---------|-------------|----------------|------------|-------------|
+| Celsius | — | C × 9/5 + 32 | C + 273.15 | (C + 273.15) × 9/5 |
+| Fahrenheit | (F - 32) × 5/9 | — | (F - 32) × 5/9 + 273.15 | F + 459.67 |
+| Kelvin | K - 273.15 | K × 9/5 - 459.67 | — | K × 9/5 |
+| Rankine | R × 5/9 - 273.15 | R - 459.67 | R × 5/9 | — |
 
 **Warning:** Converting temperature to non-temperature units gives physically meaningless results.
 
