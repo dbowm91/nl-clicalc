@@ -1249,8 +1249,15 @@ def main() -> int:
         action="store_true",
         help="Show expression in output (default for interactive)",
     )
+    parser.add_argument(
+        "--mcp", action="store_true", help="Run as MCP server for exact text tools"
+    )
 
     args = parser.parse_args()
+
+    if args.mcp:
+        from nl_calc.mcp.server import mcp_main
+        return mcp_main()
 
     if args.version:
         print(f"nl-calc {__version__}")

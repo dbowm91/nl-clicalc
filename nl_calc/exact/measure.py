@@ -45,18 +45,18 @@ class CharCategoryMetrics(TypedDict):
 def _detect_newline_style(s: str) -> str:
     """Detect the newline style used in the string."""
     has_crlf = "\r\n" in s
-    has_cr = "\r" in s and not has_crlf
-    has_lf = "\n" in s
+    standalone_cr = s.count("\r") - s.count("\r\n")
+    standalone_lf = s.count("\n") - s.count("\r\n")
 
-    # If we have both CRLF and standalone CR or LF, it's mixed
-    if has_crlf and ((has_cr and "\r" not in "\n") or (has_lf and "\n" not in "\r")):
+    if has_crlf and (standalone_cr > 0 or standalone_lf > 0):
         return "mixed"
-
+    if standalone_cr > 0 and standalone_lf > 0:
+        return "mixed"
     if has_crlf:
         return "CRLF"
-    elif has_cr:
+    elif standalone_cr > 0:
         return "CR"
-    elif has_lf:
+    elif standalone_lf > 0:
         return "LF"
     else:
         return "none"

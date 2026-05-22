@@ -51,6 +51,7 @@ class RegexTestResult(TypedDict):
     """Result of regex testing."""
     valid_pattern: bool
     results: list[RegexMatch]
+    error: str | None
 
 
 # Default bracket pairs
@@ -234,10 +235,11 @@ def regex_test(
 
     try:
         compiled = re.compile(pattern, flag_values)
-    except re.error:
+    except re.error as e:
         return RegexTestResult(
             valid_pattern=False,
             results=[],
+            error=str(e),
         )
 
     results: list[RegexMatch] = []
