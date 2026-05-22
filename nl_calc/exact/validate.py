@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import json
 import re
+import signal
 from typing import TypedDict
+
+
+MAX_PATTERN_LENGTH = 1000
+MAX_PATTERN_NESTING = 5
 
 
 class BracketError(TypedDict):
@@ -202,6 +207,51 @@ def validate_json(s: str) -> ValidateJsonResult:
         )
 
 
+def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
+    """Check if regex pattern is too complex (ReDoS prevention).
+
+    Args:
+        pattern: Regular expression pattern.
+
+    Returns:
+        Tuple of (is_safe, error_message).
+    """
+    if len(pattern) > MAX_PATTERN_LENGTH:
+        return False, f"Pattern length {len(pattern)} exceeds maximum {MAX_PATTERN_LENGTH}"
+
+    nesting_depth = 0
+    max_nesting = 0
+    in_char_class = False
+    i = 0
+
+    while i < len(pattern):
+        char = pattern[i]
+
+        if char == '\\' and i + 1 < len(pattern):
+            i += 2
+            continue
+
+        if char == '[':
+            nesting_depth += 1
+            max_nesting = max(max_nesting, nesting_depth)
+            in_char_class = True
+        elif char == ']':
+            nesting_depth -= 1
+            in_char_class = False
+        elif char == '(' and not in_char_class:
+            nesting_depth += 1
+            max_nesting = max(max_nesting, nesting_depth)
+        elif char == ')' and not in_char_class:
+            nesting_depth -= 1
+
+        i += 1
+
+    if max_nesting > MAX_PATTERN_NESTING:
+        return False, f"Pattern nesting depth {max_nesting} exceeds maximum {MAX_PATTERN_NESTING}"
+
+    return True, None
+
+
 def regex_test(
     pattern: str,
     samples: list[str],
@@ -218,7 +268,14 @@ def regex_test(
         Dictionary with valid_pattern (bool) and results (list of
         RegexMatch dicts with matches, fullmatch, span, groups, groupdict).
     """
-    # Compile the pattern
+    is_safe, error_msg = _check_pattern_complexity(pattern)
+    if not is_safe:
+        return RegexTestResult(
+            valid_pattern=False,
+            results=[],
+            error=error_msg,
+        )
+
     flag_values = 0
     if flags:
         flag_map = {

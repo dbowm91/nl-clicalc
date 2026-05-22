@@ -704,5 +704,112 @@ class TestVariables:
         assert self._get_value(result) == 15
 
 
+class TestPrefixedUnitConversions:
+    """Tests for prefixed unit conversions via get_conversion_factor."""
+
+    def test_kilonewton_to_newton(self):
+        """Test kN to N conversion factor is 1000.0."""
+        from nl_calc import get_conversion_factor
+        result = get_conversion_factor("kN", "N")
+        assert result == 1000.0
+
+    def test_millivolt_to_volt(self):
+        """Test mV to V conversion factor is 0.001."""
+        from nl_calc import get_conversion_factor
+        result = get_conversion_factor("mV", "V")
+        assert abs(result - 0.001) < 1e-10
+
+    def test_milliamp_to_amp(self):
+        """Test mA to A conversion factor is 0.001."""
+        from nl_calc import get_conversion_factor
+        result = get_conversion_factor("mA", "A")
+        assert abs(result - 0.001) < 1e-10
+
+    def test_kilowatt_to_watt(self):
+        """Test kW to W conversion factor is 1000.0."""
+        from nl_calc import get_conversion_factor
+        result = get_conversion_factor("kW", "W")
+        assert result == 1000.0
+
+    def test_megabyte_to_byte(self):
+        """Test MB to B conversion factor is 1048576.0."""
+        from nl_calc import get_conversion_factor
+        result = get_conversion_factor("MB", "B")
+        assert result == 1048576.0
+
+    def test_kilometer_to_meter(self):
+        """Test km to m conversion factor is 1000.0."""
+        from nl_calc import get_conversion_factor
+        result = get_conversion_factor("km", "m")
+        assert result == 1000.0
+
+
+class TestTemperatureConversions:
+    """Tests for temperature conversions with exact offset handling."""
+
+    def test_fahrenheit_to_celsius_exact_freezing(self):
+        """Test 32F to C equals exactly 0.0C."""
+        from nl_calc.units import convert_temperature
+        result = convert_temperature(32.0, "F", "C")
+        assert abs(result - 0.0) < 1e-9
+
+    def test_fahrenheit_to_celsius_boiling(self):
+        """Test 212F to C equals approximately 100.0C."""
+        from nl_calc.units import convert_temperature
+        result = convert_temperature(212.0, "F", "C")
+        assert abs(result - 100.0) < 1e-9
+
+    def test_celsius_to_fahrenheit_freezing(self):
+        """Test 0C to F equals exactly 32F."""
+        from nl_calc.units import convert_temperature
+        result = convert_temperature(0.0, "C", "F")
+        assert abs(result - 32.0) < 1e-9
+
+    def test_celsius_to_fahrenheit_boiling(self):
+        """Test 100C to F equals approximately 212F."""
+        from nl_calc.units import convert_temperature
+        result = convert_temperature(100.0, "C", "F")
+        assert abs(result - 212.0) < 1e-9
+
+
+class TestUnicodeScriptOther:
+    """Tests for unicode_script() returning 'Other' for digits and punctuation."""
+
+    def test_digits_return_other(self):
+        """Test that ASCII digits return 'Other'."""
+        from nl_calc.exact import unicode_script
+        assert unicode_script("0") == "Other"
+        assert unicode_script("1") == "Other"
+        assert unicode_script("5") == "Other"
+        assert unicode_script("9") == "Other"
+
+    def test_punctuation_return_other(self):
+        """Test that ASCII punctuation returns 'Other'."""
+        from nl_calc.exact import unicode_script
+        assert unicode_script(".") == "Other"
+        assert unicode_script(",") == "Other"
+        assert unicode_script("!") == "Other"
+        assert unicode_script("?") == "Other"
+        assert unicode_script(":") == "Other"
+        assert unicode_script(";") == "Other"
+        assert unicode_script("-") == "Other"
+        assert unicode_script("(") == "Other"
+        assert unicode_script(")") == "Other"
+
+    def test_space_returns_other(self):
+        """Test that space returns 'Other'."""
+        from nl_calc.exact import unicode_script
+        assert unicode_script(" ") == "Other"
+
+    def test_math_symbols_return_other(self):
+        """Test that common math symbols return 'Other'."""
+        from nl_calc.exact import unicode_script
+        assert unicode_script("+") == "Other"
+        assert unicode_script("=") == "Other"
+        assert unicode_script("*") == "Other"
+        assert unicode_script("/") == "Other"
+        assert unicode_script("%") == "Other"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

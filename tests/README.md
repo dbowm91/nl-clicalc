@@ -20,11 +20,22 @@ python -m pytest tests/test_tokenization.py::TestMultiDigitSubtraction -v
 
 | File | Purpose |
 |------|---------|
-| `test_clicalc.py` | Original functional tests (95 tests) |
+| `test_clicalc.py` | Core functional tests (87 tests) |
 | `test_security_fuzz.py` | Security and fuzz tests (22 tests) |
 | `test_tokenization.py` | Tokenization edge cases (54 tests) |
 | `test_math_identities.py` | Mathematical laws (28 tests) |
+| `test_exact.py` | Unicode text primitives (98 tests) |
+| `test_cli_text.py` | CLI text tools (19 tests) |
+| `test_mcp_server.py` | MCP server integration (16 tests) |
 | `conftest.py` | Shared fixtures |
+
+## New Test Classes (Wave 6)
+
+| Class | File | Tests |
+|-------|------|-------|
+| `TestPrefixedUnitConversions` | test_clicalc.py | 6 tests for prefixed units (kN, mV, mA, kW, MB, km) |
+| `TestTemperatureConversions` | test_clicalc.py | 4 tests for exact temperature offsets (32F=0C, etc.) |
+| `TestUnicodeScriptOther` | test_clicalc.py | 4 tests for unicode_script() returning "Other" |
 
 ## API Usage
 
@@ -37,6 +48,14 @@ python -m pytest tests/test_tokenization.py::TestMultiDigitSubtraction -v
 - Natural language (`"five plus three"`)
 - Unit expressions (`"30m + 100ft"`)
 - Complex expressions with units
+
+### Use `convert_temperature()` for:
+- Direct temperature conversions with offset handling
+- `convert_temperature(32.0, "F", "C")` returns `0.0`
+
+### Use `get_conversion_factor()` for:
+- Prefixed unit conversion factors
+- `get_conversion_factor("kN", "N")` returns `1000.0`
 
 ## Helper Functions
 
@@ -79,6 +98,32 @@ class TestMultiDigitSubtraction:
         assert abs(get_value(result) - 89) < 1e-10
 ```
 
+### Testing Temperature Conversions
+```python
+def test_fahrenheit_to_celsius_exact_freezing(self):
+    """Test 32F to C equals exactly 0.0C."""
+    from nl_calc.units import convert_temperature
+    result = convert_temperature(32.0, "F", "C")
+    assert abs(result - 0.0) < 1e-9
+```
+
+### Testing Unit Conversion Factors
+```python
+def test_kilonewton_to_newton(self):
+    """Test kN to N conversion factor is 1000.0."""
+    from nl_calc import get_conversion_factor
+    result = get_conversion_factor("kN", "N")
+    assert result == 1000.0
+```
+
+### Testing Unicode Script Detection
+```python
+def test_digits_return_other(self):
+    """Test that ASCII digits return 'Other'."""
+    from nl_calc.exact import unicode_script
+    assert unicode_script("0") == "Other"
+```
+
 ## Common Issues
 
 ### UnitValue Return Type
@@ -98,3 +143,17 @@ evaluate("30m + 100ft")      # SyntaxError - m, ft not valid
 ```
 
 Use `run()` for these cases.
+
+### Temperature Conversion
+Temperature conversions require `convert_temperature()` for proper offset handling:
+```python
+from nl_calc.units import convert_temperature
+result = convert_temperature(32.0, "F", "C")  # Returns 0.0
+```
+
+### Prefixed Units
+Some prefixed units (like "kg") have compound meanings. Use `get_conversion_factor()` for prefix conversions:
+```python
+from nl_calc import get_conversion_factor
+factor = get_conversion_factor("kN", "N")  # Returns 1000.0
+```

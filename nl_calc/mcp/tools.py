@@ -40,6 +40,7 @@ from ..exact.synthesis import (
 from .schemas import ErrorEnvelope
 
 MAX_TEXT_LENGTH = 100_000
+MAX_EXPRESSION_LENGTH = 10_000
 MAX_LIST_ITEMS = 10_000
 MAX_REGEX_SAMPLES = 100
 
@@ -75,6 +76,8 @@ def math_eval(expression: str) -> dict:
     """
     if len(expression) > MAX_TEXT_LENGTH:
         return _error_response("InputError", f"Input exceeds maximum length of {MAX_TEXT_LENGTH}")
+    if len(expression) > MAX_EXPRESSION_LENGTH:
+        return _error_response("InputError", f"Expression exceeds maximum length of {MAX_EXPRESSION_LENGTH}")
     try:
         result = evaluate_raw(expression)
         if hasattr(result, 'value'):
