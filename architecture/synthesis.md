@@ -101,18 +101,18 @@ class InspectTextResult(TypedDict):
 
 ### `count_chars(text: str, target: str | None = None, normalization: str = "raw") -> CountCharsResult | dict[str, int]`
 
-Count character occurrences or return frequency table.
+Count character occurrences or return frequency table. Returns `CountCharsResult` when `target` is specified, otherwise returns a frequency dictionary.
 
 ```python
 class CountCharsResult(TypedDict):
-    target: str
-    normalization: str
-    count: int
-    positions: list[int]
-    text_length_codepoints: int
+    target: str                      # The character being counted
+    normalization: str              # Normalization mode used
+    count: int                       # Number of occurrences
+    positions: list[int]             # All positions where target appears
+    text_length_codepoints: int       # Total text length in codepoints
 ```
 
-When `target` is `None`, returns a frequency dictionary instead.
+When `target` is `None`, returns a frequency dictionary mapping each character to its count.
 
 ### List Comparison
 

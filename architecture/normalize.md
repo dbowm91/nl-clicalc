@@ -22,7 +22,7 @@ Applies all normalization transformations to an expression string:
 - Complex number suffix handling (`3i` → `3j`)
 - Whitespace handling (removes outside parentheses, preserves inside)
 
-### `normalize_expression(expression, operators, patterns)`
+### `normalize_expression(expression, operators, patterns, skip_validation=False)`
 
 Full normalization pipeline without evaluation:
 1. `normalize()` - Apply word replacements
@@ -32,16 +32,47 @@ Full normalization pipeline without evaluation:
 5. `_handle_unit_conversion_from_tokens()` - Detect unit conversions
 6. `_preprocess_units()` - Add multiplication before units
 
-### `run(expression, operators, patterns)`
+The `skip_validation` parameter (default False) skips token validation, allowing use with custom evaluators.
 
-Full pipeline: normalize + evaluate + return result.
-
-## Build Compatibility
-
-For single-file builds, `main()` is also available as `normalize_main()`:
+## Data Structures
 
 ```python
-from normalize import main, normalize_main  # Both refer to same function
+OPERATOR_CONVERSIONS = {
+    "+": ["plus", "positive"],
+    "-": ["minus", "negative"],
+    "*": ["times", "multiplied by", "of"],
+    "/": ["divided by", "over", "per"],
+    "**": ["^", "raised to", "to the power of"],
+    ...
+}
+
+NUMBER_WORDS = {
+    "0": ["zero"],
+    "1": ["one"],
+    ...
+    "100": ["hundred"],
+    "1000": ["thousand"],
+    ...
+}
+
+FUNCTION_MAPPINGS = {
+    "square root": "sqrt",
+    "cube root": "cbrt",
+    ...
+}
+
+CONSTANT_WORDS = {
+    "avogadro": ["avogadro", "avogadro's number"],
+    "planck": ["planck", "planck's constant"],
+    ...
+}
+
+STRIPPED_PHRASES = [
+    "what is",
+    "calculate",
+    "what's",
+    ...
+]
 ```
 
 ### `check_if_number(token)`

@@ -7,7 +7,7 @@ consistency requirements in the plan.
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class ErrorEnvelope(TypedDict):
@@ -24,119 +24,208 @@ class SuccessEnvelope(TypedDict):
     result: dict
 
 
-# Input schemas
-
-class CalculateInput(TypedDict):
-    """Input for nl_calculate tool."""
-    expression: str
-
-
-class MeasureTextInput(TypedDict):
-    """Input for nl_measure_text tool."""
-    text: str
-    include_codepoints: bool
-
-
-class TextEqualInput(TypedDict):
-    """Input for nl_text_equal tool."""
-    a: str
-    b: str
-    normalization: str
-    casefold: bool
-    trim: bool
-
-
-class ExplainDiffInput(TypedDict):
-    """Input for nl_explain_diff tool."""
-    a: str
-    b: str
-    max_diffs: int
-    include_codepoints: bool
-    include_context: bool
-
-
-class InspectTextInput(TypedDict):
-    """Input for nl_inspect_text tool."""
-    text: str
-    include_codepoints: bool
-    include_confusables: bool
-
-
-class CountCharsInput(TypedDict):
-    """Input for nl_count_chars tool."""
-    text: str
-    target: str | None
-    normalization: str
-
-
-class CheckBracketsInput(TypedDict):
-    """Input for nl_check_brackets tool."""
-    text: str
-    pairs: dict[str, str] | None
-
-
-class ValidateJsonInput(TypedDict):
-    """Input for nl_validate_json tool."""
-    text: str
-
-
-class RegexTestInput(TypedDict):
-    """Input for nl_regex_test tool."""
-    pattern: str
-    samples: list[str]
-    flags: list[str] | None
-
-
-class ListCompareInput(TypedDict):
-    """Input for nl_list_compare tool."""
-    a: list[str]
-    b: list[str]
-    ignore_order: bool
-    casefold: bool
-    normalization: str
-
-
-# Tool definitions (for schema documentation)
-
-TOOL_SCHEMAS = {
-    "nl_calculate": {
+TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "math_eval": {
         "description": "Deterministically evaluate arithmetic, unit conversions, constants, and simple scientific expressions. Use for math and unit tasks instead of asking the model to calculate.",
-        "input": CalculateInput,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "Math expression to evaluate (e.g., '5 + 3', '30m + 100ft', 'five plus three')",
+                },
+            },
+            "required": ["expression"],
+        },
     },
-    "nl_measure_text": {
+    "text_measure": {
         "description": "Measure exact text properties: UTF-8 byte length, codepoint count, words, lines, whitespace, newline style, Unicode normalization state, invisibles, and mixed-script signals.",
-        "input": MeasureTextInput,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Input string to measure",
+                },
+                "include_codepoints": {
+                    "type": "boolean",
+                    "description": "Include codepoint details (not yet implemented)",
+                    "default": False,
+                },
+            },
+            "required": ["text"],
+        },
     },
-    "nl_text_equal": {
+    "text_equal": {
         "description": "Compare two strings under raw, Unicode-normalized, casefolded, or trimmed modes and report exact equality evidence.",
-        "input": TextEqualInput,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "description": "First string"},
+                "b": {"type": "string", "description": "Second string"},
+                "normalization": {
+                    "type": "string",
+                    "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"],
+                    "default": "raw",
+                    "description": "Unicode normalization form",
+                },
+                "casefold": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Use casefolded comparison",
+                },
+                "trim": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Trim whitespace",
+                },
+            },
+            "required": ["a", "b"],
+        },
     },
-    "nl_explain_diff": {
+    "text_diff_explain": {
         "description": "Explain why two strings differ, including spans, codepoints, Unicode names, normalization equivalence, confusables, invisibles, and agent-facing classification.",
-        "input": ExplainDiffInput,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "description": "First string"},
+                "b": {"type": "string", "description": "Second string"},
+                "max_diffs": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "Maximum diff spans to return",
+                },
+                "include_codepoints": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Include codepoint details",
+                },
+                "include_context": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Include context notes",
+                },
+            },
+            "required": ["a", "b"],
+        },
     },
-    "nl_inspect_text": {
+    "text_inspect": {
         "description": "Inspect a string for hidden characters, Unicode confusables, mixed scripts, normalization state, and display-safe representation.",
-        "input": InspectTextInput,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string to inspect"},
+                "include_codepoints": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Include codepoint details in invisibles",
+                },
+                "include_confusables": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Check for confusables",
+                },
+            },
+            "required": ["text"],
+        },
     },
-    "nl_count_chars": {
+    "text_count": {
         "description": "Count exact characters or produce a character frequency table with codepoint positions.",
-        "input": CountCharsInput,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string"},
+                "target": {
+                    "type": "string",
+                    "description": "Single character to count (None for frequency table)",
+                },
+                "normalization": {
+                    "type": "string",
+                    "enum": ["raw", "NFC", "NFKC"],
+                    "default": "raw",
+                    "description": "Unicode normalization form",
+                },
+            },
+            "required": ["text"],
+        },
     },
-    "nl_check_brackets": {
+    "validate_brackets": {
         "description": "Check whether delimiters are structurally balanced and report unmatched delimiters with line/column positions.",
-        "input": CheckBracketsInput,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string"},
+                "pairs": {
+                    "type": "object",
+                    "description": "Bracket pair mapping (default: () [] {} <>)",
+                },
+            },
+            "required": ["text"],
+        },
     },
-    "nl_validate_json": {
+    "validate_json": {
         "description": "Validate JSON and report precise parse errors or top-level structure information.",
-        "input": ValidateJsonInput,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string to validate as JSON"},
+            },
+            "required": ["text"],
+        },
     },
-    "nl_regex_test": {
+    "validate_regex": {
         "description": "Test a Python regular expression against sample strings and report match/fullmatch status, spans, groups, and errors.",
-        "input": RegexTestInput,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regular expression pattern"},
+                "samples": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of strings to test against",
+                },
+                "flags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Flag names (IGNORECASE, MULTILINE, etc.)",
+                },
+            },
+            "required": ["pattern", "samples"],
+        },
     },
-    "nl_list_compare": {
+    "list_compare": {
         "description": "Compare two lists exactly, optionally ignoring order, casefolding, or Unicode-normalizing elements. Report missing, duplicate, and near-match items.",
-        "input": ListCompareInput,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "First list",
+                },
+                "b": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Second list",
+                },
+                "ignore_order": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Compare as sets",
+                },
+                "casefold": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Casefold elements before comparison",
+                },
+                "normalization": {
+                    "type": "string",
+                    "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"],
+                    "default": "NFC",
+                    "description": "Unicode normalization form",
+                },
+            },
+            "required": ["a", "b"],
+        },
     },
 }

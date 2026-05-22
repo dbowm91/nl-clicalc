@@ -23,11 +23,14 @@ AST visitor that evaluates mathematical expressions.
 - Hyperbolic: `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`
 - Logarithmic: `log`, `log10`, `log2`, `log1p`, `exp`, `expm1`
 - Power/Root: `sqrt`, `pow`, `cbrt`
-- Statistical: `mean`, `median`, `mode`, `std`, `variance`, `sum`, `max`, `min`
+- Rounding: `abs`, `floor`, `ceil`, `trunc`
+- Statistical: `mean`, `median`, `mode`, `std`, `variance`, `var`, `variance_sample`, `sum`, `max`, `min`
 - Combinatorics: `factorial`, `gcd`, `lcm`, `perm`, `comb`, `nPr`, `nCr`
-- Complex: `real`, `imag`, `conj`, `phase`, `polar`, `rect`
+- Complex: `real`, `imag`, `conj`, `conjugate`, `phase`, `polar`, `rect`
+- Base conversion: `bin`, `hex`, `oct`
+- Percentage: `percentof`, `percent_of`, `aspercent`, `as_percent`
 - Bitwise: `bitand`, `bitor`, `bitxor`, `bitnot`, `bitlshift`, `bitrshift`
-- Prime: `isprime`, `primefactors`, `nextprime`, `prevprime`
+- Prime: `isprime`, `is_prime`, `primefactors`, `prime_factors`, `nextprime`, `next_prime`, `prevprime`, `prev_prime`
 - Random: `random`, `randint`, `randrange`, `uniform`, `randn`, `gauss`, `seed`
 - Utility: `clamp`, `hypot`, `round`, `sign`, `degrees`, `radians`
 - Memory: `store`, `recall`, `M`, `Mplus`, `Mminus`, `MC`, `MR`
@@ -37,6 +40,14 @@ AST visitor that evaluates mathematical expressions.
 ### `Memory`
 
 Calculator-style memory registers for storing values.
+
+**Memory functions return `float` values, not `Memory` objects:**
+- `memory_store(value)` - Returns stored value as float
+- `memory_recall()` - Returns recalled value as float
+- `memory_add(value)` - Returns new register total as float
+- `memory_subtract(value)` - Returns new register total as float
+- `memory_clear()` - Returns None
+- `memory_list()` - Returns dict of register names to float values
 
 ### `PyCalcApp`
 
@@ -66,13 +77,16 @@ Thread-safe wrapper optimized for webapps with caching and instance isolation.
 | Function | Description |
 |----------|-------------|
 | `evaluate(expr)` | Pre-normalized expression (no spaces) |
-| `evaluate_raw(expr)` | Full pipeline with NL support |
+| `evaluate_raw(expr)` | Full pipeline with NL support (skips token validation only) |
 | `evaluate_cached(expr)` | LRU cached evaluation |
 | `evaluate_async(expr)` | Async evaluation |
 | `evaluate_with_timeout(expr, timeout)` | Timeout-protected evaluation |
+| `get_default_evaluator()` | Get the default Evaluator instance |
 | `register_constant(name, value)` | Add custom constant |
 | `register_function(name, func)` | Add custom function |
 | `load_user_config()` | Load from nl_calc_config.py |
+
+**Exceptions:** `EvaluationError`, `TimeoutError` |
 
 ## Complex Number Support
 

@@ -1317,9 +1317,13 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
         TimeoutError: If evaluation exceeds the timeout.
         EvaluationError: If the expression is invalid or contains unsupported operations.
 
+    Note:
+        Expressions that exceed MAX_EXPONENT (10000) or MAX_FACTORIAL (1000)
+        will fail with EvaluationError before the timeout is reached.
+
     Example:
-        >>> result = evaluate_with_timeout("2 ** 1000000", timeout=1.0)
-        # Raises TimeoutError
+        >>> result = evaluate_with_timeout("sum(i**2 for i in range(10000))", timeout=1.0)
+        # May raise TimeoutError for slow expressions
     """
     import concurrent.futures
 

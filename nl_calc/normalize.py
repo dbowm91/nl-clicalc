@@ -840,7 +840,7 @@ def _preprocess_units(expression: str) -> str:
 
 
 def _handle_unit_conversion_from_tokens(tokens: list) -> list:
-    """Handle unit conversion patterns from tokens like ['2meters', 'in', 'feet'].
+    """Handle unit conversion patterns from tokens like ['2 meters', 'in', 'feet'].
 
     Detects patterns like: [number+unit, 'in'/'to'/'into'/'as', target_unit]
     Converts to: ['convert(number*unit,target_unit)']

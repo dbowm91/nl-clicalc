@@ -165,12 +165,11 @@ class CountCharsResult(TypedDict):
     text_length_codepoints: int
 
 
-def measure_text(text: str, include_codepoints: bool = False) -> MeasureTextResult:
+def measure_text(text: str) -> MeasureTextResult:
     """Measure text properties combining multiple primitives.
 
     Args:
         text: Input string.
-        include_codepoints: If True, include detailed codepoint info (not implemented).
 
     Returns:
         Complete text measurement with metrics, normalization, and risk signals.
@@ -328,9 +327,10 @@ def _classify_difference(
     if raw_equal:
         return "exact_match"
 
+    if casefold_equal:
+        return "case_only"
+
     if nfc_equal:
-        if casefold_equal:
-            return "accent_or_diacritic_difference"
         return "unicode_normalization_only"
 
     if length_diff:
@@ -399,23 +399,21 @@ def explain_diff(
     diffs_raw = _diff_spans(a, b, max_diffs=max_diffs)
     diffs: list[DiffInfo] = []
 
-    classification = "exact_match"
-    if not raw_equal:
-        if nfc_equal:
-            classification = "unicode_normalization_only"
-        elif nfkc_equal:
-            classification = "compatibility_normalization_only"
-        elif casefold_equal:
-            classification = "case_only"
-        elif not same_length_codepoints:
-            classification = "length_only"
-        else:
-            classification = "ordinary_text_difference"
-
     invisibles_a = _find_invisibles(a)
     invisibles_b = _find_invisibles(b)
+    invisibles_detected = bool(invisibles_a or invisibles_b)
     confusables_a = _detect_confusables(a)
     confusables_b = _detect_confusables(b)
+
+    same_length_codepoints = len(a) == len(b)
+
+    classification = _classify_difference(
+        raw_equal, nfc_equal, casefold_equal, byte_equal,
+        not same_length_codepoints, None, invisibles_detected
+    )
+
+    if classification == "ordinary_text_difference" and nfkc_equal:
+        classification = "compatibility_normalization_only"
 
     security_findings: list[dict] = []
     if invisibles_a or invisibles_b:
@@ -658,33 +656,47 @@ def list_compare(
     duplicates_b = [x for x, c in b_counts.items() if c > 1]
 
     # Near matches (case-only or normalization-only differences)
+    # Use set-based matching for O(n) instead of O(n²)
     near_matches: list[dict] = []
-    for a_item, a_t in zip(a, a_transformed, strict=True):
-        for b_item, b_t in zip(b, b_transformed, strict=True):
-            if a_t != b_t:
-                # Check if they differ only by case
-                if a_t.casefold() == b_t.casefold():
-                    near_matches.append({
-                        "a": a_item,
-                        "b": b_item,
-                        "classification": "case_only",
-                    })
-                # Check if they differ only by normalization
-                elif _normalize_unicode(a_t, "NFC") == _normalize_unicode(b_t, "NFC"):
-                    near_matches.append({
-                        "a": a_item,
-                        "b": b_item,
-                        "classification": "unicode_normalization_only",
-                    })
+    seen_pairs: set[tuple[str, str]] = set()
 
-    # Remove duplicates from near_matches
-    seen = set()
-    unique_near = []
-    for nm in near_matches:
-        key = (nm["a"], nm["b"])
-        if key not in seen:
-            seen.add(key)
-            unique_near.append(nm)
+    casefold_groups: dict[str, list[tuple[int, str, str]]] = {}
+    for i, (item, t) in enumerate(zip(a, a_transformed, strict=True)):
+        cf = t.casefold()
+        if cf not in casefold_groups:
+            casefold_groups[cf] = []
+        casefold_groups[cf].append((i, item, t))
+
+    norm_groups: dict[str, list[tuple[int, str, str]]] = {}
+    for i, (item, t) in enumerate(zip(a, a_transformed, strict=True)):
+        nfc = _normalize_unicode(t, "NFC")
+        if nfc not in norm_groups:
+            norm_groups[nfc] = []
+        norm_groups[nfc].append((i, item, t))
+
+    b_casefold_index: dict[str, str] = {}
+    b_norm_index: dict[str, str] = {}
+    for b_item, b_t in zip(b, b_transformed, strict=True):
+        b_casefold_index[b_t.casefold()] = b_item
+        b_norm_index[_normalize_unicode(b_t, "NFC")] = b_item
+
+    for cf_key, a_group in casefold_groups.items():
+        if cf_key in b_casefold_index:
+            b_item = b_casefold_index[cf_key]
+            for _, a_item, _ in a_group:
+                pair = (a_item, b_item) if a_item <= b_item else (b_item, a_item)
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    near_matches.append({"a": a_item, "b": b_item, "classification": "case_only"})
+
+    for nfc_key, a_group in norm_groups.items():
+        if nfc_key in b_norm_index:
+            b_item = b_norm_index[nfc_key]
+            for _, a_item, _ in a_group:
+                pair = (a_item, b_item) if a_item <= b_item else (b_item, a_item)
+                if pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    near_matches.append({"a": a_item, "b": b_item, "classification": "unicode_normalization_only"})
 
     same_ordered = ignore_order or (a_transformed == b_transformed)
     same_unordered = a_set == b_set
@@ -696,5 +708,5 @@ def list_compare(
         "only_in_b": only_in_b,
         "duplicates_a": duplicates_a,
         "duplicates_b": duplicates_b,
-        "near_matches": unique_near,
+        "near_matches": near_matches,
     }

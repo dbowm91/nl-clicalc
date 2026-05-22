@@ -54,8 +54,6 @@ _SCRIPT_RANGES: list[tuple[int, int, str]] = [
     (0x0600, 0x06ff, "Arabic"),
     (0x0590, 0x05ff, "Hebrew"),
     (0x0900, 0x097f, "Devanagari"),
-    (0x0401, 0x0401, "Cyrillic"),
-    (0x0451, 0x0451, "Cyrillic"),
 ]
 
 

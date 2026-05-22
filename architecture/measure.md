@@ -17,6 +17,7 @@ class LineMetrics(NamedTuple):
     nonempty_lines: int              # Lines with content
     blank_lines: int                 # Empty lines
     max_line_length_codepoints: int  # Longest line length
+    trailing_whitespace_lines: list[int]  # 1-based line numbers with trailing whitespace
     newline_style: str               # "LF", "CRLF", "CR", "mixed", "none"
     ends_with_newline: bool          # Does text end with newline?
 ```
@@ -37,8 +38,9 @@ Analyze word structure in text.
 class WordMetrics(NamedTuple):
     words: int                       # Total word count
     unique_words_casefolded: int     # Unique words (casefolded)
-    max_word_length: int             # Longest word length
-    avg_word_length: float           # Average word length
+    sentences_estimate: int           # Estimated sentence count
+    paragraphs: int                  # Number of paragraphs (separated by blank lines)
+    average_word_length: float       # Average word length in characters
 ```
 
 **Word Definition**: Sequences of non-whitespace characters.

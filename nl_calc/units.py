@@ -131,12 +131,31 @@ class UnitValue:
 
     def convert_to(self, target_unit: str) -> UnitValue:
         """Convert to a different unit of the same type."""
+        import warnings
+
         if self.unit == target_unit:
             return UnitValue(self.value, target_unit)
 
         if self.unit is None:
             raise ValueError("Cannot convert dimensionless value")
 
+        cat = get_unit_category(self.unit)
+        target_cat = get_unit_category(target_unit)
+        if cat == "temperature":
+            if target_cat != "temperature":
+                warnings.warn(
+                    f"Converting temperature ({self.unit}={self.value}) to non-temperature unit ({target_unit}). "
+                    f"This may give physically meaningless results.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            elif self.value < 0 and cat == "temperature":
+                if self.unit in ("K", "kelvin", "kelvins") and self.value < 0:
+                    warnings.warn(
+                        f"Absolute zero is 0 K. Converting negative Kelvin value {self.value} K will give incorrect results.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
         factor = get_conversion_factor(self.unit, target_unit)
         return UnitValue(self.value * factor, target_unit)
 

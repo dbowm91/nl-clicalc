@@ -18,7 +18,7 @@ class LineMetrics(TypedDict):
     blank_lines: int
     max_line_length_codepoints: int
     trailing_whitespace_lines: list[int]
-    newline_style: str
+    newline_style: str  # "LF", "CRLF", "CR", "mixed", "none"
     ends_with_newline: bool
 
 

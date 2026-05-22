@@ -23,6 +23,7 @@ from .tools import (
     validate_json,
     validate_regex,
 )
+from .schemas import TOOL_SCHEMAS
 
 TOOL_HANDLERS: dict[str, Any] = {
     "math_eval": math_eval,
@@ -50,6 +51,17 @@ def _invalid_request(request_id: Any, message: str) -> dict:
     }
 
 
+def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
+    """Find a case-insensitive close match for tool name."""
+    name_lower = name.lower()
+    for tool_name in handlers:
+        if tool_name.lower() == name_lower:
+            return tool_name
+        if name_lower in tool_name.lower() or tool_name.lower() in name_lower:
+            return tool_name
+    return None
+
+
 def _handle_call_tool(request: dict) -> dict:
     """Handle a tools/call MCP request."""
     params = request.get("params", {})
@@ -62,12 +74,16 @@ def _handle_call_tool(request: dict) -> dict:
         return _invalid_request(request.get("id"), "Invalid arguments: expected object")
 
     if name not in TOOL_HANDLERS:
+        close = _find_close_match(name, TOOL_HANDLERS)
+        msg = f"Unknown tool: {name}"
+        if close:
+            msg += f". Did you mean: {close}?"
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
             "error": {
                 "code": -32602,
-                "message": f"Unknown tool: {name}",
+                "message": msg,
             },
         }
 
@@ -113,221 +129,13 @@ def _handle_call_tool(request: dict) -> dict:
 
 def _handle_list_tools(request: dict) -> dict:
     """Handle a tools/list MCP request."""
-    tools = [
-        {
-            "name": "math_eval",
-            "description": "Deterministically evaluate arithmetic, unit conversions, constants, and simple scientific expressions. Use for math and unit tasks instead of asking the model to calculate.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "Math expression to evaluate (e.g., '5 + 3', '30m + 100ft', 'five plus three')",
-                    },
-                },
-                "required": ["expression"],
-            },
-        },
-        {
-            "name": "text_measure",
-            "description": "Measure exact text properties: UTF-8 byte length, codepoint count, words, lines, whitespace, newline style, Unicode normalization state, invisibles, and mixed-script signals.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "Input string to measure",
-                    },
-                    "include_codepoints": {
-                        "type": "boolean",
-                        "description": "Include codepoint details (not yet implemented)",
-                        "default": False,
-                    },
-                },
-                "required": ["text"],
-            },
-        },
-        {
-            "name": "text_equal",
-            "description": "Compare two strings under raw, Unicode-normalized, casefolded, or trimmed modes and report exact equality evidence.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "a": {"type": "string", "description": "First string"},
-                    "b": {"type": "string", "description": "Second string"},
-                    "normalization": {
-                        "type": "string",
-                        "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"],
-                        "default": "raw",
-                        "description": "Unicode normalization form",
-                    },
-                    "casefold": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "Use casefolded comparison",
-                    },
-                    "trim": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "Trim whitespace",
-                    },
-                },
-                "required": ["a", "b"],
-            },
-        },
-        {
-            "name": "text_diff_explain",
-            "description": "Explain why two strings differ, including spans, codepoints, Unicode names, normalization equivalence, confusables, invisibles, and agent-facing classification.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "a": {"type": "string", "description": "First string"},
-                    "b": {"type": "string", "description": "Second string"},
-                    "max_diffs": {
-                        "type": "integer",
-                        "default": 20,
-                        "description": "Maximum diff spans to return",
-                    },
-                    "include_codepoints": {
-                        "type": "boolean",
-                        "default": True,
-                        "description": "Include codepoint details",
-                    },
-                    "include_context": {
-                        "type": "boolean",
-                        "default": True,
-                        "description": "Include context notes",
-                    },
-                },
-                "required": ["a", "b"],
-            },
-        },
-        {
-            "name": "text_inspect",
-            "description": "Inspect a string for hidden characters, Unicode confusables, mixed scripts, normalization state, and display-safe representation.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Input string to inspect"},
-                    "include_codepoints": {
-                        "type": "boolean",
-                        "default": True,
-                        "description": "Include codepoint details in invisibles",
-                    },
-                    "include_confusables": {
-                        "type": "boolean",
-                        "default": True,
-                        "description": "Check for confusables",
-                    },
-                },
-                "required": ["text"],
-            },
-        },
-        {
-            "name": "text_count",
-            "description": "Count exact characters or produce a character frequency table with codepoint positions.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Input string"},
-                    "target": {
-                        "type": "string",
-                        "description": "Single character to count (None for frequency table)",
-                    },
-                    "normalization": {
-                        "type": "string",
-                        "enum": ["raw", "NFC", "NFKC"],
-                        "default": "raw",
-                        "description": "Unicode normalization form",
-                    },
-                },
-                "required": ["text"],
-            },
-        },
-        {
-            "name": "validate_brackets",
-            "description": "Check whether delimiters are structurally balanced and report unmatched delimiters with line/column positions.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Input string"},
-                    "pairs": {
-                        "type": "object",
-                        "description": "Bracket pair mapping (default: () [] {} <>)",
-                    },
-                },
-                "required": ["text"],
-            },
-        },
-        {
-            "name": "validate_json",
-            "description": "Validate JSON and report precise parse errors or top-level structure information.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Input string to validate as JSON"},
-                },
-                "required": ["text"],
-            },
-        },
-        {
-            "name": "validate_regex",
-            "description": "Test a Python regular expression against sample strings and report match/fullmatch status, spans, groups, and errors.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "pattern": {"type": "string", "description": "Regular expression pattern"},
-                    "samples": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of strings to test against",
-                    },
-                    "flags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Flag names (IGNORECASE, MULTILINE, etc.)",
-                    },
-                },
-                "required": ["pattern", "samples"],
-            },
-        },
-        {
-            "name": "list_compare",
-            "description": "Compare two lists exactly, optionally ignoring order, casefolding, or Unicode-normalizing elements. Report missing, duplicate, and near-match items.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "a": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "First list",
-                    },
-                    "b": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Second list",
-                    },
-                    "ignore_order": {
-                        "type": "boolean",
-                        "default": True,
-                        "description": "Compare as sets",
-                    },
-                    "casefold": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "Casefold elements before comparison",
-                    },
-                    "normalization": {
-                        "type": "string",
-                        "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"],
-                        "default": "NFC",
-                        "description": "Unicode normalization form",
-                    },
-                },
-                "required": ["a", "b"],
-            },
-        },
-    ]
+    tools = []
+    for name, schema in TOOL_SCHEMAS.items():
+        tools.append({
+            "name": name,
+            "description": schema["description"],
+            "inputSchema": schema["inputSchema"],
+        })
 
     return {
         "jsonrpc": "2.0",

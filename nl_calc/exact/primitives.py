@@ -169,8 +169,9 @@ def measure_basic(s: str) -> MeasureBasic:
         s: Input string.
 
     Returns:
-        Dictionary with bytes_utf8, codepoints, graphemes_estimate (null),
-        chars_no_whitespace, ascii, and non_ascii counts.
+        Dictionary with bytes_utf8, codepoints, graphemes_estimate (None -
+        grapheme counting not implemented), chars_no_whitespace, ascii,
+        and non_ascii counts.
     """
     bytes_utf8 = len(s.encode("utf-8"))
     codepoints_count = len(s)

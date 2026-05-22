@@ -13,11 +13,14 @@ Usage:
 Library usage:
     from nl_calc import evaluate, EvaluationError, UnitValue
     result = evaluate("5 + 3")
-    
+
     # For webapps with caching:
     from nl_calc import PyCalcApp
-    app = PyCalcApp(cache_size=1000)
+    app = PyCalcApp(cache_size=1024)
     result = app.calculate("five plus two")
+
+Note: load_user_config_extended() is not exported as custom number/operator
+words via external config are not officially supported.
 """
 
 from .evaluator import (

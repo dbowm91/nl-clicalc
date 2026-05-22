@@ -44,13 +44,18 @@ MAX_LIST_ITEMS = 10_000
 MAX_REGEX_SAMPLES = 100
 
 
+def _sanitize_error(message: str) -> str:
+    """Remove non-ASCII characters from error messages."""
+    return message.encode("ascii", "replace").decode("ascii")
+
+
 def _error_response(error_type: str, error: str, hints: list[str] | None = None) -> dict:
     """Create a standardized error envelope."""
     return ErrorEnvelope(
         ok=False,
         error_type=error_type,
-        error=error,
-        hints=hints or [],
+        error=_sanitize_error(error),
+        hints=[_sanitize_error(h) for h in (hints or [])],
     )
 
 
