@@ -23,17 +23,11 @@ class BracketError(TypedDict):
     column: int
 
 
-BracketError.__slots__ = ['char', 'index', 'line', 'column']
-
-
 class CheckBracketsResult(TypedDict):
     """Result of bracket checking."""
     balanced: bool
     unmatched_openers: list[BracketError]
     unmatched_closers: list[BracketError]
-
-
-CheckBracketsResult.__slots__ = ['balanced', 'unmatched_openers', 'unmatched_closers']
 
 
 class ValidateJsonResult(TypedDict):
