@@ -2,18 +2,31 @@
 
 ## Status: Ready for Implementation
 
-All items from previous plan.md (Wave 7 deferred) are preserved. New items from code reviews are organized by wave.
+Consolidated from all module review files. Contains all actionable items from:
+- normalize_review.md, primitives_review.md, units_review.md
+- synthesis_review.md, cli_review.md, measure_review.md
+- evaluator_review.md, confusables_review.md, validate_review.md
+- diff_review.md, unicode_tools_review.md, mcp_server_review.md
+
+Wave 1: Critical bugs (4 items)
+Wave 2: CLI/REPL fixes (3 items)
+Wave 3: Documentation consistency (7 items)
+Wave 4: Security and robustness (5 items)
+Wave 5: Code quality (10 items)
+Wave 6: Feature completeness (9 items)
+Wave 7: Deferred future items
+Wave 8: Low priority improvements
 
 ---
 
-## Wave 1: Critical Bugs (Parallelizable - Can run 3 subagents)
+## Wave 1: Critical Bugs (Parallelizable - 4 items, run 4 subagents)
 
 ### 1.1 Fix Temperature Conversion in UnitValue.convert_to()
 **File:** `nl_calc/units.py`
 
-**Problem:** `UnitValue.convert_to()` doesn't handle temperature; `convert_temperature()` works but is not discoverable.
+**Problem:** `UnitValue.convert_to()` warns about temperature conversions but uses multiplicative approach instead of offset-based formula. Temperature units (K, C, F, R) are not in UNIT_CONVERSIONS and `convert_temperature()` is not called.
 
-**Action:** Add temperature-specific path in `convert_to()` that detects temperature units and calls `convert_temperature()` instead of multiplicative approach.
+**Action:** Modify `convert_to()` to detect when both source and target are temperature units and call `convert_temperature()` directly instead of doing `value * factor`.
 
 **Verification:**
 ```python
@@ -39,13 +52,35 @@ python3 -c "from nl_calc.units import get_conversion_factor; print(get_conversio
 ### 1.3 Fix _cbrt() for Complex Number Support
 **File:** `nl_calc/evaluator.py`
 
-**Problem:** `_cbrt()` doesn't support complex numbers; negative cube roots fail.
+**Problem:** `_cbrt()` doesn't support complex numbers; negative cube roots fail with TypeError when compared with `>=`.
 
 **Action:** Apply `_complex_aware` decorator pattern (similar to `_sqrt`) to `_cbrt()`.
 
 **Verification:**
 ```python
 python3 -c "from nl_calc.evaluator import evaluate; print(evaluate('cbrt(-8)')}"  # Should return (-2+0j) or similar
+```
+
+---
+
+### 1.4 Add Complex-Aware Hyperbolic Functions
+**File:** `nl_calc/evaluator.py`
+
+**Problem:** `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` in FUNCTIONS use `math.*` directly instead of `_complex_aware` wrappers. Documentation claims these work with complex numbers but they fail.
+
+**Action:** Change FUNCTIONS entries to use `_complex_aware` wrappers:
+```python
+_sinh = _complex_aware(math.sinh, cmath.sinh)
+_cosh = _complex_aware(math.cosh, cmath.cosh)
+_tanh = _complex_aware(math.tanh, cmath.tanh)
+_asinh = _complex_aware(math.asinh, cmath.asinh)
+_acosh = _complex_aware(math.acosh, cmath.acosh)
+_atanh = _complex_aware(math.atanh, cmath.atanh)
+```
+
+**Verification:**
+```python
+python3 -c "from nl_calc.evaluator import evaluate; print(evaluate('sinh(1+2j)')}"  # Should work
 ```
 
 ---
@@ -256,11 +291,11 @@ python3 -c "from nl_calc.exact.primitives import visible_repr; print(visible_rep
 ---
 
 ### 5.4 Add confusables_count() Helper
-**File:** `nl_calc/exact/confusables.py`
+**File:** `nl_calc/exact/unicode_tools.py`
 
-**Problem:** No fast helper for counting confusables.
+**Problem:** No fast helper for counting confusables without building full list. NOTE: confusables.py is auto-generated data, not the place for this helper.
 
-**Action:** Add `confusables_count()` function.
+**Action:** Add `confusables_count()` function to `unicode_tools.py`.
 
 ---
 
@@ -291,21 +326,21 @@ python3 -c "from nl_calc.exact.primitives import visible_repr; print(visible_rep
 
 ---
 
-### 5.9 Add __slots__ to TypedDict Classes
-**File:** `nl_calc/exact/confusables.py`
+### 5.9 Add TypedDict __slots__ to Correct Files
+**Files:** `nl_calc/exact/validate.py`, `nl_calc/exact/measure.py`, `nl_calc/exact/unicode_tools.py`, `nl_calc/exact/diff.py`, `nl_calc/exact/synthesis.py`
 
-**Problem:** TypedDict classes could benefit from __slots__.
+**Problem:** TypedDict classes could benefit from __slots__ for memory efficiency. NOTE: confusables.py is a data file with no TypedDict classes - the TypedDicts are in other files.
 
-**Action:** Add __slots__ for memory efficiency.
+**Action:** Add __slots__ for memory efficiency to TypedDict classes in correct files.
 
 ---
 
-### 5.10 Add Type Guard for Trivial Confusables
-**File:** `nl_calc/exact/confusables.py`
+### 5.10 Add Type Guard for Self-Mapping Confusables
+**File:** `nl_calc/exact/unicode_tools.py`
 
-**Problem:** No type guard for self-mapping confusables.
+**Problem:** No type guard for self-mapping confusables (character maps to itself).
 
-**Action:** Add type guard function.
+**Action:** Add type guard function to filter out self-mappings in `detect_confusables()`.
 
 ---
 
@@ -415,7 +450,7 @@ python3 -c "from nl_calc.exact.primitives import visible_repr; print(visible_rep
 ---
 
 ### 7.3 Consider Adding confusable_codepoint Field
-**File:** `nl_calc/exact/confusables.py`
+**File:** `nl_calc/exact/unicode_tools.py` (ConfusableInfo TypedDict is here, not in confusables.py)
 
 **Problem:** Consumers may need both character and codepoint representations.
 
@@ -424,7 +459,7 @@ python3 -c "from nl_calc.exact.primitives import visible_repr; print(visible_rep
 ---
 
 ### 7.4 Consider Bidirectional Confusable Detection
-**File:** `nl_calc/exact/confusables.py`
+**File:** `nl_calc/exact/unicode_tools.py`
 
 **Problem:** Currently only catches confusable characters, not Latin characters being used deceptively.
 
@@ -607,20 +642,40 @@ python3 -c "from nl_calc.units import get_unit_category; print(get_unit_category
 
 ## Parallelization Strategy
 
-### Wave 1 (Critical Bugs)
-Can run in parallel with 3 subagents:
-- Agent A: 1.1 Temperature conversion
-- Agent B: 1.2 kilonewton alias
-- Agent C: 1.3 _cbrt complex support
+### Wave 1 (Critical Bugs - 4 items, run 4 subagents in parallel)
+- Agent A: 1.1 Temperature conversion in UnitValue.convert_to()
+- Agent B: 1.2 kilonewton alias fix
+- Agent C: 1.3 _cbrt complex number support
+- Agent D: 1.4 Complex-aware hyperbolic functions
 
-### Wave 2 (CLI/REPL) and Wave 3 (Documentation)
-Can run in parallel with 2-3 subagents each.
+### Wave 2 (CLI/REPL Fixes - 3 items)
+Can run in parallel with 2-3 subagents:
+- 2.1 Add --verbose flag or repurpose -v
+- 2.2 Fix REPL default show_expression
+- 2.3 Clarify -e flag description
 
-### Wave 4 (Security) and Wave 5 (Quality)
-Can run in parallel with multiple subagents.
+### Wave 3 (Documentation vs Implementation - 7 items)
+Mostly independent, can parallelize:
+- 3.1 Fix measure.py max_word_length documentation
+- 3.2 Add check_brackets return type documentation
+- 3.3 Document TEMPERATURE_CONVERSIONS
+- 3.4 Add CGJ/MVS/SHY to primitives documentation
+- 3.5 Fix diff_spans algorithm documentation
+- 3.6 Add longest_common_subsequence() function
+- 3.7 Fix unicode_script() documentation
 
-### Wave 6 (Feature Completeness)
-Mostly independent items, can parallelize 3-4 agents.
+### Wave 4 (Security and Robustness - 5 items)
+- 4.1 Include Cf characters in control_chars count
+- 4.2 Add type check for bitwise operations
+- 4.3 Add near-zero check in _as_percent()
+- 4.4 Fix negative nesting depth in pattern complexity
+- 4.5 Fix header detection in confusables generator
 
-### Wave 7 (Deferred) and Wave 8 (Low Priority)
+### Wave 5 (Code Quality - 10 items)
+All independent, can run many in parallel. See individual items.
+
+### Wave 6 (Feature Completeness - 9 items)
+All independent, can run many in parallel. See individual items.
+
+### Wave 7 (Deferred Future) and Wave 8 (Low Priority)
 Can be worked on incrementally as time permits.
