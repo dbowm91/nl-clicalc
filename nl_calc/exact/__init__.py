@@ -47,6 +47,8 @@ from .unicode_tools import (
     detect_confusables,
     detect_mixed_scripts,
     unicode_script,
+    unicode_scripts,
+    confusables_count,
 )
 
 # Re-export validate
@@ -67,6 +69,7 @@ from .diff import (
     diff_spans,
     first_diff,
     levenshtein_distance,
+    longest_common_subsequence,
 )
 
 # Re-export measure

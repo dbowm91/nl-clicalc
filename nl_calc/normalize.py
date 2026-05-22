@@ -1025,7 +1025,7 @@ def _run_repl(show_expression: bool = True) -> int:
 
         _, exit_code = run(line, NORMALIZE, PATTERNS, "plain", show_expression)
 
-        if exit_code == 0:
+        if exit_code == 0 and _ is not None:
             history.append((line, _))
 
     return 0

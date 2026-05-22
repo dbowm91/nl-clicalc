@@ -23,9 +23,6 @@ class LineMetrics(TypedDict):
     ends_with_newline: bool
 
 
-LineMetrics.__slots__ = ['lines', 'nonempty_lines', 'blank_lines', 'max_line_length_codepoints', 'trailing_whitespace_lines', 'newline_style', 'ends_with_newline']
-
-
 class WordMetrics(TypedDict):
     """Word-level metrics."""
     words: int
@@ -33,9 +30,6 @@ class WordMetrics(TypedDict):
     sentences_estimate: int
     paragraphs: int
     average_word_length: float
-
-
-WordMetrics.__slots__ = ['words', 'unique_words_casefolded', 'sentences_estimate', 'paragraphs', 'average_word_length']
 
 
 class CharCategoryMetrics(TypedDict):
@@ -47,9 +41,6 @@ class CharCategoryMetrics(TypedDict):
     spaces: int
     control_chars: int
     combining_marks: int
-
-
-CharCategoryMetrics.__slots__ = ['letters', 'digits', 'punctuation', 'symbols', 'spaces', 'control_chars', 'combining_marks']
 
 
 def _detect_newline_style(s: str) -> str:

@@ -79,6 +79,8 @@ class UnitValue:
         return UnitValue(self.value - other, self.unit)
 
     def __rsub__(self, other: Any) -> UnitValue:
+        if isinstance(other, UnitValue):
+            return other.__sub__(self)
         return UnitValue(other - self.value, self.unit)
 
     def __mul__(self, other: Any) -> UnitValue:

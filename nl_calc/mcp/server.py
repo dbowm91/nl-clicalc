@@ -228,3 +228,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# Build-time alias for MCP entry point
+mcp_main = main

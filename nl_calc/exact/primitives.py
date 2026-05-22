@@ -379,7 +379,7 @@ def _is_extended_pictographic(char: str) -> bool:
     # U+2600 to U+26FF (Misc symbols)
     # U+2700 to U+27BF (Dingbats)
     # Also check category 'So' (Symbol other) which includes many emoji
-    if 0x1F300 <= cp <= 0x1FFFF:
+    if 0x1F300 <= cp <= 0x10FFFF:
         return True
     if 0x2600 <= cp <= 0x26FF:
         return True
