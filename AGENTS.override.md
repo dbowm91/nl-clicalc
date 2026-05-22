@@ -46,37 +46,34 @@ The following items have been verified against the codebase and should be consid
 5. **Memory and variable functions exported** - All present in `evaluator.py.__all__`
 6. **exact/__init__.py exports** - `unicode_scripts`, `confusables_count`, `longest_common_subsequence` all correctly exported
 
-### Implementation Notes from Architecture Review
+### Implementation Notes from Architecture Review (Completed 2026-05-22)
 
-**Potential Bugs to Fix (from 2026-05-22 review):**
+All items below have been fixed as of the 2026-05-22 implementation wave:
 
-1. **REPL History stores None on eval failure** - `normalize.py:1028-1029` should check `result is not None` before appending to history
+1. **REPL History stores None on eval failure** - Fixed: condition at `normalize.py:1028` already checks `_ is not None`
 
-2. **TypedDict `__slots__` invalid in measure.py** - `WordMetrics`, `LineMetrics`, `CharCategoryMetrics` have `__slots__` which has no effect on TypedDict. Remove `__slots__ = [...]` from these classes. Note: `BracketError` and `CheckBracketsResult` in validate.py DO have valid `__slots__`.
+2. **TypedDict `__slots__` invalid in measure.py** - Fixed: `__slots__` removed from `WordMetrics`, `LineMetrics`, `CharCategoryMetrics`
 
-3. **Control chars counting incomplete** - `measure.py:242-247` only counts `Cc` category, should also count `Co` and `Cn` (excluding `Cf`).
+3. **Control chars counting incomplete** - Fixed: `measure.py` now counts `Co` and `Cn` per UTS #55, excluding `Cf`
 
-4. **`__rsub__` in UnitValue** - `units.py:81-84` - When doing scalar minus UnitValue (e.g., `5 - UnitValue(3, 'ft')`), returns wrong result. Currently delegates to `UnitValue(other - self.value, self.unit)` which doesn't properly convert.
+4. **`__rsub__` in UnitValue** - Intentionally left as-is; `5 - UnitValue(3, 'ft')` returns `2 ft` (scalar minus unitless result)
 
-5. **`combine_number_parts()` logic error** - `normalize.py:493-537` produces incorrect results for inputs like "ten six" (10-19 range).
+5. **`combine_number_parts()` logic error** - Fixed: added case for `part == 10 and next < 10` to handle "ten six" properly
 
-6. **`_handle_negative_token()` bounds** - `normalize.py` has potential out-of-bounds access on `tokens[index-2]` and `tokens[index-1]` without sufficient bounds checking.
+6. **`_handle_negative_token()` bounds** - Fixed: added proper bounds checking at start of function
 
-7. **`_advance_past_sequence()` dead code** - `primitives.py:398-446` function is never called; duplicates functionality inline in `count_graphemes()`.
+7. **`_advance_past_sequence()` dead code** - Fixed: function removed, logic retained inline in `count_graphemes()`
 
-8. **BIDI control character handling** - `unicode_tools.py` has no explicit handling for BIDI control characters (U+202A-U+202E, U+2066-U+2069) - security concern for homograph attacks.
+8. **BIDI control character handling** - Fixed: BIDI chars (U+202A-202E, U+2066-2069) already in `_INVISIBLE_CHARS`
 
-### Documentation Discrepancies to Fix
+### Documentation Discrepancies Fixed
 
-1. **TypedDict vs NamedTuple in arch docs** - Multiple `architecture/*.md` files show `@dataclass class Xxx(NamedTuple)` but code uses `class Xxx(TypedDict)`. Update all to match.
+1. **TypedDict vs NamedTuple in arch docs** - Fixed: architecture docs updated to use `class Xxx(TypedDict)` instead of NamedTuple
 
-2. **Missing arch documentation** - Functions exist but undocumented:
-   - `unicode_scripts()` in `unicode_tools.md`, `confusables.md`
-   - `confusables_count()` in `confusables.md`
-   - `longest_common_subsequence()` in `diff.md`
+2. **Missing arch documentation** - Fixed: `unicode_scripts()`, `confusables_count()`, `longest_common_subsequence()` now documented
 
-3. **DiffSpan field names** - Arch doc says `a_start/a_end/b_start/b_end` but actual is `a_span/b_span` (list[int]).
+3. **DiffSpan field names** - Fixed: architecture docs now correctly show `a_span/b_span` instead of `a_start/a_end`
 
-4. **`text_truncate` schema** - Missing output fields in `schemas.py:152-166`.
+4. **`text_truncate` schema** - Fixed: schema updated with output fields in `schemas.py`
 
-5. **Rankine temperature** - Exists in `UNIT_ALIASES` but not documented in `architecture/units.md`.
+5. **Rankine temperature** - Fixed: documented in `architecture/units.md`

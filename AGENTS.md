@@ -249,20 +249,15 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 
 ### Session Learnings (2026-05-22 Review)
 
-**Dead Code Found:**
-- `_advance_past_sequence()` at `primitives.py:398-446` is defined but never called directly. Its logic is duplicated inline in `count_graphemes()` (lines 488-505). Consider removing this function.
-
-**Duplicate Assignments:**
-- `same_length_codepoints = len(a) == len(b)` appears twice in `explain_diff()` at lines 392 and 414 in `synthesis.py`.
-
-**Bounds Checking Concerns:**
-- `_handle_negative_token()` at `normalize.py:650-660` accesses `tokens[index-2]` and `tokens[index-1]` without verifying they exist, despite being called only when `index >= 2`.
+**Completed Fixes:**
+- Dead code `_advance_past_sequence()` at `primitives.py` removed (was defined but never called)
+- Duplicate assignment `same_length_codepoints` in `explain_diff()` consolidated to single location
+- `_handle_negative_token()` at `normalize.py` now has proper bounds checking
+- Control characters counting now includes Co and Cn per UTS #55 (Cf remains excluded)
+- BIDI control characters (U+202A-202E, U+2066-2069) are properly detected via `_INVISIBLE_CHARS`
 
 **TypedDict `__slots__`:**
 - TypedDict classes do NOT support `__slots__`. Valid for regular classes (like `BracketError`, `CheckBracketsResult` in validate.py), invalid for TypedDicts (like `WordMetrics`, `LineMetrics`, `CharCategoryMetrics` in measure.py).
-
-**Control Characters Counting:**
-- `measure.py:233-238` only counts `Cc` category but should include `Co` and `Cn` per UTS #55. Cf (format characters) should remain excluded.
 
 **Variation Selector Detection:**
 - Both `visible_repr()` (range check 0xFE00-0xFE0F) and `find_invisibles()` (set membership) handle VS detection, but differently. Both work correctly for their purposes.

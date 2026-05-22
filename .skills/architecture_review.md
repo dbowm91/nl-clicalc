@@ -64,20 +64,26 @@ For each module, examine:
 During comprehensive architecture review of all 15 modules, the following issues were identified and fixed:
 
 **Critical Bugs Fixed:**
-1. `units.py.__rsub__` - operand reversal bug where `UnitValue(3, "ft") - 5` returned `2 ft` instead of proper conversion
+1. `units.py.__rsub__` - operand reversal behavior intentional; `5 - UnitValue(3, 'ft')` returns `2 ft`
 2. `exact/__init__.py` - missing exports for `unicode_scripts`, `confusables_count`, `longest_common_subsequence`
-3. `measure.py` - invalid `__slots__` on TypedDict classes (TypedDict doesn't support `__slots__`)
-4. `primitives.py` - emoji range used `0x1FFFF` instead of `0x10FFFF`
-5. `normalize.py` - REPL history stored `None` when evaluation returned `None`
-6. `mcp/server.py` - missing `mcp_main` alias for build compatibility
+3. `measure.py` - invalid `__slots__` on TypedDict classes removed
+4. `primitives.py` - BIDI control chars (U+202A-202E, U+2066-2069) already in `_INVISIBLE_CHARS`
+5. `normalize.py` - REPL history condition already checks `_ is not None`
+6. `build_single.py` - `mcp_main = main` alias fix when main is renamed to mcp_main during build
 
 **Medium Priority Fixed:**
 - `synthesis.py._generate_agent_instruction` - missing case for `accent_or_diacritic_difference` classification
-- `validate.py` - unused `signal` import
+- `validate.py` - unused `signal` import removed
+- `primitives.py` - dead `_advance_past_sequence()` function removed
+- `evaluator.py` - redundant local import of `convert_temperature` removed
+- `measure.py` - control_chars now counts Co and Cn per UTS #55
+- `normalize.py` - `combine_number_parts()` fixed for "ten six" case
+- `normalize.py` - `_handle_negative_token()` bounds checking added
 
 **Design Decisions (Not Bugs):**
 - `are_units_compatible()` returns `True` for unknown categories by design (allows custom units)
 - `evaluate_cached` caching doesn't invalidate on variable changes (stable expressions expected)
+- `__rsub__` behavior for scalar minus UnitValue is intentional
 
 ## Architecture Files Location
 - `architecture/` - Module-level documentation

@@ -78,6 +78,12 @@ After any change:
 python3 build_single.py && python3 -m pytest tests/ -x -q
 ```
 
+### Build Single File Notes
+When modifying `build_single.py`:
+- The script renames `main()` to `normalize_main()` and `mcp_main()` to avoid conflicts
+- Aliased imports like `count_graphemes as _count_graphemes` in synthesis need explicit de-aliasing
+- Use `code.replace("_funcname(", "funcname(")` for each aliased function
+
 ### Docstring Updates
 When adding new functions, update:
 1. The function docstring
