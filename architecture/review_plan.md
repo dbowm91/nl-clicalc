@@ -1,5 +1,7 @@
 # Architecture Review Plan
 
+**Status: INCOMPLETE** - Remaining waves: api, exact, overview modules
+
 This document outlines the review plan for architecture documentation in this directory.
 
 ## Review Strategy
