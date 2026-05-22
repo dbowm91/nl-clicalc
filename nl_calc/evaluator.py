@@ -880,6 +880,19 @@ class Evaluator(ast.NodeVisitor):
         "planckbar": 1.054571817e-34,
         "hbar": 1.054571817e-34,
         "reducedplanck": 1.054571817e-34,
+        # Atomic/particle physics
+        "me": 9.1093837015e-31,
+        "electronmass": 9.1093837015e-31,
+        "mp": 1.67262192369e-27,
+        "protonmass": 1.67262192369e-27,
+        "mn": 1.67493e-27,
+        "neutronmass": 1.67493e-27,
+        "re": 2.817952326e-15,
+        "electronradius": 2.817952326e-15,
+        "alpha": 7.2973525693e-3,
+        "finestructure": 7.2973525693e-3,
+        "wien": 2.897771955e-3,
+        "wienconstant": 2.897771955e-3,
     }
 
     # Safe mathematical functions
@@ -918,6 +931,7 @@ class Evaluator(ast.NodeVisitor):
         "sign": _sign,
         # Factorial and combinatorics
         "factorial": _safe_factorial,
+        "fact": _safe_factorial,
         "gcd": math.gcd,
         "lcm": _lcm,
         "perm": _perm,

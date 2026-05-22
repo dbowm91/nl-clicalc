@@ -457,7 +457,9 @@ Output: UnitValue(60.48, "m")
 | `UNIT_BASE` | units.py | Base units and their conversion factors |
 | `UNIT_CONVERSIONS` | units.py | Cached pairwise conversion factors |
 | `UNIT_ALIASES` | units.py | Maps unit variants to canonical forms |
+| `normalize_unit` | units.py | Convert unit name to canonical form |
 | `get_unit_category` | units.py | Returns unit category (length, mass, etc.) |
+| `are_units_compatible` | units.py | Check if two units can be combined |
 | `UnitValue` | units.py | Numeric value with optional units |
 | `Memory` | evaluator.py | Calculator memory registers |
 | `TOOL_SCHEMAS` | mcp/schemas.py | MCP tool definitions |

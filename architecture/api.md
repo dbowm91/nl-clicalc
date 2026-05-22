@@ -83,6 +83,15 @@ register_constant("earth_radius", 6371)
 
 Register a custom function globally (thread-safe, call during init only).
 
+### `get_default_evaluator() -> Evaluator`
+
+Get the default Evaluator instance (for advanced use).
+
+```python
+evaluator = get_default_evaluator()
+evaluator.CONSTANTS["custom"] = 123
+```
+
 ```python
 register_function("square", lambda x: x ** 2)
 ```
@@ -119,11 +128,30 @@ User-defined variables:
 ## Utility Functions
 
 ```python
-# Note: normalize_unit() exists in units.py but is not part of public API
-get_conversion_factor("ft", "m")   # 0.3048
-get_all_units()                    # ['A', 'B', 'BTU', ...]
-is_unit("m")                       # True
-get_unit_category("m")             # "length"
+normalize_unit("kilometers")          # "km" (canonical form)
+get_conversion_factor("ft", "m")       # 0.3048
+get_all_units()                        # ['A', 'B', 'BTU', ...]
+is_unit("m")                           # True
+get_unit_category("m")                 # "length"
+are_units_compatible("m", "ft")        # True
+FLOAT_EPSILON                          # 1e-15
+```
+
+## Security Constants
+
+```python
+MAX_EXPONENT = 10000      # Maximum exponent size
+MAX_FACTORIAL = 1000       # Maximum factorial input
+MAX_NESTING_DEPTH = 100    # Maximum expression nesting
+MAX_RESULT_VALUE = 1e308   # Maximum result value
+DEFAULT_CACHE_SIZE = 1024  # LRU cache size
+```
+
+## Input Limits
+
+```python
+MAX_INPUT_LENGTH = 10000   # Maximum input characters
+MAX_NESTING_DEPTH = 100    # Maximum parentheses nesting
 ```
 
 ## Types
