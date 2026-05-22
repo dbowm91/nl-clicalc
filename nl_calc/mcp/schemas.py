@@ -21,7 +21,7 @@ class ErrorEnvelope(TypedDict):
 class SuccessEnvelope(TypedDict):
     """Standard success envelope for MCP tool responses."""
     ok: bool
-    result: dict
+    result: dict[str, Any]
 
 
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
