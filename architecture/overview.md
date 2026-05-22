@@ -50,13 +50,13 @@ nl-clicalc supports two evaluation paths:
 ### 1. Full Pipeline (for Natural Language Input)
 
 ```
-Input → normalize() → normalize_expression() → evaluate() → Result
+Input → run() → normalize_expression() → normalize() → evaluate() → Result
 ```
 
 Steps:
-1. **Normalization** (`normalize.py`): Convert natural language to Python syntax
-2. **Tokenization**: Split expression at operator boundaries
-3. **Unit Preprocessing**: Add multiplication before units (e.g., `30m` → `30*m`)
+1. **run()** (`normalize.py`): Orchestrates the full pipeline
+2. **normalize_expression()**: Applies word replacements, converts number words, handles functions
+3. **normalize()**: Final cleanup of the expression string
 4. **AST Evaluation** (`evaluator.py`): Parse and evaluate the normalized expression
 
 ### 2. Direct Evaluation (for Pre-normalized Input)

@@ -26,7 +26,6 @@ CONFUSABLES: dict[str, str] = {
 
 Each entry maps a character to its confusable equivalents. For example:
 - `U+0430` (Cyrillic small letter A) → `U+0061` (Latin small letter A)
-- `U+0430` (Cyrillic small letter A) → `U+0061` (Latin small letter A)
 
 When `unicode_tools.detect_confusables()` scans text, it looks up each character in this table.
 

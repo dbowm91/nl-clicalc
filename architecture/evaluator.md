@@ -56,7 +56,9 @@ Thread-safe wrapper optimized for webapps with caching and instance isolation.
 
 - `MAX_EXPONENT = 10000` - Maximum exponent value
 - `MAX_FACTORIAL = 1000` - Maximum factorial input
-- `MAX_NESTING_DEPTH = 100` - Maximum parentheses depth
+- `MAX_NESTING_DEPTH = 100` - Maximum parentheses depth (also defined in `normalize.py:43`)
+
+**Note:** `MAX_NESTING_DEPTH` is defined in both `evaluator.py:51` and `normalize.py:43` and must be kept in sync.
 - `MAX_RESULT_VALUE = 1e308` - Maximum result value
 
 ## Public API Functions

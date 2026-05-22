@@ -135,7 +135,7 @@ visible_repr("hello\u200Bworld")
 
 ## confusables.py - Homoglyph Detection
 
-Uses the Unicode UTS #39 confusables table (~1800 entries) to detect lookalike characters from different scripts.
+Uses the Unicode UTS #39 confusables table (~6500 entries) to detect lookalike characters from different scripts.
 
 **Critical for security:** Attackers can register domains like "pаypal.com" (Cyrillic 'а' looks like Latin 'a') to deceive users.
 
@@ -149,7 +149,7 @@ result = detect_confusables("pаypal")
 #   char='а',
 #   codepoint='U+0430',
 #   name='CYRILLIC SMALL LETTER A',
-#   confusable_with='U+0041',
+#   confusable_with='A',
 #   confusable_name='LATIN CAPITAL LETTER A'
 # )
 

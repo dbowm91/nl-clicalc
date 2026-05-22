@@ -32,8 +32,8 @@ class FirstDiff(NamedTuple):
     b_index: int
     a_char: str
     b_char: str
-    a_context: str  # Surrounding text
-    b_context: str
+    a_codepoint: str  # U+XXXX format
+    b_codepoint: str
 ```
 
 Returns `None` if strings are identical.
@@ -41,7 +41,7 @@ Returns `None` if strings are identical.
 ```python
 >>> first_diff("hello", "hallo")
 FirstDiff(a_index=1, b_index=1, a_char='e', b_char='a',
-         a_context='...ello...', b_context='...allo...')
+         a_codepoint='U+0065', b_codepoint='U+0061')
 >>> first_diff("hello", "hello")
 None
 ```
@@ -53,10 +53,10 @@ Find common prefix and suffix lengths between two strings.
 ```python
 >>> common_prefix_suffix("hello", "hell")
 {'common_prefix_len': 3, 'common_suffix_len': 0}
+>>> common_prefix_suffix("hello", "yo")
+{'common_prefix_len': 0, 'common_suffix_len': 0}
 >>> common_prefix_suffix("testing", "ing")
-{'common_prefix_len': 0, 'common_suffix_len': 2}
->>> common_prefix_suffix("testing", "testing")
-{'common_prefix_len': 7, 'common_suffix_len': 0}
+{'common_prefix_len': 0, 'common_suffix_len': 0}
 ```
 
 ### `diff_spans(a: str, b: str, max_diffs: int = 50) -> list[DiffSpan]`
@@ -73,7 +73,7 @@ class DiffSpan(NamedTuple):
     b_text: str
 ```
 
-**Algorithm**: Uses Levenshtein distance to compute optimal edit script, then converts to diff spans.
+**Algorithm**: Uses difflib.SequenceMatcher to compute optimal edit script, then converts to diff spans.
 
 ```python
 >>> list(diff_spans("hello", "hallo"))
@@ -91,8 +91,8 @@ Named tuple containing:
 - `b_index`: Position in second string  
 - `a_char`: Character at position in first string
 - `b_char`: Character at position in second string
-- `a_context`: Surrounding context in first string (5 chars before/after)
-- `b_context`: Surrounding context in second string
+- `a_codepoint`: Codepoint of character at position in first string (U+XXXX format)
+- `b_codepoint`: Codepoint of character at position in second string
 
 ### `DiffSpan`
 

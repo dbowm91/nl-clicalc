@@ -2,7 +2,7 @@
 
 ## Entry Point
 
-`__main__.py` provides the entry point for running as a module:
+`__main__.py` is a bootstrap module that imports `main()` from `normalize.py` and delegates all CLI parsing and execution to it:
 
 ```bash
 python -m nl_calc "five plus two"
@@ -10,7 +10,11 @@ python -m nl_calc "five plus two"
 
 ## Main Function
 
-`main()` in `normalize.py` handles all CLI parsing and execution.
+`main()` in `normalize.py` (aliased as `normalize_main()` for build compatibility) handles all CLI parsing and execution:
+
+```python
+from nl_calc.normalize import main, normalize_main  # Both refer to same function
+```
 
 ## CLI Options
 

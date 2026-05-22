@@ -182,6 +182,24 @@ uv2 = UnitValue(100, "ft")
 result = uv1 + uv2  # UnitValue(60.48, "m")
 ```
 
+### `Memory`
+
+Named memory registers for calculator-style operations. Internally uses a dictionary mapping register names to float values.
+
+```python
+from nl_clicalc import Memory, memory_store, memory_recall
+
+# Memory is a TypedDict-like structure with named registers
+mem = Memory()
+mem["M"]  # Returns None if empty, float if value stored
+
+# Practical usage via memory functions:
+memory_store(42)      # Stores in "M" register by default
+memory_recall()       # Returns 42
+memory_add(8)         # Adds to M register: M = 50
+memory_subtract(5)    # Subtracts from M register: M = 45
+```
+
 ### `EvaluationError`
 
 Raised when an expression is invalid or contains unsupported operations.

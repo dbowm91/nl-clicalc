@@ -38,7 +38,7 @@ Supports arithmetic operations with automatic unit conversion on add/subtract.
 | speed | m/s | m/s, km/h, mph, kn, mach |
 | area | m2 | m2, km2, ft2, acre, ha |
 | frequency | Hz | Hz, kHz, MHz, GHz, THz |
-| temperature | K | K, C, F, R |
+| temperature | K (offset-based) | K, C, F, R |
 
 ## Temperature Conversions
 

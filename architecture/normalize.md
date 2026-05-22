@@ -36,6 +36,14 @@ Full normalization pipeline without evaluation:
 
 Full pipeline: normalize + evaluate + return result.
 
+## Build Compatibility
+
+For single-file builds, `main()` is also available as `normalize_main()`:
+
+```python
+from normalize import main, normalize_main  # Both refer to same function
+```
+
 ### `check_if_number(token)`
 
 Checks if a token represents a number (int, float, hex, binary, octal, complex, unit-suffixed).

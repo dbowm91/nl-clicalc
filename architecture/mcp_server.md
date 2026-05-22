@@ -145,6 +145,12 @@ Main entry point:
 3. Writes responses to stdout
 4. Returns exit code
 
+For build compatibility, this is also available as `mcp_main()`:
+
+```python
+from nl_calc.mcp.server import main, mcp_main  # Both refer to same function
+```
+
 ## Files
 
 | File | Purpose |

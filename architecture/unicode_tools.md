@@ -49,9 +49,14 @@ class ScriptInfo(TypedDict):
 ```python
 >>> detect_mixed_scripts("HelloМир")
 {'mixed_scripts': True, 'scripts': ['Latin', 'Cyrillic'],
- 'positions': [{'index': 5, 'char': 'М', 'script': 'Cyrillic', 'codepoint': 'U+041C'},
-              {'index': 6, 'char': 'и', 'script': 'Cyrillic', 'codepoint': 'U+0438'},
-              {'index': 7, 'char': 'р', 'script': 'Cyrillic', 'codepoint': 'U+0440'}]}
+ 'positions': [{'index': 0, 'char': 'H', 'script': 'Latin', 'codepoint': 'U+0048'},
+               {'index': 1, 'char': 'e', 'script': 'Latin', 'codepoint': 'U+0065'},
+               {'index': 2, 'char': 'l', 'script': 'Latin', 'codepoint': 'U+006C'},
+               {'index': 3, 'char': 'l', 'script': 'Latin', 'codepoint': 'U+006C'},
+               {'index': 4, 'char': 'o', 'script': 'Latin', 'codepoint': 'U+006F'},
+               {'index': 5, 'char': 'М', 'script': 'Cyrillic', 'codepoint': 'U+041C'},
+               {'index': 6, 'char': 'и', 'script': 'Cyrillic', 'codepoint': 'U+0438'},
+               {'index': 7, 'char': 'р', 'script': 'Cyrillic', 'codepoint': 'U+0440'}]}
 ```
 
 **Note**: Ignores `"Common"` and `"Inherited"` scripts for the mixed-script verdict.
@@ -76,11 +81,7 @@ class ConfusableInfo(TypedDict):
 [{'index': 1, 'char': 'а', 'codepoint': 'U+0430',
   'name': 'CYRILLIC SMALL LETTER A',
   'confusable_with': 'a',
-  'confusable_name': 'LATIN SMALL LETTER A'},
- {'index': 2, 'char': 'y', 'codepoint': 'U+0443',
-  'name': 'CYRILLIC SMALL LETTER YERU',
-  'confusable_with': 'y',
-  'confusable_name': 'LATIN SMALL LETTER Y'}]
+  'confusable_name': 'LATIN SMALL LETTER A'}]
 ```
 
 ## Data Source
@@ -97,6 +98,7 @@ _SCRIPT_RANGES = [
     (0x0100, 0x017f, "Latin"),      # Latin Extended-A
     (0x0180, 0x024f, "Latin"),      # Latin Extended-B
     (0x0400, 0x04ff, "Cyrillic"),
+    (0x0500, 0x052f, "Cyrillic"),   # Cyrillic Supplement
     (0x0370, 0x03ff, "Greek"),
     (0x1f00, 0x1fff, "Greek"),
     (0x4e00, 0x9fff, "Han"),

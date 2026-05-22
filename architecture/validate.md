@@ -43,20 +43,20 @@ Validate JSON syntax and report precise parse errors.
 class ValidateJsonResult(NamedTuple):
     valid: bool
     error: str | None          # Error message if invalid
-    error_position: int | None # Character position of error
-    error_line: int | None     # Line number of error
-    error_column: int | None   # Column number of error
-    structure: str | None      # "object", "array", "string", "number", etc.
+    position: int | None      # Character position of error
+    line: int | None           # Line number of error
+    column: int | None         # Column number of error
+    type: str | None           # "object", "array", "string", "number", etc.
 ```
 
 ```python
 >>> validate_json('{"hello": "world"}')
-ValidateJsonResult(valid=True, error=None, error_position=None,
-                   error_line=None, error_column=None, structure='object')
+ValidateJsonResult(valid=True, error=None, position=None,
+                   line=None, column=None, type='object')
 >>> validate_json('{"hello": }')
 ValidateJsonResult(valid=False, error='Expecting property name',
-                   error_position=10, error_line=1,
-                   error_column=10, structure=None)
+                   position=10, line=1,
+                   column=10, type=None)
 ```
 
 ### `regex_test(pattern: str, samples: list[str], flags: list[str] | None = None) -> RegexTestResult`
@@ -78,7 +78,7 @@ class RegexSampleResult(NamedTuple):
     sample: str
     matches: bool
     fullmatch: bool
-    spans: list[tuple[int, int]]     # Match spans
+    span: list[int] | None      # [start, end] of match
     groups: list[str]                 # Captured groups
     groupdict: dict[str, str]         # Named groups
 ```
@@ -91,11 +91,11 @@ RegexTestResult(
     error=None,
     results=[
         RegexSampleResult(sample='123', matches=True, fullmatch=True,
-                          spans=[(0, 3)], groups=[], groupdict={}),
+                          span=[0, 3], groups=[], groupdict={}),
         RegexSampleResult(sample='abc', matches=False, fullmatch=False,
-                          spans=[], groups=[], groupdict={}),
+                          span=None, groups=[], groupdict={}),
         RegexSampleResult(sample='12a', matches=True, fullmatch=False,
-                          spans=[(0, 2)], groups=[], groupdict={})
+                          span=[0, 2], groups=[], groupdict={})
     ]
 )
 ```
