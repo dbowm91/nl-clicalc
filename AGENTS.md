@@ -125,9 +125,7 @@ tests/
 ├── test_math_identities.py # Mathematical laws verification (28 tests)
 ```
 
-### API Mismatch - Critical Learning
-Many initial test attempts failed because I used `evaluate()` for features that require normalization:
-
+### API Usage Reminder
 - `evaluate("five plus three")` → Fails (invalid Python syntax)
 - `evaluate("1km in m")` → Fails (invalid Python syntax)
 - `evaluate("30m + 100ft")` → Fails (invalid Python syntax)
@@ -209,8 +207,6 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 
 ## Implementation Notes
 
-### Implementation Notes
-
 ### exact/ Module Conventions
 - **`utf8_bytes()` returns `bytes`** - Not an int count, returns actual UTF-8 encoded bytes
 - **`visible_repr()` display order matters** - Variation selector checks must come BEFORE combining mark checks (U+FE00-U+FE0F should be checked before category 'M'). The code at primitives.py:273-276 is correct.
@@ -219,7 +215,6 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - **`_get_script_heuristic()` benefits from caching** - Now has `@functools.lru_cache` decorator
 - **Cf (format) characters intentionally excluded** - `control_chars` in `measure.py` excludes `Cf` category; format characters are silently ignored per UTS #55
 - **confusables.py is a data file** - The file `nl_calc/exact/confusables.py` is auto-generated data only (~180KB, 6581 lines). TypedDict classes are in their logical modules, NOT in confusables.py
-- **`SuccessEnvelope` unused** - Defined in `schemas.py` but never imported or used in `tools.py`
 - **`confusables_count()` helper** - Fast function to count confusables without building full list (unicode_tools.py)
 - **`unicode_scripts()` batch function** - Returns script list for all chars in string (unicode_tools.py)
 - **`longest_common_subsequence()`** - Implemented in diff.py using dynamic programming
@@ -230,6 +225,7 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - Architecture docs may show `@dataclass class Xxx(NamedTuple)` but code uses `class Xxx(TypedDict)`
 - TypedDict is used throughout for consistency with Python 3.14+ typing patterns
 - Always check actual code for exact return type signatures
+- **TypedDict classes do NOT support `__slots__`** - Only regular classes (with actual implementations) support `__slots__`
 
 ### MCP Server Conventions
 - Tool names in `schemas.py` and `server.py` are now unified via `TOOL_SCHEMAS`
@@ -237,7 +233,7 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `MAX_TEXT_LENGTH` is enforced on `math_eval` tool
 - Error messages are sanitized for non-ASCII characters
 - Case-insensitive tool matching with suggestions for unknown tools
-- `mcp_main` is a build-time alias created by `build_single.py`, not a native export
+- `mcp_main` is defined in `server.py:234` as `mcp_main = main`
 
 ### Unit Conversion Conventions
 - Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`
@@ -245,7 +241,11 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `mps` (meters per second) is in `UNIT_CATEGORIES` as "speed"
 - Temperature-to-non-temperature conversions produce a warning
 
-### Known Bugs (None - all fixed as of implementation)
+### Known Issues
+
+- `notifications/cancel` and `notifications/progress` not implemented in MCP server
+- `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
+- Bidirectional confusable detection not implemented
 
 ### API Usage Reminder
 For testing NL/unit features:
