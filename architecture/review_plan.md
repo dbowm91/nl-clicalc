@@ -1,8 +1,37 @@
 # Architecture Review Plan
 
-**Status: INCOMPLETE** - Remaining waves: api, exact, overview modules
+**Status: COMPLETE** (2026-05-22)
 
-This document outlines the review plan for architecture documentation in this directory.
+All architecture modules have been reviewed and documentation discrepancies fixed.
+
+## Review Summary
+
+| Module | Review File | Status |
+|--------|-------------|--------|
+| normalize | plans/normalize_review.md | Completed |
+| evaluator | plans/evaluator_review.md | Completed |
+| units | plans/units_review.md | Completed |
+| primitives | plans/primitives_review.md | Completed |
+| unicode_tools | plans/unicode_tools_review.md | Completed |
+| confusables | plans/confusables_review.md | Completed |
+| validate | plans/validate_review.md | Completed |
+| diff | plans/diff_review.md | Completed |
+| measure | plans/measure_review.md | Completed |
+| synthesis | plans/synthesis_review.md | Completed |
+| cli | plans/cli_review.md | Completed |
+| mcp | plans/mcp_server_review.md | Completed |
+| api | plans/api_review.md | Completed |
+| exact | plans/exact_review.md | Completed |
+| overview | plans/overview_review.md | Completed |
+
+## Key Fixes Applied
+
+1. **CheckBracketsResult** - Documentation now matches code structure (unmatched_openers/closers)
+2. **RegexTestResult** - Now documented with valid_pattern and results list
+3. **RegexMatch** - Added proper TypedDict definition
+4. **LineMetrics** - Now fully documented with all fields
+5. **get_unit_category()** - Added to API documentation
+6. **normalize_unit()** - Clarified as internal (not public API)
 
 ## Review Strategy
 
@@ -33,49 +62,24 @@ For each discrete architecture module:
 | api | architecture/api.md | (various) |
 | exact | architecture/exact.md | nl_calc/exact/*.py |
 
-## Subagent Assignments
+## Review Plan Files
 
-Each subagent will review one module and write improvement plans to `plans/review_improvements_<modulename>.md`.
+Each module review produced a detailed plan in `plans/<module>_review.md`:
 
-### Module Review Tasks
+- `plans/normalize_review.md` - Number word conversion, operators, functions
+- `plans/evaluator_review.md` - AST evaluation, constants, memory
+- `plans/units_review.md` - Unit definitions, conversions, temperature
+- `plans/primitives_review.md` - UTF-8, codepoints, normalization
+- `plans/unicode_tools_review.md` - Script detection, confusables
+- `plans/confusables_review.md` - Homoglyph data
+- `plans/validate_review.md` - Brackets, JSON, regex validation
+- `plans/diff_review.md` - String comparison algorithms
+- `plans/measure_review.md` - Text metrics
+- `plans/synthesis_review.md` - Higher-level analysis tools
+- `plans/cli_review.md` - CLI interface
+- `plans/mcp_server_review.md` - MCP server implementation
+- `plans/api_review.md` - Public API surface
+- `plans/exact_review.md` - exact/ subpackage overview
+- `plans/overview_review.md` - Top-level documentation
 
-1. **normalize**: Review architecture/normalize.md against nl_calc/normalize.py. Verify all documented functions, data structures, and behaviors exist and work as documented.
-
-2. **evaluator**: Review architecture/evaluator.md against nl_calc/evaluator.py. Verify AST-based evaluation logic, operator handling, and function implementations.
-
-3. **units**: Review architecture/units.md against nl_calc/units.py. Verify unit definitions, conversion factors, and temperature conversion logic.
-
-4. **primitives**: Review architecture/primitives.md and architecture/exact-primitives.md against nl_calc/exact/primitives.py. Verify UTF-8 handling, codepoint iteration, and Unicode normalization.
-
-5. **unicode_tools**: Review architecture/unicode_tools.md and architecture/exact-unicode_tools.md against nl_calc/exact/unicode_tools.py. Verify script detection and confusable detection functions.
-
-6. **confusables**: Review architecture/confusables.md against nl_calc/exact/confusables.py. Verify confusable character identification logic.
-
-7. **validate**: Review architecture/validate.md against nl_calc/exact/validate.py. Verify JSON/bracket/regex validation implementations.
-
-8. **diff**: Review architecture/diff.md against nl_calc/exact/diff.py. Verify string diffing algorithms and longest common subsequence implementation.
-
-9. **measure**: Review architecture/measure.md against nl_calc/exact/measure.py. Verify text metrics (words, lines, categories) implementations.
-
-10. **synthesis**: Review architecture/synthesis.md against nl_calc/exact/synthesis.py. Verify higher-level text analysis tools.
-
-11. **cli**: Review architecture/cli.md against nl_calc/__main__.py. Verify CLI interface implementation.
-
-12. **mcp**: Review architecture/mcp.md and architecture/mcp_server.md against nl_calc/mcp/. Verify MCP server implementation, tool definitions, and JSON schemas.
-
-13. **api**: Review architecture/api.md. Verify documented API surface matches actual exports from modules.
-
-14. **exact**: Review architecture/exact.md as overview of nl_calc/exact/ subpackage.
-
-15. **overview**: Review architecture/overview.md as top-level architecture documentation.
-
-## Output Files
-
-Each subagent will write their improvement plan to:
-- `plans/review_improvements_<modulename>.md`
-
-Plans should include:
-- Verified claims (with code references)
-- Discrepancies between documentation and code
-- Potential bugs identified
-- Improvement suggestions with priority
+Plans include verified claims, discrepancies, bugs found, and improvement suggestions with priority.
