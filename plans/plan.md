@@ -1,1336 +1,444 @@
-SPEC
-````markdown
-# nl-clicalc MCP Exact Tools Spec
+# nl-clicalc Consolidated Plan
 
-## Goal
+## Wave 1: Critical Bugs (Fix First - Sequential)
 
-Extend `nl-clicalc` from a calculator/unit-conversion tool into a deterministic exact-reasoning utility for agents.
+### 1.1 Force/Voltage/Current UNIT_ALIASES Bug
+**File:** `nl_calc/units.py` lines 900-931
+**Issue:** Prefixed units like `kN`, `mV`, `mA` incorrectly alias to base units (`N`, `V`, `A`), causing `get_conversion_factor("kN", "N")` to return `1.0` instead of `1000.0`.
+**Fix:** Change aliases to map to themselves (e.g., `"kN": "kN"` instead of `"kN": "N"`).
+**Verification:** After fix, `get_conversion_factor("kN", "N")` should return `1000.0`
 
-The system should provide low-level primitives for exact text, Unicode, structure, and measurement tasks, then expose higher-level synthesis functions through an MCP server.
+### 1.2 Temperature F→C Offset Precision
+**File:** `nl_calc/units.py` line 1038
+**Issue:** Offset `-17.777778` has rounding error.
+**Fix:** Change to `-17.77777777777778` for exact freezing point conversion.
 
-Primary use case: prevent LLM agents from wasting tokens/compute on tasks that should be solved by deterministic code.
+### 1.3 Newline Detection Bug
+**File:** `nl_calc/exact/measure.py` line 52
+**Issue:** `"\r" not in "\n"` always returns True since they're different single characters. Any text with CRLF is incorrectly reported as "mixed".
+**Fix:** Rewrite the `mixed` newline detection logic at lines 45-62 to properly detect standalone LF/CR outside CRLF sequences.
+
+### 1.4 RegexTestResult Missing error Field
+**File:** `nl_calc/exact/validate.py` lines 50-53
+**Issue:** The TypedDict is missing `error: str | None` field. When invalid regex is provided, callers cannot get error details.
+**Fix:** Add `error: str | None` field to `RegexTestResult` TypedDict.
+
+### 1.5 regex_test() Error Handling
+**File:** `nl_calc/exact/validate.py` lines 237-241
+**Issue:** The `re.error` exception message is lost and not returned.
+**Fix:** Capture and return the error message when `re.error` is raised.
+
+### 1.6 CLI --mcp Flag Missing
+**File:** `nl_calc/normalize.py` lines 1220-1252
+**Issue:** The `--mcp` argument only exists in the built single-file version. When running via `python -m nl_calc`, argparse does not include `--mcp`.
+**Fix:** Add `--mcp` argument to normalize.py argparse and handle import/call to `mcp_main()`.
+
+### 1.7 visible_repr() Variation Selector Display
+**File:** `nl_calc/exact/primitives.py` lines 272-275
+**Issue:** Variation selectors (U+FE00 to U+FE0F) should display as `⟦VS⟧` per documentation but display as `◌︀` because the combining mark check (`M` category) fires first.
+**Fix:** Move VS check before combining mark check.
+
+### 1.8 visible_repr() Missing WORD JOINER
+**File:** `nl_calc/exact/primitives.py` lines 269-285
+**Issue:** U+2060 (WORD JOINER) is detected by `find_invisibles()` but `visible_repr()` has no case for it—it falls through and returns the character as-is.
+**Fix:** Add handling for U+2060 in `visible_repr()`.
+
+### 1.9 mps Missing from UNIT_CATEGORIES
+**File:** `nl_calc/units.py` lines 1089-1226
+**Issue:** `get_unit_category("mps")` returns None, causing `are_units_compatible("mps", "km/h")` incorrectly return True.
+**Fix:** Add `mps` to `UNIT_CATEGORIES`.
+
+## Wave 2: High Priority Bugs (Can Run Parallel with Wave 1)
+
+### 2.1 MCP Double-Wrapped Response
+**File:** `nl_calc/mcp/server.py`
+**Issue:** Success responses are double-wrapped, deeply nested with JSON string inside text content block.
+**Fix:** Simplify response structure to avoid double-wrapping of results.
+
+### 2.2 MCP math_eval Missing MAX_TEXT_LENGTH
+**File:** `nl_calc/mcp/tools.py`
+**Issue:** `math_eval` tool does not enforce `MAX_TEXT_LENGTH` like other tools do.
+**Fix:** Add `MAX_TEXT_LENGTH` check to `math_eval`.
+
+### 2.3 utf8_bytes Return Type Mismatch
+**File:** `nl_calc/exact/primitives.py`
+**Issue:** `utf8_bytes` return type is ambiguous - decide whether it returns `int` (count) or `bytes` and fix implementation accordingly.
+**Fix:** Clarify return type and ensure implementation matches.
+
+### 2.4 invisibles_detected Always False
+**File:** `nl_calc/exact/synthesis.py` line 280
+**Issue:** `invisibles_detected` is hardcoded to `False` instead of detecting actual invisibles state.
+**Fix:** Detect and pass actual invisibles state.
+
+### 2.5 Unit Conversion Space-Separated Bug
+**File:** `nl_calc/normalize.py` lines 842-898
+**Issue:** `_handle_unit_conversion_from_tokens()` only detects patterns when "from" unit is attached (e.g., `2meters`). Space-separated `2 meters in feet` doesn't work after splitting.
+**Fix:** Fix unit conversion detection to handle space-separated number and unit tokens.
+
+## Wave 3: Documentation Fixes (Can Run Parallel with Implementation)
+
+### 3.1 Index Links to Non-Existent Files
+**File:** `architecture/*.md`
+**Issue:** References docs like `primitives.md`, `unicode_tools.md` that don't exist - actual docs are `exact.md` and `mcp_server.md`.
+**Fix:** Update index links to use correct file names.
+
+### 3.2 Confusables Documentation Return Format
+**File:** `docs/exact.md` lines 146-153
+**Issue:** Documentation shows `confusable_with='U+0041'` (codepoint format) but actual implementation returns character `'A'`.
+**Fix:** Update documentation to show actual return format (character not codepoint string).
+
+### 3.3 Confusables Table Size
+**File:** `docs/exact.md` line 138
+**Issue:** Documentation says "~1800 entries" but actual table has 6564 entries.
+**Fix:** Update to "~6500 entries".
+
+### 3.4 detect_confusables Example Wrong
+**File:** `architecture/unicode_tools.md` lines 75-84
+**Issue:** Example shows TWO confusables in "pаypal" but only ONE is actually detected.
+**Fix:** Fix example to show correct detection result.
+
+### 3.5 detect_mixed_scripts Example Incomplete
+**File:** `architecture/unicode_tools.md` lines 50-55
+**Issue:** Example shows only Cyrillic positions but function returns ALL non-Common/Inherited positions.
+**Fix:** Update example to show complete return value.
+
+### 3.6 Missing Cyrillic Range in Docs
+**File:** `architecture/unicode_tools.md` lines 93-109
+**Issue:** Missing `(0x0500, 0x052f, "Cyrillic")` that's present in implementation.
+**Fix:** Add missing Cyrillic range documentation.
+
+### 3.7 first_diff Documentation Wrong Field Names
+**File:** `architecture/diff.md`
+**Issue:** Docs claim `a_context` and `b_context` fields but implementation has `a_codepoint` and `b_codepoint`.
+**Fix:** Update to `a_codepoint`/`b_codepoint`.
+
+### 3.8 common_prefix_suffix Example Incorrect
+**File:** `architecture/diff.md`
+**Issue:** Example `("testing", "ing")` does not have suffix=2.
+**Fix:** Fix or remove the incorrect example.
+
+### 3.9 diff Algorithm Documentation
+**File:** `architecture/diff.md` line 76
+**Issue:** Says "Levenshtein" but implementation uses `difflib.SequenceMatcher`.
+**Fix:** Update to say "Uses difflib.SequenceMatcher to compute opcodes".
+
+### 3.10 ValidateJsonResult Field Names
+**File:** `architecture/validate.md`
+**Issue:** Doc says `error_position`, `error_line`, `error_column`, `structure` but code has `position`, `line`, `column`, `type`.
+**Fix:** Unify field names between documentation and implementation.
+
+### 3.11 spans vs span Mismatch
+**File:** `nl_calc/exact/validate.py`
+**Issue:** Document says `spans: list[tuple[int, int]]` but code has `span: list[int] | None` (singular, different type).
+**Fix:** Unify the field name and type.
+
+### 3.12 Duplicate Line in confusables Architecture
+**File:** `architecture/confusables.md` line 29
+**Issue:** Line 29 duplicates line 28.
+**Fix:** Remove duplicate line.
+
+### 3.13 Undocumented Memory Type
+**File:** `nl_calc/__init__.py`
+**Issue:** `Memory` type exported but not documented in Types documentation.
+**Fix:** Document the `Memory` type.
+
+### 3.14 Temperature Base Unit Misleading
+**File:** `architecture/units.md` line 41
+**Issue:** Table shows `K` for temperature but conversions use offset math, not multiplicative factors.
+**Fix:** Change to show `(offset-based)` instead of `K`.
+
+## Wave 4: Medium Priority Items (Parallel Work)
+
+### 4.1 Add lru_cache to _get_script_heuristic
+**File:** `nl_calc/exact/unicode_tools.py`
+**Issue:** Called for every character in `detect_mixed_scripts`; memoization would improve performance.
+**Fix:** Add `@lru_cache` decorator to `_get_script_heuristic`.
+
+### 4.2 include_codepoints Parameter Ignored
+**File:** `nl_calc/exact/synthesis.py` line 173
+**Issue:** Parameter accepted but silently ignored in `measure_text()`.
+**Fix:** Either implement the parameter or remove it.
+
+### 4.3 Unify text_equal() and explain_diff() Classification
+**File:** `nl_calc/exact/synthesis.py` lines 313-337, 397-408
+**Issue:** Two functions use different classification schemes for the same comparisons.
+**Fix:** Unify classification logic between the two functions.
+
+### 4.4 Optimize list_compare() near_matches
+**File:** `nl_calc/exact/synthesis.py` lines 656-673
+**Issue:** Current O(n²) nested loops can be improved with set-based matching.
+**Fix:** Implement set-based matching for near_matches detection.
+
+### 4.5 Case-Insensitive MCP Tool Matching
+**File:** `nl_calc/mcp/server.py`
+**Issue:** Tool names are case-sensitive with no suggestion for close matches.
+**Fix:** Add case-insensitive tool name matching or document case-sensitivity.
+
+### 4.6 MCP Error Message Sanitization
+**File:** `nl_calc/mcp/tools.py`
+**Issue:** Unicode characters in error messages not sanitized.
+**Fix:** Add error message sanitization to prevent control characters in JSON-RPC error messages.
+
+### 4.7 _classify_difference Accent/Diacritic Logic
+**File:** `nl_calc/exact/synthesis.py` lines 326-328
+**Issue:** Logic appears backwards—NFC equality means strings are canonically equivalent.
+**Fix:** Review and correct the classification logic.
+
+### 4.8 TOOL_SCHEMAS Dead Code
+**File:** `nl_calc/mcp/schemas.py` and `nl_calc/mcp/server.py`
+**Issue:** Tool names in `schemas.py` use `nl_` prefix but `server.py` uses non-prefixed names - TOOL_SCHEMAS is dead code.
+**Fix:** Refactor to use TOOL_SCHEMAS as single source of truth, or remove dead code.
+
+### 4.9 Regex Flags Documentation Mismatch
+**File:** `nl_calc/exact/validate.py`
+**Issue:** Document lists `ASCII` but implementation has `UNICODE` and `DEBUG`.
+**Fix:** Either add `ASCII` support or update docs.
+
+### 4.10 Missing Functions in Registry
+**File:** `nl_calc/evaluator.py`
+**Issue:** `abs`, `floor`, `ceil`, `trunc` not documented in Functions Registry.
+**Fix:** Add missing functions to documentation.
+
+### 4.11 Missing Percentage Functions Documentation
+**File:** `nl_calc/evaluator.py`
+**Issue:** `percentof`, `percent_of`, `aspercent`, `as_percent` not documented.
+**Fix:** Document percentage functions.
+
+### 4.12 Missing Base Conversion Documentation
+**File:** `nl_calc/evaluator.py`
+**Issue:** `bin`, `hex`, `oct` not documented.
+**Fix:** Document base conversion functions.
+
+### 4.13 evaluate_cached Not in __all__
+**File:** `nl_calc/evaluator.py` line 29
+**Issue:** Function is public but not exported in `__all__` list.
+**Fix:** ~~Add `"evaluate_cached"` to `__all__`.~~ **RESOLVED: Already present in __all__ at line 34**
+
+### 4.14 get_default_evaluator Not in __all__
+**File:** `nl_calc/__init__.py`
+**Issue:** Function exported but not listed in `__all__`.
+**Fix:** ~~Add `get_default_evaluator` to `__all__`.~~ **RESOLVED: Already present in __all__ at line 96**
+
+### 4.15 load_user_config_extended Not Exported
+**File:** `nl_calc/__init__.py`
+**Issue:** `load_user_config_extended()` exists in `evaluator.py` (line 157) but is NOT exported from `__init__.py`. Only `load_user_config` is exported.
+**Fix:** Either export `load_user_config_extended` from `__init__.py` or document that custom number/operator words via external config are not officially supported.
+
+### 4.16 Timeout Example Fails Before Timeout
+**File:** `nl_calc/__init__.py` or docs
+**Issue:** Example uses expression that fails with `EvaluationError` ("Exponent too large") before timeout due to `MAX_EXPONENT = 10000`.
+**Fix:** Change example to one that would actually timeout or add note about limitation.
+
+### 4.17 Memory Functions Return Type Documentation
+**File:** `nl_calc/evaluator.py` or docs
+**Issue:** Documentation claims functions return `Memory` objects but they actually return `float`.
+**Fix:** Rewrite documentation to clarify return types are `float`.
+
+### 4.18 evaluate_raw skip_validation Scope
+**File:** `nl_calc/evaluator.py`
+**Issue:** Docstring says "skip_validation=True" but it only skips normalization validation, not AST security validation.
+**Fix:** Clarify docstring to indicate scope of skip_validation.
+
+### 4.19 _cached_normalize_and_evaluate Visibility
+**File:** `nl_calc/evaluator.py`
+**Issue:** Not exported and not clearly marked as internal.
+**Fix:** Either add to `__all__` if public, or rename with underscore prefix.
+
+### 4.20 Cache Size Documentation Mismatch
+**File:** `nl_calc/__init__.py` or docs
+**Issue:** Documentation says `cache_size=1000` but actual default is `1024`.
+**Fix:** Update documentation to say `cache_size=1024`.
+
+### 4.21 Missing Functions in Documentation
+**File:** `architecture/evaluator.md`
+**Issue:** `variance_sample`, `conjugate`, `is_prime`, `prime_factors`, `next_prime`, `prev_prime`, `var` not documented.
+**Fix:** Document all function aliases and missing functions.
+
+### 4.22 Missing Architecture Items
+**File:** `architecture/*.md`
+**Issue:** `normalize_expression`, `CONSTANT_WORDS`, `STRIPPED_PHRASES`, `FUNCTION_MAPPINGS`, `TimeoutError`, `get_default_evaluator()`, memory functions not documented.
+**Fix:** Add documentation for undocumented data structures and functions.
+
+### 4.23 Variance Sample Not in Functions Dict
+**File:** `nl_calc/evaluator.py`
+**Issue:** `variance_sample` defined but not exposed to users.
+**Fix:** Add to FUNCTIONS dict or document why not exposed.
+
+### 4.24 Undocumented Fields in measure
+**File:** `nl_calc/exact/measure.py`
+**Issue:** `trailing_whitespace_lines`, `sentences_estimate`, `paragraphs`, `mixed` newline style not documented.
+**Fix:** Document all fields in architecture/measure.md.
+
+### 4.25 avg_word_length vs average_word_length
+**File:** `nl_calc/exact/measure.py` line 31
+**Issue:** Document specifies `avg_word_length` but code has `average_word_length`.
+**Fix:** Align field name between docs and code.
+
+### 4.26 max_word_length Missing
+**File:** `nl_calc/exact/measure.py`
+**Issue:** Document specifies `max_word_length` in WordMetrics but implementation doesn't include it.
+**Fix:** Either add to implementation or remove from docs.
+
+### 4.27 Pipeline Diagram Inaccurate
+**File:** `architecture/*.md` lines 52-61
+**Issue:** Shows `normalize() → normalize_expression() → evaluate()` but actual flow is `run() → normalize_expression() → normalize()`.
+**Fix:** Update diagram to reflect actual flow.
+
+### 4.28 Entry Point Description Misleading
+**File:** `architecture/cli.md` lines 5-8
+**Issue:** Docs say `__main__.py` provides entry point but it's just a bootstrap.
+**Fix:** Update description to clarify bootstrap behavior.
+
+### 4.29 Build Function Renaming Undocumented
+**File:** `architecture/*.md`
+**Issue:** `normalize.main()` → `normalize_main()`, MCP `main()` → `mcp_main()` not documented.
+**Fix:** Document the renaming behavior.
+
+### 4.30 Duplicate MAX_NESTING_DEPTH
+**File:** `normalize.py:43` and `evaluator.py:51`
+**Issue:** Defined in two places.
+**Fix:** Consider consolidating to single definition.
+
+### 4.31 Silent Fallthrough in Temperature Conversion
+**File:** `nl_calc/units.py`
+**Issue:** `100 K` to `ft` might silently give wrong result.
+**Fix:** Add validation or warning for invalid temperature conversions.
+
+### 4.32 Typo in Docstring
+**File:** `nl_calc/normalize.py:843`
+**Issue:** `2meters` → `2 meters`.
+**Fix:** Fix typo.
+
+### 4.33 NFKD Equal Not Documented
+**File:** `architecture/synthesis.md`
+**Issue:** `TextEqualResult` includes `nfkd_equal` but not mentioned in architecture.
+**Fix:** Document `nfkd_equal` field.
+
+### 4.34 count_chars Return Type Confusing
+**File:** `nl_calc/exact/synthesis.py` lines 570-608
+**Issue:** Union return type is confusing.
+**Fix:** Consider splitting into two functions.
+
+### 4.35 Graphemes Estimate Unimplemented
+**File:** `nl_calc/exact/primitives.py` line 184
+**Issue:** `graphemes_estimate` always returns `None`. If accurate visual character counting is needed, implement or clarify.
+**Fix:** Either implement with `unicodedata` or label clearly as unavailable.
+
+### 4.36 Remove Redundant Codepoint Entries
+**File:** `nl_calc/exact/unicode_tools.py`
+**Issue:** Duplicate entries like `(0x0401, 0x0401, "Cyrillic")` should be removed.
+**Fix:** Remove redundant single-codepoint range entries.
+
+## Wave 5: Testing (Parallel with Documentation)
+
+### 5.1 Add Tests for Force/Voltage/Current Conversions
+**File:** `tests/`
+**Issue:** No tests exist for prefixed unit conversions after UNIT_ALIASES fix.
+**Fix:** Add tests verifying `get_conversion_factor("kN", "N")` returns `1000.0`.
+
+### 5.2 Add Test for Temperature Conversion Precision
+**File:** `tests/`
+**Issue:** No tests for exact temperature offset conversion.
+**Fix:** Add test verifying freezing point conversion.
+
+### 5.3 Add Test for "Other" Script Category
+**File:** `tests/`
+**Issue:** No tests for characters returning "Other" from `unicode_script` (digits, punctuation).
+**Fix:** Add tests for `unicode_script()` with digits and punctuation.
+
+### 5.4 Complete Phase 5: Unit Conversion Tests
+**File:** `tests/`
+**Issue:** Deferred from testing_plan.md.
+**Fix:** Complete unit conversion tests using `run()` API (not `evaluate()`).
+
+### 5.5 Complete Phase 6: Natural Language Tests
+**File:** `tests/`
+**Issue:** Deferred from testing_plan.md.
+**Fix:** Complete NL tests using `run()` API (not `evaluate()`).
+
+### 5.6 Complete Phase 7: Test Documentation
+**File:** `tests/README.md`
+**Issue:** Deferred from testing_plan.md.
+**Fix:** Create `tests/README.md` documenting test conventions.
+
+### 5.7 Add MCP Server Integration Tests
+**File:** `tests/`
+**Issue:** No MCP server tests exist.
+**Fix:** Add tests covering protocol handshake, tools/list, tools/call, error handling.
+
+### 5.8 Add Regex Pattern Complexity Limits
+**File:** `nl_calc/exact/validate.py` or `nl_calc/mcp/`
+**Issue:** ReDoS potential in regex tool.
+**Fix:** Add pattern complexity limits or timeout to prevent ReDoS.
+
+### 5.9 Add MAX_EXPRESSION_LENGTH to math_eval
+**File:** `nl_calc/mcp/tools.py`
+**Issue:** Resource exhaustion possible via math_eval with very long expressions.
+**Fix:** Add `MAX_EXPRESSION_LENGTH` limit.
+
+### 5.10 Ensure All 177 Tests Pass
+**File:** `tests/`
+**Issue:** New tests must not break existing tests.
+**Fix:** Run `python -m pytest tests/` and ensure all pass.
+
+## Wave 6: Future Items (Low Priority)
+
+### 6.1 eggsact.md Items
+See `plans/eggsact.md` for Rust reimplementation items including:
+- Statistical functions (mean, median, std, variance)
+- Complex number support
+- Remaining physical constants
+- Unicode normalization
+- Casefold comparison
+- Mixed script detection
+- Compound unit parsing
+- Port remaining test suites
+- Interactive REPL and extended CLI options
+
+### 6.2 Add Cancel Notification Support
+**File:** `nl_calc/mcp/`
+**Issue:** `notifications/cancel` and `notifications/progress` not handled.
+**Fix:** Add cancel notification support for long-running operations.
+
+### 6.3 Consider Adding confusable_codepoint Field
+**File:** `nl_calc/exact/confusables.py`
+**Issue:** Consumers may need both character and codepoint representations.
+**Fix:** Consider adding `confusable_codepoint` field to ConfusableInfo TypedDict.
+
+### 6.4 Consider Bidirectional Confusable Detection
+**File:** `nl_calc/exact/confusables.py`
+**Issue:** Currently only catches confusable characters, not Latin characters being used deceptively.
+**Fix:** Consider adding bidirectional confusable detection.
+
+### 6.5 Levenshtein vs difflib
+**File:** `nl_calc/exact/diff.py`
+**Issue:** Current difflib behavior may be insufficient for some use cases.
+**Fix:** Optionally refactor to use true Levenshtein-based LCS diff.
+
+### 6.6 Performance Timing Numbers
+**File:** `nl_calc/__init__.py` or docs
+**Issue:** Unverified performance timing numbers in documentation.
+**Fix:** Remove or qualify since they cannot be verified.
 
 ---
 
-## Architectural Model
+## Verification Commands
 
-Use three layers:
+After implementing changes, verify with these commands:
 
-```text
-nl_clicalc/
-  exact/
-    primitives.py     # smallest deterministic operations
-    unicode_tools.py  # Unicode/codepoint/confusable helpers
-    measure.py        # text metrics
-    diff.py           # low-level diff/span logic
-    validate.py       # JSON/TOML/bracket/regex checks
+```bash
+# Run all tests
+python -m pytest tests/
 
-  synthesis/
-    explain_diff.py   # calls primitives + classifies result
-    inspect_text.py   # combines measure + unicode findings
-    sanity.py         # common agent checks
+# Verify unit conversion fix
+python -c "from nl_calc.units import get_conversion_factor; print(get_conversion_factor('kN', 'N'))"  # Should be 1000.0
 
-  mcp/
-    server.py         # MCP adapter only
-    schemas.py        # tool input/output schemas
-````
+# Verify temperature fix
+python -c "from nl_calc.units import get_conversion_factor; print(get_conversion_factor('F', 'C'))"  # Should be exact
 
-Core rule:
+# Verify MCP flag exists
+python -m nl_calc --help | grep mcp
 
-> Primitives must be simple, deterministic, independently testable, and should not call LLMs or perform semantic interpretation.
-
----
-
-## Design Principles
-
-1. **Deterministic over clever**
-
-   * Prefer exact byte/codepoint/span answers.
-   * Do not infer user intent unless in the synthesis layer.
-
-2. **Structured first**
-
-   * Return dictionaries/JSON-compatible objects.
-   * Human-readable text is secondary.
-
-3. **Evidence with every verdict**
-
-   * Never return only `true` or `false`.
-   * Include position, codepoint, normalized form, or metric evidence.
-
-4. **No mutable global state**
-
-   * MCP calls should be stateless.
-   * Existing calculator memory/variables should not be enabled by default in MCP mode.
-
-5. **Safe by default**
-
-   * No arbitrary eval.
-   * No filesystem access unless explicitly added later.
-   * Bounded input sizes.
-
-6. **Small primitive, composed synthesis**
-
-   * `count_codepoints()` should not know about security.
-   * `inspect_text()` may combine Unicode categories, invisibles, mixed-script detection, and normalization state.
-
----
-
-## Initial MCP Tool Set
-
-### Tier 1 tools
-
-Implement first:
-
-```text
-calculate
-measure_text
-text_equal
-explain_diff
-inspect_text
-count_chars
-```
-
-### Tier 2 tools
-
-Implement after Tier 1 is stable:
-
-```text
-check_brackets
-validate_json
-regex_test
-list_compare
-normalize_text
-```
-
-### Tier 3 tools
-
-Optional later:
-
-```text
-semver_compare
-url_inspect
-path_compare
-duration_parse
-date_math
-```
-
----
-
-# Layer 1: Primitives
-
-## Primitive: `utf8_bytes`
-
-```python
-def utf8_bytes(s: str) -> bytes:
-    ...
-```
-
-Return raw UTF-8 bytes.
-
-Used by:
-
-* byte equality
-* byte length
-* byte-level diff
-
----
-
-## Primitive: `codepoints`
-
-```python
-def codepoints(s: str) -> list[dict]:
-    ...
-```
-
-Return:
-
-```json
-[
-  {
-    "index": 0,
-    "char": "A",
-    "codepoint": "U+0041",
-    "name": "LATIN CAPITAL LETTER A",
-    "category": "Lu"
-  }
-]
-```
-
-Use `unicodedata.name(char, "<unknown>")`.
-
----
-
-## Primitive: `normalize_unicode`
-
-```python
-def normalize_unicode(s: str, form: str) -> str:
-    ...
-```
-
-Allowed forms:
-
-```text
-NFC
-NFD
-NFKC
-NFKD
-```
-
-Reject unknown forms.
-
----
-
-## Primitive: `casefold_text`
-
-```python
-def casefold_text(s: str) -> str:
-    ...
-```
-
-Use Python `str.casefold()`.
-
----
-
-## Primitive: `raw_equal`
-
-```python
-def raw_equal(a: str, b: str) -> bool:
-    return a == b
-```
-
----
-
-## Primitive: `normalized_equal`
-
-```python
-def normalized_equal(a: str, b: str, form: str = "NFC") -> bool:
-    ...
-```
-
----
-
-## Primitive: `measure_basic`
-
-```python
-def measure_basic(s: str) -> dict:
-    ...
-```
-
-Return:
-
-```json
-{
-  "bytes_utf8": 0,
-  "codepoints": 0,
-  "graphemes_estimate": null,
-  "chars_no_whitespace": 0,
-  "ascii": 0,
-  "non_ascii": 0
-}
-```
-
-Note: without external dependencies, exact grapheme cluster counting is hard. Either:
-
-* return `null`, or
-* label clearly as `graphemes_estimate`.
-
-Do not pretend codepoints are graphemes.
-
----
-
-## Primitive: `count_char`
-
-```python
-def count_char(s: str, target: str) -> dict:
-    ...
-```
-
-Return:
-
-```json
-{
-  "target": "r",
-  "count": 3,
-  "positions": [2, 3, 8]
-}
-```
-
-Positions are Python string/codepoint indexes.
-
----
-
-## Primitive: `find_invisibles`
-
-```python
-def find_invisibles(s: str) -> list[dict]:
-    ...
-```
-
-Detect:
-
-* zero-width space
-* zero-width joiner
-* zero-width non-joiner
-* BOM
-* word joiner
-* soft hyphen
-* variation selectors
-* bidi controls
-* control chars except `\n`, `\t`, `\r` unless requested
-
-Return:
-
-```json
-[
-  {
-    "index": 4,
-    "char": "\u200b",
-    "codepoint": "U+200B",
-    "name": "ZERO WIDTH SPACE",
-    "category": "Cf",
-    "display": "⟦ZWSP⟧"
-  }
-]
-```
-
----
-
-## Primitive: `visible_repr`
-
-```python
-def visible_repr(s: str) -> str:
-    ...
-```
-
-Map invisible or ambiguous chars to display-safe markers.
-
-Suggested mappings:
-
-```text
-SPACE                  -> ␠
-TAB                    -> ␉
-NEWLINE                -> ␊
-CARRIAGE RETURN        -> ␍
-NO-BREAK SPACE         -> ⟦NBSP⟧
-ZERO WIDTH SPACE       -> ⟦ZWSP⟧
-ZERO WIDTH JOINER      -> ⟦ZWJ⟧
-ZERO WIDTH NON-JOINER  -> ⟦ZWNJ⟧
-BOM                    -> ⟦BOM⟧
-SOFT HYPHEN            -> ⟦SHY⟧
-RLO/LRO/etc.           -> ⟦BIDI:NAME⟧
-COMBINING MARK         -> ◌ + mark
-```
-
----
-
-## Primitive: `line_metrics`
-
-```python
-def line_metrics(s: str) -> dict:
-    ...
-```
-
-Return:
-
-```json
-{
-  "lines": 0,
-  "nonempty_lines": 0,
-  "blank_lines": 0,
-  "max_line_length_codepoints": 0,
-  "trailing_whitespace_lines": [],
-  "newline_style": "LF|CRLF|CR|mixed|none",
-  "ends_with_newline": true
-}
-```
-
-Line numbers should be 1-based.
-
----
-
-## Primitive: `word_metrics`
-
-```python
-def word_metrics(s: str) -> dict:
-    ...
-```
-
-Return:
-
-```json
-{
-  "words": 0,
-  "unique_words_casefolded": 0,
-  "sentences_estimate": 0,
-  "paragraphs": 0,
-  "average_word_length": 0.0
-}
-```
-
-Keep sentence count labeled as estimate.
-
----
-
-## Primitive: `first_diff`
-
-```python
-def first_diff(a: str, b: str) -> dict | None:
-    ...
-```
-
-Return:
-
-```json
-{
-  "a_index": 3,
-  "b_index": 3,
-  "a_char": "e",
-  "b_char": "é",
-  "a_codepoint": "U+0065",
-  "b_codepoint": "U+00E9"
-}
-```
-
-Return `None` if equal.
-
----
-
-## Primitive: `common_prefix_suffix`
-
-```python
-def common_prefix_suffix(a: str, b: str) -> dict:
-    ...
-```
-
-Return:
-
-```json
-{
-  "common_prefix_len": 3,
-  "common_suffix_len": 5
-}
-```
-
-Avoid overlapping prefix/suffix.
-
----
-
-## Primitive: `levenshtein_distance`
-
-```python
-def levenshtein_distance(a: str, b: str, max_len: int = 10000) -> int:
-    ...
-```
-
-Bound input size. Use dynamic programming with memory optimization.
-
-Optional:
-
-* `damerau_levenshtein_distance`
-
----
-
-## Primitive: `diff_spans`
-
-```python
-def diff_spans(a: str, b: str) -> list[dict]:
-    ...
-```
-
-Use `difflib.SequenceMatcher` initially.
-
-Return spans:
-
-```json
-[
-  {
-    "kind": "replace|insert|delete",
-    "a_span": [3, 5],
-    "b_span": [3, 4],
-    "a_text": "é",
-    "b_text": "é"
-  }
-]
-```
-
----
-
-## Primitive: `unicode_script`
-
-```python
-def unicode_script(char: str) -> str:
-    ...
-```
-
-Initial implementation can be heuristic:
-
-* Latin
-* Cyrillic
-* Greek
-* Han
-* Hiragana
-* Katakana
-* Arabic
-* Hebrew
-* Devanagari
-* Common
-* Inherited
-* Other
-
-Python stdlib does not expose Unicode Script directly. Use codepoint ranges initially.
-
----
-
-## Primitive: `detect_mixed_scripts`
-
-```python
-def detect_mixed_scripts(s: str) -> dict:
-    ...
-```
-
-Return:
-
-```json
-{
-  "mixed_scripts": true,
-  "scripts": ["Latin", "Cyrillic"],
-  "positions": [
-    {
-      "index": 0,
-      "char": "А",
-      "script": "Cyrillic",
-      "codepoint": "U+0410"
-    }
-  ]
-}
-```
-
-Ignore `Common` and `Inherited` for mixed-script verdict.
-
----
-
-## Primitive: `detect_confusables`
-
-```python
-def detect_confusables(s: str) -> list[dict]:
-    ...
-```
-
-Initial minimal table is acceptable.
-
-Start with common Latin/Cyrillic/Greek homoglyphs:
-
-```text
-Latin A  vs Cyrillic А U+0410
-Latin a  vs Cyrillic а U+0430
-Latin e  vs Cyrillic е U+0435
-Latin o  vs Cyrillic о U+043E
-Latin p  vs Cyrillic р U+0440
-Latin c  vs Cyrillic с U+0441
-Latin x  vs Cyrillic х U+0445
-Latin y  vs Cyrillic у U+0443
-Latin B  vs Greek Β / Cyrillic В
-Latin H  vs Cyrillic Н
-Latin K  vs Cyrillic К
-Latin M  vs Cyrillic М
-Latin O  vs Cyrillic О / Greek Ο
-Latin P  vs Cyrillic Р / Greek Ρ
-Latin T  vs Cyrillic Т
-```
-
-Return:
-
-```json
-[
-  {
-    "index": 0,
-    "char": "А",
-    "codepoint": "U+0410",
-    "name": "CYRILLIC CAPITAL LETTER A",
-    "confusable_with": "A",
-    "confusable_name": "LATIN CAPITAL LETTER A"
-  }
-]
-```
-
-Later option: import Unicode Consortium confusables data at build time.
-
----
-
-## Primitive: `check_brackets`
-
-```python
-def check_brackets(s: str, pairs: dict[str, str] | None = None) -> dict:
-    ...
-```
-
-Default pairs:
-
-```text
-() [] {} <>
-```
-
-Should track:
-
-* unmatched openers
-* unmatched closers
-* positions
-* line/column
-* context
-
-Return:
-
-```json
-{
-  "balanced": false,
-  "unmatched_openers": [
-    {
-      "char": "{",
-      "index": 10,
-      "line": 1,
-      "column": 11
-    }
-  ],
-  "unmatched_closers": []
-}
-```
-
-Do not try to fully parse programming languages. This is structural sanity only.
-
----
-
-## Primitive: `validate_json`
-
-```python
-def validate_json(s: str) -> dict:
-    ...
-```
-
-Return:
-
-```json
-{
-  "valid": false,
-  "error": "Expecting ',' delimiter",
-  "line": 3,
-  "column": 12,
-  "position": 44
-}
-```
-
-If valid:
-
-```json
-{
-  "valid": true,
-  "type": "object",
-  "top_level_keys": ["name", "version"]
-}
-```
-
----
-
-## Primitive: `regex_test`
-
-```python
-def regex_test(pattern: str, samples: list[str], flags: list[str] | None = None) -> dict:
-    ...
-```
-
-Support Python `re`.
-
-Return:
-
-```json
-{
-  "valid_pattern": true,
-  "results": [
-    {
-      "sample": "foo",
-      "matches": true,
-      "fullmatch": true,
-      "span": [0, 3],
-      "groups": [],
-      "groupdict": {}
-    }
-  ]
-}
-```
-
----
-
-# Layer 2: Synthesis Functions
-
-## Synthesis: `measure_text`
-
-Calls:
-
-* `measure_basic`
-* `line_metrics`
-* `word_metrics`
-* `find_invisibles`
-* `detect_mixed_scripts`
-* normalization checks
-
-Input:
-
-```json
-{
-  "text": "string",
-  "include_codepoints": false
-}
-```
-
-Output:
-
-```json
-{
-  "bytes_utf8": 128,
-  "codepoints": 121,
-  "graphemes": null,
-  "words": 57,
-  "unique_words_casefolded": 42,
-  "lines": 12,
-  "nonempty_lines": 9,
-  "blank_lines": 3,
-  "max_line_length_codepoints": 88,
-  "chars_no_whitespace": 104,
-  "ascii": 117,
-  "non_ascii": 4,
-  "letters": 82,
-  "digits": 6,
-  "punctuation": 12,
-  "symbols": 1,
-  "spaces": 18,
-  "control_chars": 0,
-  "combining_marks": 1,
-  "invisible_chars": 1,
-  "newline_style": "LF",
-  "ends_with_newline": true,
-  "normalization": {
-    "is_nfc": true,
-    "is_nfd": false,
-    "is_nfkc": true,
-    "is_nfkd": false
-  },
-  "unicode_risks": {
-    "contains_invisibles": true,
-    "contains_bidi_controls": false,
-    "mixed_scripts": false,
-    "scripts": ["Latin"]
-  }
-}
-```
-
----
-
-## Synthesis: `text_equal`
-
-Input:
-
-```json
-{
-  "a": "string",
-  "b": "string",
-  "normalization": "raw|NFC|NFD|NFKC|NFKD",
-  "casefold": false,
-  "trim": false
-}
-```
-
-Output:
-
-```json
-{
-  "equal": false,
-  "mode": {
-    "normalization": "raw",
-    "casefold": false,
-    "trim": false
-  },
-  "raw_equal": false,
-  "nfc_equal": true,
-  "nfkc_equal": true,
-  "casefold_equal": true,
-  "byte_equal": false,
-  "lengths": {
-    "a_codepoints": 5,
-    "b_codepoints": 4,
-    "a_bytes_utf8": 6,
-    "b_bytes_utf8": 5
-  },
-  "first_difference": {
-    "a_index": 3,
-    "b_index": 3,
-    "a_visible": "e◌́",
-    "b_visible": "é"
-  },
-  "classification": "unicode_normalization_only"
-}
-```
-
----
-
-## Synthesis: `explain_diff`
-
-Input:
-
-```json
-{
-  "a": "string",
-  "b": "string",
-  "max_diffs": 20,
-  "include_codepoints": true,
-  "include_context": true
-}
-```
-
-Output:
-
-```json
-{
-  "equal": false,
-  "classification": "unicode_normalization_only",
-  "summary": {
-    "raw_equal": false,
-    "byte_equal": false,
-    "nfc_equal": true,
-    "nfkc_equal": true,
-    "casefold_equal": true,
-    "same_length_codepoints": false,
-    "edit_distance": 1,
-    "common_prefix_len": 3,
-    "common_suffix_len": 0
-  },
-  "a_metrics": {
-    "bytes_utf8": 6,
-    "codepoints": 5
-  },
-  "b_metrics": {
-    "bytes_utf8": 5,
-    "codepoints": 4
-  },
-  "diffs": [
-    {
-      "kind": "normalization_equivalent",
-      "a_span": [3, 5],
-      "b_span": [3, 4],
-      "a_text": "é",
-      "b_text": "é",
-      "a_visible": "e◌́",
-      "b_visible": "é",
-      "a_codepoints": [
-        {
-          "char": "e",
-          "codepoint": "U+0065",
-          "name": "LATIN SMALL LETTER E"
-        },
-        {
-          "char": "́",
-          "codepoint": "U+0301",
-          "name": "COMBINING ACUTE ACCENT"
-        }
-      ],
-      "b_codepoints": [
-        {
-          "char": "é",
-          "codepoint": "U+00E9",
-          "name": "LATIN SMALL LETTER E WITH ACUTE"
-        }
-      ],
-      "note": "Different raw codepoints, equal after NFC normalization."
-    }
-  ],
-  "security_findings": [],
-  "agent_instruction": "Treat these strings as equivalent only if NFC normalization is acceptable. They are not byte-identical."
-}
-```
-
-### Classification values
-
-Use one of:
-
-```text
-exact_match
-case_only
-unicode_normalization_only
-compatibility_normalization_only
-whitespace_only
-line_ending_only
-invisible_character
-confusable_character
-punctuation_variant
-accent_or_diacritic_difference
-numeric_difference
-ordinary_text_difference
-length_only
-prefix_suffix_difference
-multiple_difference_types
-```
-
----
-
-## Synthesis: `inspect_text`
-
-Input:
-
-```json
-{
-  "text": "string",
-  "include_codepoints": true,
-  "include_confusables": true
-}
-```
-
-Output:
-
-```json
-{
-  "safe_repr": "user⟦ZWSP⟧name",
-  "metrics": {},
-  "normalization": {
-    "is_nfc": true,
-    "is_nfkc": true
-  },
-  "invisibles": [
-    {
-      "index": 4,
-      "char": "\u200b",
-      "codepoint": "U+200B",
-      "name": "ZERO WIDTH SPACE",
-      "display": "⟦ZWSP⟧"
-    }
-  ],
-  "scripts": {
-    "mixed_scripts": false,
-    "scripts": ["Latin"]
-  },
-  "confusables": [],
-  "warnings": [
-    {
-      "severity": "warning",
-      "kind": "invisible_character",
-      "message": "Text contains ZERO WIDTH SPACE at index 4."
-    }
-  ]
-}
-```
-
----
-
-## Synthesis: `count_chars`
-
-Input:
-
-```json
-{
-  "text": "strawberry",
-  "target": "r",
-  "normalization": "raw|NFC|NFKC"
-}
-```
-
-Output:
-
-```json
-{
-  "target": "r",
-  "normalization": "raw",
-  "count": 3,
-  "positions": [2, 3, 8],
-  "text_length_codepoints": 10
-}
-```
-
-If no target provided, return frequency table.
-
----
-
-## Synthesis: `list_compare`
-
-Input:
-
-```json
-{
-  "a": ["src/foo.rs", "README.md"],
-  "b": ["src/foo.rs", "readme.md"],
-  "ignore_order": true,
-  "casefold": false,
-  "normalization": "NFC"
-}
-```
-
-Output:
-
-```json
-{
-  "same_ordered": false,
-  "same_unordered": false,
-  "only_in_a": ["README.md"],
-  "only_in_b": ["readme.md"],
-  "duplicates_a": [],
-  "duplicates_b": [],
-  "near_matches": [
-    {
-      "a": "README.md",
-      "b": "readme.md",
-      "classification": "case_only"
-    }
-  ]
-}
-```
-
----
-
-# Layer 3: MCP Adapter
-
-The MCP adapter should be thin.
-
-It should:
-
-* validate tool inputs
-* call synthesis functions
-* return JSON-compatible outputs
-* not contain core logic
-* not read/write files
-* not mutate calculator globals
-
-Recommended package layout:
-
-```text
-nl_clicalc/mcp/
-  server.py
-  schemas.py
-  tools.py
-```
-
-Possible implementation targets:
-
-* Python MCP SDK if already acceptable
-* stdio MCP server
-* optional HTTP/SSE later
-
----
-
-## MCP Tool Names
-
-Expose:
-
-```text
-nl_calculate
-nl_measure_text
-nl_text_equal
-nl_explain_diff
-nl_inspect_text
-nl_count_chars
-nl_check_brackets
-nl_validate_json
-nl_regex_test
-nl_list_compare
-```
-
-Prefixing with `nl_` avoids collisions in larger harnesses.
-
----
-
-## MCP Tool Descriptions
-
-### `nl_calculate`
-
-> Deterministically evaluate arithmetic, unit conversions, constants, and simple scientific expressions. Use for math and unit tasks instead of asking the model to calculate.
-
-### `nl_measure_text`
-
-> Measure exact text properties: UTF-8 byte length, codepoint count, words, lines, whitespace, newline style, Unicode normalization state, invisibles, and mixed-script signals.
-
-### `nl_text_equal`
-
-> Compare two strings under raw, Unicode-normalized, casefolded, or trimmed modes and report exact equality evidence.
-
-### `nl_explain_diff`
-
-> Explain why two strings differ, including spans, codepoints, Unicode names, normalization equivalence, confusables, invisibles, and agent-facing classification.
-
-### `nl_inspect_text`
-
-> Inspect a string for hidden characters, Unicode confusables, mixed scripts, normalization state, and display-safe representation.
-
-### `nl_count_chars`
-
-> Count exact characters or produce a character frequency table with codepoint positions.
-
-### `nl_check_brackets`
-
-> Check whether delimiters are structurally balanced and report unmatched delimiters with line/column positions.
-
-### `nl_validate_json`
-
-> Validate JSON and report precise parse errors or top-level structure information.
-
-### `nl_regex_test`
-
-> Test a Python regular expression against sample strings and report match/fullmatch status, spans, groups, and errors.
-
-### `nl_list_compare`
-
-> Compare two lists exactly, optionally ignoring order, casefolding, or Unicode-normalizing elements. Report missing, duplicate, and near-match items.
-
----
-
-# Input Limits
-
-Set defaults:
-
-```text
-MAX_TEXT_LENGTH = 100_000
-MAX_LIST_ITEMS = 10_000
-MAX_REGEX_SAMPLES = 100
-MAX_DIFF_LENGTH = 20_000
-MAX_DIFF_SPANS = 50
-```
-
-Behavior:
-
-* refuse or truncate with explicit warning
-* never silently truncate
-* expose limit errors in structured form
-
-Example:
-
-```json
-{
-  "ok": false,
-  "error_type": "InputTooLarge",
-  "error": "Input length 250000 exceeds MAX_TEXT_LENGTH 100000."
-}
-```
-
----
-
-# Error Shape
-
-All MCP tools should return a consistent envelope.
-
-Success:
-
-```json
-{
-  "ok": true,
-  "result": {}
-}
-```
-
-Failure:
-
-```json
-{
-  "ok": false,
-  "error_type": "ValidationError",
-  "error": "Unsupported normalization form: XYZ",
-  "hints": ["Use one of: raw, NFC, NFD, NFKC, NFKD"]
-}
-```
-
----
-
-# Testing Requirements
-
-## Unit tests for primitives
-
-Required cases:
-
-### Equality
-
-```text
-"elephant" vs "elephant" -> raw equal
-"elephant" vs "eIephant" -> not equal, ordinary/confusable depending chars
-"café" vs "cafe\u0301" -> raw false, NFC true
-"A" vs "А" -> raw false, confusable
-```
-
-### Invisible characters
-
-```text
-"user\u200bname" -> detects ZWSP
-"hello\u00a0world" -> detects NBSP
-"abc\u202Edef" -> detects bidi control
-```
-
-### Counting
-
-```text
-"strawberry", "r" -> 3 at [2,3,8]
-"banana", "a" -> 3
-"aaaa", "aa" -> reject target length > 1 unless substring mode exists
-```
-
-### Metrics
-
-```text
-"hello\nworld\n" -> 2 lines or 3 split lines? Define behavior explicitly.
-```
-
-Recommended behavior:
-
-* `lines` means logical lines as humans expect.
-* `"hello\nworld\n"` has `lines = 2`, `ends_with_newline = true`.
-
-### Brackets
-
-```text
-"(a[b]{c})" -> balanced
-"(a]" -> mismatch
-"foo(bar" -> unmatched opener
-"foo)bar" -> unmatched closer
-```
-
-### JSON
-
-```text
-{"x": 1} -> valid
-{"x": 1,} -> invalid with line/column
-```
-
-### Regex
-
-```text
-pattern "^[a-z]+$"
-samples ["foo", "Foo", "foo123"]
-```
-
----
-
-# Agent Prompting Guidance
-
-When injecting tool results into an LLM context, prefer compact textual summaries over giant JSON unless the agent framework handles tool JSON natively.
-
-Example injected result:
-
-```text
-EXACT_DIFF_RESULT
-classification: unicode_normalization_only
-raw_equal: false
-nfc_equal: true
-byte_equal: false
-edit_distance: 1
-
-first_difference:
-- a[3:5]: "e◌́" = U+0065 LATIN SMALL LETTER E + U+0301 COMBINING ACUTE ACCENT
-- b[3:4]: "é"  = U+00E9 LATIN SMALL LETTER E WITH ACUTE
-
-agent_instruction: Treat as equivalent only if NFC normalization is acceptable. Not byte-identical.
-```
-
----
-
-# Recommended Implementation Order
-
-## Phase 1
-
-Implement primitive core:
-
-```text
-codepoints
-visible_repr
-measure_basic
-line_metrics
-find_invisibles
-normalize_unicode
-raw_equal
-normalized_equal
-count_char
-first_diff
-common_prefix_suffix
-```
-
-## Phase 2
-
-Implement synthesis:
-
-```text
-measure_text
-text_equal
-inspect_text
-explain_diff
-count_chars
-```
-
-## Phase 3
-
-Add structural tools:
-
-```text
-check_brackets
-validate_json
-regex_test
-list_compare
-```
-
-## Phase 4
-
-Add MCP adapter:
-
-```text
-stdio MCP server
-tool schemas
-consistent error envelope
-manual smoke tests from Claude/Codex/codegg
-```
-
-## Phase 5
-
-Hardening:
-
-```text
-fuzz tests
-Unicode edge cases
-large input limits
-snapshot tests for exact JSON outputs
-security review
-```
-
----
-
-# Non-Goals
-
-Do not implement initially:
-
-```text
-semantic equivalence
-natural-language meaning comparison
-LLM-based typo correction
-file scanning
-filesystem mutation
-network access
-large document diffing
-full language parsing
-full Unicode grapheme segmentation unless adding dependency
-complete UTS #39 confusable implementation unless imported cleanly
-```
-
----
-
-# Success Criteria
-
-The MCP server is successful if an agent can reliably answer:
-
-```text
-Are these two strings exactly the same?
-If not, why not?
-How many times does this character occur?
-Are there hidden Unicode characters?
-Are there confusable lookalike characters?
-How many words/chars/lines are in this text?
-Is this JSON valid?
-Are these brackets balanced?
-Does this regex match these samples?
-Are these two lists equivalent?
-What is the result of this unit/math expression?
-```
-
-without doing probabilistic reasoning itself.
-
+# Check for lru_cache on _get_script_heuristic
+python -c "from nl_calc.exact.unicode_tools import _get_script_heuristic; import functools; print(hasattr(_get_script_heuristic, 'cache_info'))"
 ```
-```
-

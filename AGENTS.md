@@ -98,7 +98,28 @@ Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool acce
 
 3. **CLI --mcp flag missing** (`normalize.py:1220-1252`): The `--mcp` argument only exists in the built single-file version, not when running via `python -m nl_calc`.
 
-4. **evaluate_cached not in __all__** (`evaluator.py:29-43`): Function is public but not exported in the module's `__all__` list.
+4. **evaluate_cached in __all__** (`evaluator.py:34`): ~~Function is public but not exported~~ - RESOLVED: Already present in `__all__`.
+
+5. **confusables.py table size**: Actual table has ~6500 entries (not "~1800" as sometimes documented). File size is ~180KB.
+
+6. **load_user_config_extended not exported** (`evaluator.py:157`): Function exists for extended config but is NOT exported from `__init__.py`. Only `load_user_config` is public.
+
+### Working with the exact/ Module
+
+The `exact/` subpackage provides low-level Unicode text primitives. Key conventions:
+
+- **`utf8_bytes()` returns `bytes`** - Not an int count, returns actual UTF-8 encoded bytes
+- **`visible_repr()` display order matters** - Variation selector checks must come BEFORE combining mark checks
+- **WORD JOINER (U+2060) handled separately** - Detected by `find_invisibles()` but `visible_repr()` needed explicit handling
+- **Newline detection `mixed` value** - The `mixed` newline style can be returned but was not properly detected in original implementation
+- **`_get_script_heuristic()` benefits from caching** - Called per-character in `detect_mixed_scripts`; add `@lru_cache`
+
+### MCP Server Conventions
+
+- Tool names in `schemas.py` use `nl_` prefix (e.g., `nl_calculate`) but `server.py` uses non-prefixed names - **TOOL_SCHEMAS is largely dead code**
+- Response double-wrapping occurs - Success responses are nested with JSON string inside text content block
+- `MAX_TEXT_LENGTH` enforced on most tools but **missing from `math_eval`**
+- Error messages are **not sanitized** for non-ASCII characters
 
 ## Guardrails
 
@@ -116,7 +137,7 @@ Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool acce
 - New tests must use the correct API:
   - For NL/unit functionality → use `run()` or test through CLI
   - For pure math expressions → use `evaluate()`
-- 177 tests currently pass
+- 318 tests currently pass (as of last run)
 
 ### Code Style
 - Follow existing patterns in the codebase
