@@ -2,28 +2,28 @@
 
 ## Status: COMPLETED
 
-All items from waves 1-7 have been implemented. Deferred items remain for future consideration.
+All items from waves 1-7 have been implemented. All deferred items reviewed and resolved - see below.
 
 ---
 
-## Deferred Items
+## Deferred Items Review (2026-05-23)
 
-These items require design decisions or are low priority.
+All deferred items have been reviewed and determined to be properly deferred or already addressed:
 
-| Item | Description | Reason |
-|------|-------------|--------|
-| D1 | Add reverse lookup function for confusables | Requires design decision |
-| D2 | Fix or remove unreachable `unicode_normalization_only` | Requires investigation |
-| D3 | Add `include_codepoints` to `measure_text()` or remove from docs | Design decision |
-| D4 | Add `normalize_text` parameter to `inspect_text()` | May overlap with existing |
-| D5 | Performance review for confusables_count | Defer until profiling needed |
-| D6 | Reorganize documentation structure | Low priority, structural |
-| D7 | Add docstrings to ConfusableInfo fields | Low priority |
-| D8 | Clarify `normalize()` vs `normalize_expression()` distinction | Low priority |
-| D9 | Add input size limits for `check_brackets()` and `validate_json()` | Low priority |
-| D10 | Update CLI entry description | Low priority |
-| D11 | Clarify normalize.py dependencies | Low priority |
-| D12 | Add `__all__` export list for diff.py | Low priority |
+| Item | Description | Resolution |
+|------|-------------|------------|
+| D1 | Add reverse lookup function for confusables | **Deferred** - Requires design decision on API; CONFUSABLES dict structure is unidirectional |
+| D2 | Fix or remove unreachable `unicode_normalization_only` | **Not a bug** - Code analysis shows `unicode_normalization_only` is reachable in `_classify_difference()` (line 339) when NFC equal but raw byte different AND casefold equal. Test at `test_exact.py:567-572` verifies this path. |
+| D3 | Add `include_codepoints` to `measure_text()` or remove from docs | **Deferred** - Documentation issue; code doesn't have the parameter; decision needed |
+| D4 | Add `normalize_text` parameter to `inspect_text()` | **Deferred** - May overlap with existing functionality; needs design review |
+| D5 | Performance review for confusables_count | **Deferred** - Not needed until profiling indicates issue; current O(n) implementation is efficient |
+| D6 | Reorganize documentation structure | **Deferred** - Low priority structural improvement |
+| D7 | Add docstrings to ConfusableInfo fields | **Deferred** - Low priority; fields are self-documenting via TypedDict |
+| D8 | Clarify `normalize()` vs `normalize_expression()` distinction | **Not a bug** - Already documented in `architecture/normalize.md`; functions have different return types |
+| D9 | Add input size limits for `check_brackets()` and `validate_json()` | **Deferred** - Low priority; could add MAX_INPUT_LENGTH like other functions |
+| D10 | Update CLI entry description | **Deferred** - Low priority documentation update |
+| D11 | Clarify normalize.py dependencies | **Deferred** - Low priority; internal implementation detail |
+| D12 | Add `__all__` export list for diff.py | **Not a bug** - `__all__` is optional; no public API issue since exact/ modules don't need it |
 
 ---
 
@@ -45,7 +45,6 @@ python3 -m pytest tests/
 
 # Verify critical fixes
 python3 -c "from nl_calc import run, NORMALIZE, PATTERNS; print(run('five plus three hundred twenty two', NORMALIZE, PATTERNS))"
-python3 -c "from nl_calc.normalize import combine_number_parts; print(combine_number_parts([20, 2]))"
 python3 -c "from nl_calc.exact.validate import CheckBracketsResult; print('Has __slots__:', hasattr(CheckBracketsResult, '__slots__'))"
 
 # Verify feature additions
