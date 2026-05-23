@@ -771,6 +771,102 @@ def split_at_operators(
     return tokens
 
 
+def _finish_number_group(group: list, patterns: Mapping[str, Pattern[str]]) -> list:
+    """Convert a number group to final tokens.
+
+    For compound numbers like [3, 100, 20, 2], combine_number_parts handles
+    the multiplication (3*100) and addition (20+2=22) correctly.
+
+    For simple additions like [5, 3], we just return them with '+' between.
+    """
+    numbers_only = [x for x in group if x != "+"]
+    if not numbers_only:
+        return []
+
+    # Only use combine_number_parts for real numbers (int or float), not complex
+    def is_real(n):
+        return isinstance(n, (int, float)) and not isinstance(n, complex)
+
+    def is_compound_real(n):
+        return is_real(n) and (n >= 100 or (20 <= n < 100))
+
+    has_compound = any(is_compound_real(n) for n in numbers_only)
+
+    if has_compound and len(numbers_only) > 1:
+        combined = combine_number_parts(numbers_only, patterns, [])
+        return combined
+    else:
+        # Simple addition: 5 + 3 should stay as ['5', '+', '3']
+        result = []
+        for i, n in enumerate(numbers_only):
+            if i > 0:
+                result.append("+")
+            result.append(str(n))
+        return result
+
+
+def _combine_consecutive_numbers(
+    tokens: list,
+    operators: dict,
+    patterns: Mapping[str, Pattern[str]],
+) -> list:
+    """Combine consecutive number tokens separated by + into compound numbers.
+
+    After convert_from_human_handler, tokens like ['5', '+', '3', '+', '100', '+', '20', '+', '2']
+    need to have the numbers 3, 100, 20, 2 combined as 322 using combine_number_parts.
+
+    Only combines pure numeric tokens (no units or other letters attached).
+
+    The algorithm:
+    1. Look for numbers followed by '+' and another pure number
+    2. Collect the full sequence of number + number + number...
+    3. Use combine_number_parts to properly combine them
+    4. Output any non-number or unit-having tokens as-is
+    """
+    if not tokens:
+        return tokens
+
+    def _is_pure_number(token: str) -> bool:
+        stripped = token.strip("+-")
+        return stripped.isdigit() and not any(c.isalpha() for c in stripped)
+
+    result = []
+    i = 0
+
+    while i < len(tokens):
+        token = tokens[i]
+        num_info = check_if_number(token)
+
+        if not num_info["bool"] or not _is_pure_number(token):
+            result.append(token)
+            i += 1
+            continue
+
+        number_parts = [num_info["converted"]]
+
+        while True:
+            if i + 2 < len(tokens) and tokens[i + 1] == "+":
+                next_token = tokens[i + 2]
+                next_num_info = check_if_number(next_token)
+                if next_num_info["bool"] and _is_pure_number(next_token):
+                    number_parts.append(next_num_info["converted"])
+                    i += 2
+                else:
+                    break
+            else:
+                break
+
+        if len(number_parts) > 1:
+            combined = _finish_number_group(number_parts, patterns)
+            result.extend(combined)
+        else:
+            result.append(str(number_parts[0]))
+
+        i += 1
+
+    return result
+
+
 def _should_split_number_sequence(token: str) -> bool:
     """Check if token is a space-separated number sequence that should be split.
 
@@ -1036,6 +1132,7 @@ def normalize_expression(
     if not is_valid:
         return "", 1
 
+    tokens = _combine_consecutive_numbers(tokens, operators, patterns)
     tokens = apply_math_functions(tokens, operators, patterns)
 
     # Handle unit conversion patterns from tokens (e.g., "2m in feet" -> tokens ['2m', 'in', 'feet'])
