@@ -25,27 +25,34 @@ Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`. Word f
 **visible_repr() Check Order is Correct:**
 The variation selector check (0xfe00-0xfe0f) comes BEFORE the combining mark check in `visible_repr()`. This is the correct order per AGENTS.md conventions. The code at primitives.py:273-276 is correct.
 
-### Critical Issues (Resolved)
+### Known Limitations
 
-The following issues have been fixed:
-1. **`split_at_operators` whitespace handling** - Fixed by adding `_combine_consecutive_numbers()` in normalize.py
-2. **`combine_number_parts()` logic** - Already working correctly (verification shows `['22']` for `[20, 2]`)
-3. **TypedDict `__slots__` in validate.py** - Already removed from CheckBracketsResult, RegexTestResult
-4. **`math_eval` response format inconsistency** - Already using `_success_response()` wrapper
-
-### Low Priority Known Issues
-
-These items are documented but not critical:
+These are documented limitations that agents should be aware of:
 - `notifications/cancel` and `notifications/progress` not implemented in MCP server
 - `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
 - Bidirectional confusable detection not implemented
 - `_is_extended_pictographic` range (0x1F300-0x10FFFF) is broad and includes private use areas
 - Script detection uses heuristic range-based approach, not `unicodedata.script()`
 
-### Documentation Notes
+### Architecture Conventions
 
-1. **TypedDict vs NamedTuple** - All architecture docs use `class Xxx(TypedDict)` correctly
-2. **ConfusableInfo fields** - Use `confusable_with` and `confusable_name`, not `confusable_for` or `confusable_codepoint`
-3. **ScriptInfo fields** - Use `index`, `char`, `script`, `codepoint` (not `count`, `start`, `end`)
-4. **detect_mixed_scripts return** - Returns dict with keys `mixed_scripts`, `scripts`, `positions` (not list[ScriptInfo])
-5. **CommonPrefixSuffix fields** - Use `common_prefix_len`, `common_suffix_len` (not `prefix`, `suffix`)
+**TypedDict vs NamedTuple:**
+- All architecture docs use `class Xxx(TypedDict)` correctly
+- TypedDict is used throughout for consistency with Python 3.14+ typing patterns
+- TypedDict classes do NOT support `__slots__` - only regular classes do
+
+**ConfusableInfo fields:**
+- Use `confusable_with` and `confusable_name`, not `confusable_for` or `confusable_codepoint`
+
+**ScriptInfo fields:**
+- Use `index`, `char`, `script`, `codepoint` (not `count`, `start`, `end`)
+
+**detect_mixed_scripts return:**
+- Returns dict with keys `mixed_scripts`, `scripts`, `positions` (not list[ScriptInfo])
+
+**CommonPrefixSuffix fields:**
+- Use `common_prefix_len`, `common_suffix_len` (not `prefix`, `suffix`)
+
+**visible_repr() Check Order:**
+- Variation selector check (0xfe00-0xfe0f) comes BEFORE combining mark check
+- This is correct per Unicode display recommendations

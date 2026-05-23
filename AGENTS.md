@@ -241,12 +241,6 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `mps` (meters per second) is in `UNIT_CATEGORIES` as "speed"
 - Temperature-to-non-temperature conversions produce a warning
 
-### Known Issues
-
-- `notifications/cancel` and `notifications/progress` not implemented in MCP server
-- `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
-- Bidirectional confusable detection not implemented
-
 ### API Usage Reminder
 For testing NL/unit features:
 - Use `run()` or CLI, NOT `evaluate()`
