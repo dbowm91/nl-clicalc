@@ -246,8 +246,6 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `notifications/cancel` and `notifications/progress` not implemented in MCP server
 - `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
 - Bidirectional confusable detection not implemented
-- `split_at_operators` does not properly handle whitespace-separated number words (e.g., "three hundred twenty two" fails to combine correctly)
-- `combine_number_parts()` logic does not properly combine number parts into single values
 
 ### API Usage Reminder
 For testing NL/unit features:

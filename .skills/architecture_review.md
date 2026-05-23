@@ -59,6 +59,8 @@ For each module, examine:
 - Data structure field mismatches (CheckBracketsResult, WordMetrics) - all fixed
 - Classification labels in synthesis.py (`accent_or_diacritic_difference`, `unicode_normalization_only`) now properly reachable
 
+**Note:** Many of these issues were identified and fixed during the 2026-05-22 architecture review. See the findings section below for details.
+
 ## Architecture Review Findings (2026-05-22)
 
 During comprehensive architecture review of all modules, the following issues were identified and fixed:
