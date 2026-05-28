@@ -15,11 +15,25 @@ mcp/
 ## Overview
 
 The MCP server exposes exact text analysis tools to AI agents. It provides:
-- JSON-RPC 2.0 protocol handling
+- JSON-RPC 2.0 protocol handling over stdio
 - Tool discovery via `tools/list`
 - Tool execution via `tools/call`
 - Standardized error envelopes
 - Input validation and sanitization
+- Case-insensitive tool matching with suggestions
+
+## Architecture
+
+```
+AI Agent <--JSON-RPC--> MCP Server <---> nl-calc exact tools
+                              |
+                              +-- primitives
+                              +-- unicode_tools
+                              +-- diff
+                              +-- validate
+                              +-- measure
+                              +-- synthesis
+```
 
 ## schemas.py — Tool Schemas
 
@@ -185,6 +199,15 @@ def handle_request(request: Any) -> dict | None:
         return _invalid_request(request.get("id"), "Method not found")
 ```
 
+| Method | Handler | Description |
+|--------|---------|-------------|
+| `initialize` | `_handle_initialize()` (called inline) | Initialize connection |
+| `tools/list` | `_handle_list_tools()` | List available tools |
+| `tools/call` | `_handle_call_tool()` | Execute a tool |
+| `notifications/initialized` | None | Acknowledgment |
+
+Note: `_handle_initialize` is a separate function in `server.py` called directly from `handle_request`'s routing logic.
+
 ### Tool Handler Map
 
 ```python
@@ -317,3 +340,19 @@ Then send JSON-RPC requests via stdio:
 | Use case | AI agents | Embedded usage |
 | Functions | Subset | All |
 | Error format | Envelope | Exceptions |
+
+## Entry Point
+
+### `main() -> int`
+
+Main entry point:
+1. Reads JSON-RPC requests from stdin (line by line)
+2. Handles each request
+3. Writes responses to stdout
+4. Returns exit code
+
+For build compatibility, this is also available as `mcp_main()`:
+
+```python
+from nl_calc.mcp.server import main, mcp_main  # Both refer to same function
+```
