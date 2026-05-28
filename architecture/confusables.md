@@ -14,18 +14,22 @@ https://www.unicode.org/Public/security/latest/confusables.txt
 ```python
 CONFUSABLES: dict[str, str] = {
     # key: "U+XXXX" (codepoint of confusable character)
-    # value: space-separated codepoints it confusable with
-    "U+0430": "U+0061",      # Cyrillic 'а' confusable with Latin 'a'
-    "U+0443": "U+0079",      # Cyrillic 'y' confusable with Latin 'y'
-    "U+0410": "U+0041",      # Cyrillic 'А' confusable with Latin 'A'
+    # value: space-separated codepoints of the confusable sequence
+    #        (single or multi-codepoint substitution)
+    "U+0430": "U+0061",            # Cyrillic 'а' → Latin 'a'
+    "U+0022": "U+0027 U+0027",    # quotation mark → two apostrophes
+    "U+0025": "U+00BA U+002F U+2080",  # percent sign → 'º/₀'
+    "U+00C6": "U+0041 U+0045",    # 'Æ' → 'AE'
+    "U+00D8": "U+004F U+0338",    # 'Ø' → 'O' + combining solidus
     ...
 }
 ```
 
 ## How Confusables Work
 
-Each entry maps a character to its confusable equivalents. For example:
-- `U+0430` (Cyrillic small letter A) → `U+0061` (Latin small letter A)
+Each entry maps a character to its confusable sequence. The value may contain multiple codepoints. For example:
+- `U+0430` (Cyrillic small letter A) → `U+0061` (Latin small letter A) — 1:1
+- `U+00C6` (Latin AE) → `U+0041 U+0045` (Latin A + E) — 1:2 decomposition
 
 When `unicode_tools.detect_confusables()` scans text, it looks up each character in this table.
 
