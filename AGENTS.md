@@ -244,7 +244,26 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`
 - Temperature conversions use offset math, not multiplicative factors
 - `mps` (meters per second) is in `UNIT_CATEGORIES` as "speed"
-- Temperature-to-non-temperature conversions produce a warning
+- Temperature-to-non-temperature conversions produce a warning then crash (BUG: should not crash)
+
+### Architecture Review Findings (2026-05-28)
+
+The architecture review identified these issues requiring attention:
+
+**HIGH Priority Bugs:**
+- `units.py:146-164` - Temperature-to-non-temperature conversion crashes after warning
+- `synthesis.py:337-338` - Dead code: `accent_or_diacritic_difference` branch unreachable when nfc_equal=True
+- `synthesis.py:704-714` - Dead code: `unicode_normalization_only` near_match unreachable
+
+**HIGH Priority Documentation Issues:**
+- `normalize_expression()` returns `tuple[str, int]` not `str` (api.md, normalize.md)
+- Missing constants `g`/`standardgravity` and `wien`/`wienconstant` in evaluator.py
+- All `common_prefix_suffix` examples in diff.md return wrong values
+- `FirstDiff` TypedDict shows 3 fields but code has 6
+- `normalize_main` alias documented but doesn't exist in source
+- `reverse_confusables()` undocumented public function
+
+See `plans/review_stale_items.md` for full list of 28 identified issues.
 
 ### API Usage Reminder
 For testing NL/unit features:

@@ -71,22 +71,28 @@ For each module, examine:
 
 **Note:** Many of these issues were identified and fixed during the 2026-05-22 architecture review. See the findings section below for details.
 
-## Architecture Review Findings (Historical)
+## Architecture Review Findings (2026-05-28)
 
-This section records issues found during the 2026-05-22 architecture review. All critical issues were fixed.
+The architecture review identified 28 issues across all modules. Key findings:
 
-**Critical Bugs Fixed (2026-05-22):**
-- `normalize.py.combine_number_parts()` - Added skip_next flag to prevent duplicate processing
-- `synthesis.py._classify_difference()` - Reordered checks for NFC before casefold
-- `exact/__init__.py` - Added missing exports
-- `measure.py` - Removed invalid `__slots__` from TypedDict classes
-- `primitives.py` - BIDI control chars confirmed in `_INVISIBLE_CHARS`
-- `schemas.py` - Removed unused `SuccessEnvelope` TypedDict
+### HIGH Priority Bugs
+- `units.py:146-164` - Temperature-to-non-temperature conversion crashes after warning
+- `synthesis.py:337-338` - `accent_or_diacritic_difference` branch unreachable when nfc_equal=True
+- `synthesis.py:704-714` - `unicode_normalization_only` near_match unreachable
 
-**Design Decisions Documented:**
-- `are_units_compatible()` returns `False` when one category is unknown
-- `evaluate_cached` caching is intentional (stable expressions)
-- TypedDict `__slots__` are ignored (dict-based access used)
+### HIGH Priority Documentation Issues
+- `normalize_expression()` documented as returning `str` but actually returns `tuple[str, int]`
+- Missing constants `g`/`standardgravity` and `wien`/`wienconstant` in evaluator.py
+- All `common_prefix_suffix` examples in diff.md return wrong values
+- `FirstDiff` TypedDict shows 3 fields but code has 6
+- `normalize_main` alias documented but doesn't exist in source
+- `reverse_confusables()` undocumented public function
+
+### Review Process Notes
+- All 15 modules reviewed with improvement plans generated
+- Stale items documented in `plans/review_stale_items.md`
+- Review plans in `plans/review_improvements_*.md`
+- Complete findings in `architecture/review_plan.md`
 
 ## Architecture Files Location
 - `architecture/` - Module-level documentation
