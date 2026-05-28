@@ -112,7 +112,7 @@ class CommonPrefixSuffix(TypedDict):
 
 ### `FirstDiff`
 
-Named tuple containing:
+TypedDict containing:
 - `a_index`: Position in first string
 - `b_index`: Position in second string  
 - `a_char`: Character at position in first string
@@ -122,7 +122,7 @@ Named tuple containing:
 
 ### `DiffSpan`
 
-Named tuple containing:
+TypedDict containing:
 - `kind`: Type of diff ("equal", "insert", "delete", "replace")
 - `a_span`: [start, end) indices in string a
 - `b_span`: [start, end) indices in string b
@@ -131,7 +131,7 @@ Named tuple containing:
 
 ### `CommonPrefixSuffix`
 
-Named tuple (returned as dict) containing:
+TypedDict containing:
 - `common_prefix_len`: Length of common prefix
 - `common_suffix_len`: Length of common suffix
 
@@ -153,7 +153,7 @@ dp[i][j] = min(
 
 1. Uses `difflib.SequenceMatcher` to compute optimal edit script
 2. Converts SequenceMatcher opcodes to diff spans
-3. Merges consecutive operations of the same type
+3. Skips equal (unchanged) segments
 
 ## Index
 
