@@ -12,6 +12,19 @@ import difflib
 from typing import TypedDict
 
 
+__all__ = [
+    "FirstDiff",
+    "CommonPrefixSuffix",
+    "DiffSpan",
+    "MAX_LEVENSHTEIN_LEN",
+    "first_diff",
+    "common_prefix_suffix",
+    "levenshtein_distance",
+    "longest_common_subsequence",
+    "diff_spans",
+]
+
+
 class FirstDiff(TypedDict):
     """Information about the first difference between two strings."""
     a_index: int
