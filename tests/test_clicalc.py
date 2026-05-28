@@ -117,6 +117,11 @@ class TestUnitConversions:
         # Just verify it's a valid number
         assert isinstance(result, (int, float, UnitValue))
 
+    def test_bitwise_not_rejects_float(self):
+        """Test that bitwise NOT raises an error for float operands."""
+        with pytest.raises(EvaluationError):
+            evaluate("~3.14")
+
 
 class TestNormalize:
     """Tests for the normalize module."""

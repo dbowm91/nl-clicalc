@@ -1179,6 +1179,9 @@ class Evaluator(ast.NodeVisitor):
         if op_class not in self.UNARYOPS:
             raise EvaluationError(f"Unsupported unary operator: '{node.op.__class__.__name__}'")
 
+        if op_class is ast.Invert and not isinstance(operand, int):
+            raise EvaluationError("Bitwise NOT requires an integer operand")
+
         result = self.UNARYOPS[op_class](operand)
 
         if isinstance(operand, UnitValue):
