@@ -1499,15 +1499,16 @@ def main() -> int:
                 glob_indicators.append(arg)
 
         if glob_indicators:
-            print("Error: Possible shell glob expansion detected.", file=sys.stderr)
-            print(
+            error_lines = [
+                "Error: Possible shell glob expansion detected.",
                 f"The '*' character was expanded to file(s): {glob_indicators[:5]}{'...' if len(glob_indicators) > 5 else ''}",
-                file=sys.stderr,
-            )
-            print("Please quote your expression:", file=sys.stderr)
-            print(f'  calc "{" ".join(args.expression)}"', file=sys.stderr)
-            print("Or use -e flag:", file=sys.stderr)
-            print(f'  calc -e "{" ".join(args.expression)}"', file=sys.stderr)
+                "Please quote your expression:",
+                f'  calc "{" ".join(args.expression)}"',
+                "Or use -e flag:",
+                f'  calc -e "{" ".join(args.expression)}"',
+            ]
+            for line in error_lines:
+                print(line, file=sys.stderr)
             return 1
 
     # Try text commands first (inspect, count, regex)
