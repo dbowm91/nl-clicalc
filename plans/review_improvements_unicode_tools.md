@@ -1,180 +1,84 @@
-# Unicode Tools Module Review - Improvement Plan
+# unicode_tools Module Review — Improvement Plan
 
-## Verified Claims
+**Reviewed:** architecture/unicode_tools.md against nl_calc/exact/unicode_tools.py
+**Date:** 2026-05-28
 
-### Script Detection (`unicode_script`, `unicode_scripts`)
-- **VERIFIED**: `unicode_script("A")` returns "Latin" (line 104-120 in code)
-- **VERIFIED**: `unicode_script("Ж")` returns "Cyrillic" (line 66-101 - _get_script_heuristic)
-- **VERIFIED**: `unicode_script("Ω")` returns "Greek" (line 48 - Greek range 0x0370-0x03FF)
-- **VERIFIED**: `unicode_script("日")` returns "Han" (line 50 - Han range 0x4E00-0x9FFF)
-- **VERIFIED**: `@lru_cache` decorator on `_get_script_heuristic` at line 66
-
-### Mixed Script Detection (`detect_mixed_scripts`)
-- **VERIFIED**: Returns correct structure with `mixed_scripts`, `scripts`, `positions` (line 135-169)
-- **VERIFIED**: Properly excludes "Common", "Inherited", "Other" from verdict (line 155)
-- **VERIFIED**: `detect_mixed_scripts("HelloМир")` returns `mixed_scripts: True` with both Latin and Cyrillic
-
-### Confusable Detection (`detect_confusables`, `confusables_count`)
-- **VERIFIED**: `detect_confusables("pаypal")` correctly identifies Cyrillic 'а' (U+0430) as confusable with Latin 'a'
-- **VERIFIED**: Returns proper `ConfusableInfo` structure with index, char, codepoint, name, confusable_with, confusable_name
-- **VERIFIED**: `confusables_count` fast path works correctly
-
----
+## Verified Claims (with line references)
+- `unicode_script(char: str) -> str` — VERIFIED at code line 119
+- `unicode_scripts(s: str) -> list[str]` — VERIFIED at code line 138
+- `detect_mixed_scripts(s: str) -> dict` — VERIFIED at code line 150
+- `detect_confusables(s: str) -> list[ConfusableInfo]` — VERIFIED at code line 187
+- `confusables_count(s: str) -> int` — VERIFIED at code line 233
+- `_get_script_heuristic()` is cached with `@functools.lru_cache` — VERIFIED at code line 72
+- `ScriptInfo` TypedDict fields — VERIFIED at code line 21-26
+- `ConfusableInfo` TypedDict fields — VERIFIED at code line 29-42
 
 ## Discrepancies Between Documentation and Code
 
-### 1. ScriptInfo TypedDict Structure (HIGH PRIORITY)
+### HIGH Priority
 
-**Documentation** (`architecture/exact-unicode_tools.md`, lines 19-24):
-```python
-class ScriptInfo(TypedDict):
-    script: str       # Script name (e.g., "Latin", "Cyrillic")
-    count: int        # Number of characters in this script
-    start: int        # Starting index in string
-    end: int          # Ending index in string
-```
+1. **`reverse_confusables` function completely missing from documentation**
+   - Documentation says: Nothing (not mentioned anywhere)
+   - Code actually does: `reverse_confusables(char: str) -> list[str]` defined at code lines 268-292, exported in `__init__.py:52` and `__all__:108`
+   - Impact: Public API function is undocumented, users have no knowledge of this capability
 
-**Actual Code** (`nl_calc/exact/unicode_tools.py`, lines 21-26):
-```python
-class ScriptInfo(TypedDict):
-    index: int
-    char: str
-    script: str
-    codepoint: str
-```
+2. **`detect_mixed_scripts` documentation omits "Other" script exclusion**
+   - Documentation says: `'positions': list[ScriptInfo]  # Positions of non-Common/Inherited chars` (docs line 75)
+   - Code actually does: Excludes "Other" in addition to "Common" and "Inherited" (code lines 170, 181)
+   - Impact: Documentation incorrectly describes behavior; users may misinterpret results
 
-**Issue**: Completely different structures. Documentation describes "run-based" info (count, start, end) but code provides "position-based" info (index, char, codepoint per character).
+3. **Index section missing `reverse_confusables`**
+   - Documentation says: Index lists only 5 functions (docs lines 217-224)
+   - Code actually does: 6 public functions exist (including `reverse_confusables`)
+   - Impact: Documentation index is incomplete
 
-### 2. ConfusableInfo TypedDict Structure (HIGH PRIORITY)
+### MEDIUM Priority
 
-**Documentation** (`architecture/exact-unicode_tools.md`, lines 29-36):
-```python
-class ConfusableInfo(TypedDict):
-    char: str              # The confusable character
-    codepoint: str         # "U+XXXX" format
-    name: str              # Unicode name
-    confusable_for: str    # What it might be confused with
-    confusable_codepoint: str  # Confusing character's codepoint
-    script: str            # Script of the character
-```
+4. **`detect_mixed_scripts` return type underspecified**
+   - Documentation says: Returns `dict` with `mixed_scripts`, `scripts`, `positions` keys (docs lines 73-76)
+   - Code actually does: Returns a `dict` with proper TypedDict structure but docs don't specify the type annotations match the actual TypedDict definitions
+   - Impact: Minor - type documentation is implied through examples
 
-**Actual Code** (`nl_calc/exact/unicode_tools.py`, lines 29-36):
-```python
-class ConfusableInfo(TypedDict):
-    index: int
-    char: str
-    codepoint: str
-    name: str
-    confusable_with: str    # Note: different field name
-    confusable_name: str    # Note: different field name
-```
-
-**Issue**:
-- Field `confusable_for` vs `confusable_with` - naming mismatch
-- Field `confusable_codepoint` missing, replaced by `confusable_name`
-- Field `script` missing entirely
-- Field `index` present in code but not documented
-
-### 3. detect_mixed_scripts Return Type (HIGH PRIORITY)
-
-**Documentation** (`architecture/exact-unicode_tools.md`, lines 65-74):
-```python
-detect_mixed_scripts(s: str) -> list[ScriptInfo]
-```
-
-**Actual Code** (`nl_calc/exact/unicode_tools.py`, line 135):
-```python
-def detect_mixed_scripts(s: str) -> dict:
-```
-
-**Issue**: Documentation says it returns `list[ScriptInfo]` but code returns a `dict` with keys `mixed_scripts`, `scripts`, `positions`.
-
-### 4. Script Detection Ranges (MEDIUM PRIORITY)
-
-**Documentation** (`architecture/unicode_tools.md`, lines 111-128): Lists 13 script ranges.
-
-**Actual Code** (`nl_calc/exact/unicode_tools.py`, lines 40-63): Lists 17 script ranges (lines 57-63 have additional: Thai, Hangul, Georgian, Armenian, Cherokee, Canadian_Aboriginal).
-
-**Issue**: Documentation is incomplete - missing 4 scripts that code supports.
-
----
+5. **`ConfusableInfo.confusable_with` can contain multiple characters**
+   - Documentation mentions: "multi-character substitutions" (docs line 133) in the database section but doesn't clarify that `confusable_with` field can contain multiple codepoints joined
+   - Code actually does: `"".join(chr(int(cp[2:], 16)) for cp in sub_str.split())` joins potentially multiple chars (code line 210)
+   - Impact: Users may not realize `confusable_with` can be a multi-character string
 
 ## Potential Bugs
 
-### 1. confusables_count Returns Count of Matches, Not Unique Confusables
-
-**Code** (lines 218-232):
-```python
-def confusables_count(s: str) -> int:
-    count = 0
-    for char in s:
-        key = f"U+{ord(char):04X}"
-        if key in CONFUSABLES:
-            count += 1
-    return count
-```
-
-**Issue**: If the same confusable character appears multiple times, each occurrence is counted. The function name suggests counting unique confusables. However, this may be intentional behavior - verify intended semantics.
-
-### 2. Combining Mark Detection May Be Incomplete
-
-**Code** (lines 82-83):
-```python
-if unicodedata.category(char).startswith("M"):
-    return "Inherited"
-```
-
-**Issue**: Only checks category starting with "M" (Mn, Mc, Me). Combining marks can also be in other categories. Should verify if this handles all combining mark cases correctly.
-
-### 3. Fallback to "Other" Without Trying unicodedata.script()
-
-**Code** (line 101):
-```python
-return "Other"
-```
-
-**Issue**: `_get_script_heuristic` always uses range-based heuristic. It never tries `unicodedata.script()` which is the standard Python API for script detection. The docstring mentions this may not be available, but modern Python always has it. Could improve accuracy by using `unicodedata.script()` as primary and heuristic as fallback.
-
----
+- [LOW] **No bugs identified** — Code is well-structured with proper error handling, cache usage, input validation, and edge case coverage
 
 ## Improvement Suggestions
 
-### HIGH PRIORITY
+### HIGH Priority
 
-1. **Update Documentation to Match Code**
-   - Fix `ScriptInfo` TypedDict to match actual implementation (index, char, script, codepoint)
-   - Fix `ConfusableInfo` TypedDict to match actual implementation (confusable_with, confusable_name instead of confusable_for, confusable_codepoint)
-   - Change `detect_mixed_scripts` return type from `list[ScriptInfo]` to correct `dict` type
+1. **Document `reverse_confusables` function** — Add complete documentation including:
+   - Function signature and description
+   - Example usage showing the "O" / "0" confusable case
+   - Return type and behavior
+   - Position in docs: after `confusables_count` in the Functions section
 
-2. **Add Missing Documentation**
-   - Document the additional script ranges in code (Thai, Hangul, Georgian, Armenian, Cherokee, Canadian_Aboriginal)
-   - Document the actual return structure of `detect_mixed_scripts` with `mixed_scripts`, `scripts`, `positions` keys
+2. **Update `detect_mixed_scripts` docs to mention "Other" exclusion** — Change docs line 75 from:
+   ```
+   'positions': list[ScriptInfo]  # Positions of non-Common/Inherited chars
+   ```
+   to:
+   ```
+   'positions': list[ScriptInfo]  # Positions of non-Common/Inherited/Other chars
+   ```
 
-### MEDIUM PRIORITY
+3. **Update Index section** — Add `reverse_confusables()` to the index list (after `confusables_count`)
 
-3. **Improve Script Detection**
-   - Consider using `unicodedata.script()` as primary detection method
-   - Use heuristic only when `unicodedata.script()` returns "Unknown"
-   - This would provide more accurate script detection for edge cases
+### MEDIUM Priority
 
-4. **Add docstring Example Correction**
-   - The example in `architecture/exact-unicode_tools.md` line 72-73 shows `ScriptInfo(script="Latin", count=3, start=0, end=3)` which doesn't match the actual structure
+4. **Clarify multi-character confusable_with** — Add note that `confusable_with` in `ConfusableInfo` may contain multiple characters when the confusables table maps to multi-codepoint sequences
 
-### LOW PRIORITY
+5. **Add `unicode_scripts` to the Supported Scripts table or clarify it returns per-character scripts** — Currently the table shows script info but `unicode_scripts` returns a list matching each character position
 
-5. **Performance Consideration**
-   - `confusables_count` iterates character by character which is O(n) with O(1) lookups
-   - Could potentially use a generator expression with sum() for slight improvement
+### LOW Priority
 
----
+6. **Add example for `detect_mixed_scripts` showing "Other" exclusion** — Example with digits or punctuation to demonstrate they're excluded from the `scripts` list
 
 ## Summary
 
-The core functionality works correctly:
-- Script detection for Latin, Cyrillic, Greek, Han, etc. works as documented
-- Mixed script detection works correctly
-- Confusable detection works correctly
-
-**Primary Issue**: Documentation is significantly out of sync with actual implementation. The `ScriptInfo` and `ConfusableInfo` TypedDict structures in the two documentation files describe different structures than what the code actually implements. This would cause users to write incorrect code if they followed the documentation.
-
-**Recommendation**: Prioritize updating the documentation files to accurately reflect the actual code implementation.
+The unicode_tools module documentation is mostly accurate but has one critical omission: `reverse_confusables()` is a fully implemented and exported public function that is completely absent from the architecture document. Additionally, `detect_mixed_scripts()` exclusion of "Other" script is mentioned in code comments but missing from documentation. Both should be corrected to ensure documentation completeness and accuracy. No bugs were identified in the implementation.

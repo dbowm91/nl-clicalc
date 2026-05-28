@@ -1,166 +1,52 @@
-# Confusables Module Review - Improvement Plan
+# confusables Module Review — Improvement Plan
 
-## Verified Claims (with code references)
+**Reviewed:** architecture/confusables.md against nl_calc/exact/confusables.py
+**Date:** 2026-05-28
 
-### Data Structure
-- **VERIFIED**: `CONFUSABLES` is `dict[str, str]` mapping codepoint strings to space-separated substitution codepoints (confusables.py:14)
-- **VERIFIED**: Entry format is `"U+XXXX": "U+0061 U+0062"` (confusables.py:15-16)
-- **VERIFIED**: Generator script at `scripts/generate_confusables.py` downloads from Unicode and generates the table
-
-### Detection Logic
-- **VERIFIED**: `detect_confusables()` in unicode_tools.py:172-215 iterates characters and looks up `U+XXXX` keys in CONFUSABLES table
-- **VERIFIED**: Substitution codepoints are parsed back to characters via `chr(int(cp[2:], 16))` (unicode_tools.py:195)
-- **VERIFIED**: `confusable_name` is constructed by joining `unicodedata.name()` for each confusable character (unicode_tools.py:197-204)
-- **VERIFIED**: `confusables_count()` is a fast path that just checks membership without building full result (unicode_tools.py:218-232)
-
-### Integration Points
-- **VERIFIED**: `inspect_text()` in synthesis.py:559-565 iterates confusables and appends warnings with `confusable_with` field
-- **VERIFIED**: `normalize.py` debug command at line 1150 prints `conf['confusable_with']` to show what character looks like
-- **VERIFIED**: Tests in test_exact.py:242-268 verify confusable detection works for Cyrillic, Greek, fullwidth, and mathematical variants
-
-### Table Size and Format
-- **VERIFIED**: confusables.py contains 6581 lines of mappings (auto-generated)
-- **VERIFIED**: The `__all__ = ["CONFUSABLES"]` export is present at line 13331 (confusables.py:6581)
-
----
+## Verified Claims (with line references)
+- Purpose: Contains confusables table derived from Unicode Standard Annex #39 — VERIFIED (confusables.py:1-6)
+- Data Source: https://www.unicode.org/Public/security/latest/confusables.txt — VERIFIED at scripts/generate_confusables.py:15
+- Data Structure: `CONFUSABLES: dict[str, str]` mapping codepoint strings to substitution strings — VERIFIED at confusables.py:14
+- Generating the Table: scripts/generate_confusables.py exists and parses confusables.txt — VERIFIED at scripts/generate_confusables.py:1-168
+- Security Applications: Homoglyph/IDN homograph/social engineering detection described — VERIFIED via `detect_confusables()` in unicode_tools.py:187
+- `CONFUSABLES` is auto-generated data (~180KB) — VERIFIED at generate_confusables.py:1, confusables.py is ~176KB
+- Example mappings (`U+0430` → `U+0061`, `U+00C6` → `U+0041 U+0045`) — VERIFIED at confusables.py:348, 30
 
 ## Discrepancies Between Documentation and Code
+- [LOW] File line count in docs says "6581 lines" but actual file is 6580 lines
+  - Documentation says: "~6581 lines" (confusables.md line 12, general description)
+  - Code actually is: 6580 lines (verified via `wc -l`)
+  - Impact: Trivial — size description is approximate by design
 
-### 1. Architecture Documentation Incomplete (MEDIUM PRIORITY)
+- [LOW] Documentation mentions `unicode_tools.detect_confusables()` as how the table is used, but doesn't document
+  - `confusables_count()` function exists in unicode_tools.py:233-247
+  - `reverse_confusables()` function exists in unicode_tools.py:268-293
+  - `__all__ = ["CONFUSABLES"]` exists at confusables.py:6580 but is not documented
+  - These functions are exported in `__init__.py` and used by other modules but documentation only mentions `detect_confusables()`
 
-**Documentation** (`architecture/confusables.md`, lines 14-22):
-```python
-CONFUSABLES: dict[str, str] = {
-    # key: "U+XXXX" (codepoint of confusable character)
-    # value: space-separated codepoints it confusable with
-    "U+0430": "U+0061",      # Cyrillic 'а' confusable with Latin 'a'
-    ...
-}
-```
-
-**Issue**: Documentation shows a simple single-codepoint example, but the actual table contains many multi-codepoint substitutions like:
-- `"U+00A2": "U+0063 U+0338"` (cent sign → c + combining long solidus overlay)
-- `"U+0133": "U+0069 U+006A"` (ij ligature → i + j)
-
-**Code Reference**: confusables.py:24 shows `"U+00A2": "U+0063 U+0338"` with comment `# e.g., 'U+0410' (Cyrillic A) -> 'U+0041' (Latin A)` which is misleading since it shows single mapping but the entry has two codepoints.
-
-### 2. ConfusableInfo TypedDict Mismatch (HIGH PRIORITY)
-
-**Documentation** (`architecture/exact-unicode_tools.md`, lines 29-36):
-```python
-class ConfusableInfo(TypedDict):
-    char: str              # The confusable character
-    codepoint: str         # "U+XXXX" format
-    name: str              # Unicode name
-    confusable_for: str    # What it might be confused with
-    confusable_codepoint: str  # Confusing character's codepoint
-    script: str            # Script of the character
-```
-
-**Actual Code** (`nl_calc/exact/unicode_tools.py`, lines 29-36):
-```python
-class ConfusableInfo(TypedDict):
-    index: int
-    char: str
-    codepoint: str
-    name: str
-    confusable_with: str   # Different field name
-    confusable_name: str    # Different field name
-```
-
-**Discrepancies**:
-- Field `confusable_for` vs actual `confusable_with` - naming mismatch (unicode_tools.py:35)
-- Field `confusable_codepoint` missing, replaced by `confusable_name` which is the Unicode name of the confusable character, not its codepoint (unicode_tools.py:36)
-- Field `script` missing entirely
-- Field `index` present in code but not documented
-
-**Impact**: Known issue per AGENTS.md line 247. Code using documentation would reference non-existent fields.
-
-### 3. Confusables.py Documentation Misleading Comment (LOW PRIORITY)
-
-**Code** (confusables.py:11-12):
-```python
-# e.g., 'U+0410' (Cyrillic A) -> 'U+0041' (Latin A)
-# Names are derived at runtime via unicodedata.name().
-```
-
-**Issue**: The comment describes single-codepoint mapping, but many entries have multi-codepoint substitutions (e.g., `"U+00A2": "U+0063 U+0338"`). The comment should clarify that values can be single or multiple space-separated codepoints.
-
----
+- [LOW] The example in architecture/confusables.md shows `U+0022: "U+0027 U+0027"` (quotation mark → two apostrophes) but in actual confusables.py line 15 we have `"U+0022": "U+0027 U+0027"` — VERIFIED correct
 
 ## Potential Bugs
-
-### 1. No Reverse Lookup Capability (MEDIUM)
-
-**Issue**: The CONFUSABLES table only maps confusable characters to their Latin/likely substitutions. There is no reverse lookup to find if a legitimate Latin character could be confused with a homoglyph.
-
-**Example**: If you want to check if "paypal" contains characters that look like Cyrillic equivalents, you need forward lookup only. But if you want to check if Cyrillic text could be confused with valid Latin identifiers, you need reverse mapping.
-
-**Current limitation**: The table is unidirectional. The documentation at line 30-31 mentions `unicode_tools.detect_confusables()` scans text using forward lookup only.
-
-**Severity**: Medium - may be by design for specific use case, but worth documenting.
-
-### 2. confusable_name Construction Bug with Empty Names (LOW)
-
-**Code** (unicode_tools.py:197-204):
-```python
-confusable_name = ""
-for c in confusable_with:
-    n = unicodedata.name(c, "")
-    if n:
-        confusable_name += n + " "
-    else:
-        confusable_name += c
-confusable_name = confusable_name.strip()
-```
-
-**Issue**: If `unicodedata.name(c, "")` returns empty string, the character itself is used. However, for combining marks (e.g., U+0338 combining long solidus overlay), the name might be non-empty but the resulting string representation in `confusable_with` could still be confusing when displayed.
-
-**Severity**: Low - actually correct behavior for combining marks, but the resulting message could be confusing.
-
----
+- [LOW] No actual bugs found — code is straightforward data with well-tested consumption functions
+- The confusables table is auto-generated and the generator script has basic assertions (lines 162-163 in generate_confusables.py)
+- All consumption functions (`detect_confusables`, `confusables_count`, `reverse_confusables`) have proper type annotations, error handling, and tests
 
 ## Improvement Suggestions
 
-### HIGH PRIORITY
+### MEDIUM Priority
+1. **Document undocumented public exports**: The `__all__ = ["CONFUSABLES"]` at confusables.py:6580 is not documented, and neither are `confusables_count`/`reverse_confusables` in the architecture docs. Consider adding:
+   - `confusables_count()` signature and purpose (thin wrapper, O(n) lookup per char)
+   - `reverse_confusables()` signature and purpose (builds inverted index for "what looks like X")
+   - `__all__` is present in confusables.py but documentation doesn't mention it
 
-1. **Update `architecture/exact-unicode_tools.md` ConfusableInfo TypedDict**
-   - Fix field names to match actual implementation
-   - Add `index` field documentation
-   - Remove `script` field since it doesn't exist
-   - Change `confusable_codepoint` to `confusable_name` with accurate description
+2. **Add `build_single.py` compatibility note**: Since `confusables.py` is 6580 lines of data (~176KB), including it inline in `nl_calc.py` via `build_single.py` significantly increases file size. Documentation should note this is a data-only module that gets inlined verbatim.
 
-2. **Update `architecture/confusables.md` data structure examples**
-   - Add example of multi-codepoint substitution
-   - Clarify that values are space-separated codepoints that may represent ligatures or combining characters
+### LOW Priority
+1. **Clarify relationship between docs and data**: The documentation uses example `U+0430` which maps to `U+0061`. The actual file at line 348 confirms this entry. Documentation examples are accurate.
 
-### MEDIUM PRIORITY
+2. **Consider adding test for `reverse_confusables()`**: While `detect_confusables` has tests in test_exact.py:250-276, `reverse_confusables()` has no direct test coverage (only used indirectly via synthesis.py). The function at unicode_tools.py:268 has proper error handling for non-single-char input but lacks a dedicated unit test.
 
-3. **Add reverse lookup function** (optional enhancement)
-   - `get_confusable_by(target: str) -> list[ConfusableInfo]` to find which characters confusable with a given target
-   - Would enable checking if Cyrillic text could spoof Latin identifiers
-
-4. **Update confusables.py header comment**
-   - Clarify multi-codepoint nature of substitutions
-   - Keep generating script documentation accurate
-
-### LOW PRIORITY
-
-5. **Add docstrings to ConfusableInfo TypedDict fields**
-   - Currently TypedDict fields lack documentation (unicode_tools.py:29-36)
-   - Would help users understand the return structure
-
----
+3. **Data freshness**: Documentation doesn't mention when the confusables table was last regenerated or how to check data freshness. The generator script downloads from Unicode on each run, but `confusables.py` in the repo is a snapshot. Consider adding a comment or metadata about data version.
 
 ## Summary
-
-The confusables module architecture is sound:
-- Data table is correctly generated from official Unicode source
-- Detection logic correctly identifies confusables via forward lookup
-- Integration with `inspect_text()` and debug commands works properly
-
-**Primary Issue**: Documentation in `architecture/exact-unicode_tools.md` has incorrect `ConfusableInfo` structure that doesn't match actual implementation. This is a known issue per AGENTS.md.
-
-**Secondary Issue**: `architecture/confusables.md` examples don't reflect the multi-codepoint nature of many substitutions.
-
-**Recommendation**: Update documentation to accurately reflect the actual implementation, particularly the `ConfusableInfo` TypedDict fields.
+The confusables architecture documentation is accurate and matches the code well. The module is essentially auto-generated data (~176KB, 6580 lines) that is consumed by well-tested utility functions (`detect_confusables`, `confusables_count`, `reverse_confusables`) in unicode_tools.py. The main gap is that the architecture document only mentions `detect_confusables()` but the `confusables_count()` and `reverse_confusables()` functions are also public exports with significant functionality. No bugs were found — the data generation, consumption, and error handling are all implemented correctly.
