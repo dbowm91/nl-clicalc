@@ -67,15 +67,15 @@ Each row defines a review unit: the doc(s), the source files, and the output pla
 | 2 | normalize | `architecture/normalize.md` | `nl_calc/normalize.py` | `plans/review_improvements_normalize.md` |
 | 3 | evaluator | `architecture/evaluator.md` | `nl_calc/evaluator.py` | `plans/review_improvements_evaluator.md` |
 | 4 | units | `architecture/units.md` | `nl_calc/units.py` | `plans/review_improvements_units.md` |
-| 5 | primitives | `architecture/primitives.md`, `architecture/exact-primitives.md` | `nl_calc/exact/primitives.py` | `plans/review_improvements_primitives.md` |
-| 6 | unicode_tools | `architecture/unicode_tools.md`, `architecture/exact-unicode_tools.md` | `nl_calc/exact/unicode_tools.py` | `plans/review_improvements_unicode_tools.md` |
+| 5 | primitives | `architecture/primitives.md` | `nl_calc/exact/primitives.py` | `plans/review_improvements_primitives.md` |
+| 6 | unicode_tools | `architecture/unicode_tools.md` | `nl_calc/exact/unicode_tools.py` | `plans/review_improvements_unicode_tools.md` |
 | 7 | confusables | `architecture/confusables.md` | `nl_calc/exact/confusables.py` | `plans/review_improvements_confusables.md` |
 | 8 | validate | `architecture/validate.md` | `nl_calc/exact/validate.py` | `plans/review_improvements_validate.md` |
 | 9 | diff | `architecture/diff.md` | `nl_calc/exact/diff.py` | `plans/review_improvements_diff.md` |
 | 10 | measure | `architecture/measure.md` | `nl_calc/exact/measure.py` | `plans/review_improvements_measure.md` |
 | 11 | synthesis | `architecture/synthesis.md` | `nl_calc/exact/synthesis.py` | `plans/review_improvements_synthesis.md` |
 | 12 | cli | `architecture/cli.md` | `nl_calc/__main__.py` | `plans/review_improvements_cli.md` |
-| 13 | mcp | `architecture/mcp.md`, `architecture/mcp_server.md` | `nl_calc/mcp/server.py`, `tools.py`, `schemas.py` | `plans/review_improvements_mcp.md` |
+| 13 | mcp | `architecture/mcp.md` | `nl_calc/mcp/server.py`, `tools.py`, `schemas.py` | `plans/review_improvements_mcp.md` |
 | 14 | api | `architecture/api.md` | (various — cross-cutting) | `plans/review_improvements_api.md` |
 | 15 | exact | `architecture/exact.md` | `nl_calc/exact/__init__.py`, `nl_calc/exact/*.py` | `plans/review_improvements_exact.md` |
 
@@ -105,12 +105,12 @@ Subagents are dispatched in batches. Each subagent operates independently and wr
 ### Batch 2: exact/ Primitives (3 subagents)
 
 - **Subagent D**: primitives
-  - `architecture/primitives.md`, `architecture/exact-primitives.md`
+  - `architecture/primitives.md`
   - Verify UTF-8, codepoint, normalization, invisible detection claims
   - Output: `plans/review_improvements_primitives.md`
 
 - **Subagent E**: unicode_tools
-  - `architecture/unicode_tools.md`, `architecture/exact-unicode_tools.md`
+  - `architecture/unicode_tools.md`
   - Verify script detection, confusable detection claims
   - Output: `plans/review_improvements_unicode_tools.md`
 
@@ -149,7 +149,7 @@ Subagents are dispatched in batches. Each subagent operates independently and wr
   - Output: `plans/review_improvements_cli.md`
 
 - **Subagent L**: mcp
-  - `architecture/mcp.md`, `architecture/mcp_server.md`
+  - `architecture/mcp.md`
   - Verify MCP server protocol, tool definitions, error handling
   - Output: `plans/review_improvements_mcp.md`
 
