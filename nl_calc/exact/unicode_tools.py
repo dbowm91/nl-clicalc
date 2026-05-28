@@ -65,10 +65,10 @@ _SCRIPT_RANGES: list[tuple[int, int, str]] = [
 
 @functools.lru_cache(maxsize=128)
 def _get_script_heuristic(char: str) -> str:
-    """Determine script for a character using codepoint ranges.
+    """Determine script for a character using unicodedata.script() with fallback.
 
-    Uses heuristic range-based detection since unicodedata.script()
-    may not be available in all Python versions.
+    Tries unicodedata.script() first (available in Python 3.14+), falling back
+    to range-based heuristic detection for compatibility.
 
     Args:
         char: Single character.
@@ -76,6 +76,15 @@ def _get_script_heuristic(char: str) -> str:
     Returns:
         Script name or 'Other'.
     """
+    # Try unicodedata.script() first (Python 3.14+)
+    try:
+        script = unicodedata.script(char)
+        if script != "Unknown":
+            return script
+    except (AttributeError, ValueError):
+        pass
+
+    # Fallback: heuristic range-based detection
     codepoint = ord(char)
 
     # Check if it's a combining mark
