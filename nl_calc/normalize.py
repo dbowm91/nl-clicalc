@@ -1255,54 +1255,55 @@ def print_help() -> None:
     # Get units by category programmatically
     units_by_cat = _get_units_by_category()
 
-    lines: list[str] = []
+    lines = [
+        "Usage:",
+        "  calc <expression>          Evaluate math expression",
+        "  calc inspect <text>       Check for hidden characters/confusables",
+        "  calc count <text>         Count characters (or count <text> <char>)",
+        "  calc regex <pat> <text>  Test regex pattern against text",
+        "",
+        "Operators:",
+        "  Arithmetic: +  -  *  /  **",
+        "  Words: plus, minus, times, divided by, over, raised to",
+        "",
+        "Functions:",
+        "  Trigonometry: sin, cos, tan, asin, acos, atan, atan2",
+        "  Hyperbolic: sinh, cosh, tanh, asinh, acosh, atanh",
+        "  Logarithmic: log, log10, log2, log1p, exp, expm1",
+        "  Rounding: abs, floor, ceil, trunc, round, sign",
+        "  Other: sqrt, pow, factorial, gcd, lcm, mean, median",
+        "",
+        "Constants:",
+        "  pi, e, tau, inf, nan",
+        "  avogadro, gasconstant, planck, boltzmann",
+        "  c (speed of light), elementarycharge, faraday, amu",
+        "",
+        "Units:",
+    ]
 
-    lines.append("Usage:")
-    lines.append("  calc <expression>          Evaluate math expression")
-    lines.append("  calc inspect <text>       Check for hidden characters/confusables")
-    lines.append("  calc count <text>         Count characters (or count <text> <char>)")
-    lines.append("  calc regex <pat> <text>  Test regex pattern against text")
-    lines.append("")
-    lines.append("Operators:")
-    lines.append("  Arithmetic: +  -  *  /  **")
-    lines.append("  Words: plus, minus, times, divided by, over, raised to")
-    lines.append("")
-    lines.append("Functions:")
-    lines.append("  Trigonometry: sin, cos, tan, asin, acos, atan, atan2")
-    lines.append("  Hyperbolic: sinh, cosh, tanh, asinh, acosh, atanh")
-    lines.append("  Logarithmic: log, log10, log2, log1p, exp, expm1")
-    lines.append("  Rounding: abs, floor, ceil, trunc, round, sign")
-    lines.append("  Other: sqrt, pow, factorial, gcd, lcm, mean, median")
-    lines.append("")
-    lines.append("Constants:")
-    lines.append("  pi, e, tau, inf, nan")
-    lines.append("  avogadro, gasconstant, planck, boltzmann")
-    lines.append("  c (speed of light), elementarycharge, faraday, amu")
-    lines.append("")
-    lines.append("Units:")
-
-    # Build unit lines by category
+    unit_lines = []
     for category, units in units_by_cat.items():
-        # Truncate long lists with "..."
         if len(units) > 15:
             display_units = units[:12] + ["..."]
         else:
             display_units = units
-        lines.append(f"  {category.capitalize()}: {', '.join(display_units)}")
+        unit_lines.append(f"  {category.capitalize()}: {', '.join(display_units)}")
 
-    lines.append("")
-    lines.append("Unit conversion examples:")
-    lines.append("  calc 30m + 100ft")
-    lines.append("  calc 1km in miles")
-    lines.append("  calc 100F to C")
-    lines.append("  calc 1kg in lb")
-    lines.append("")
-    lines.append("Text tools examples:")
-    lines.append("  calc inspect \"hello\"")
-    lines.append("  calc inspect \"p\u0430ypal\"  ( Cyrillic 'a' instead of Latin)")
-    lines.append("  calc count \"hello world\"")
-    lines.append("  calc count \"hello\" l")
-    lines.append("  calc regex \"^\\d+$\" \"12345\"")
+    lines += unit_lines + [
+        "",
+        "Unit conversion examples:",
+        "  calc 30m + 100ft",
+        "  calc 1km in miles",
+        "  calc 100F to C",
+        "  calc 1kg in lb",
+        "",
+        "Text tools examples:",
+        '  calc inspect "hello"',
+        "  calc inspect \"p\u0430ypal\"  ( Cyrillic 'a' instead of Latin)",
+        '  calc count "hello world"',
+        '  calc count "hello" l',
+        '  calc regex "^\\d+$" "12345"',
+    ]
 
     for line in lines:
         print(line)
