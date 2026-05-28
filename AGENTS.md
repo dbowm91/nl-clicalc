@@ -249,3 +249,13 @@ For testing NL/unit features:
 For pure math:
 - Use `evaluate()`
 - Results may be `UnitValue` - extract with `.value`
+
+## Implementation Plan
+
+All waves of `plans/plan.md` have been completed (2026-05-28):
+- **Wave 1**: Fixed LCS backtracking bug, narrowed _is_extended_pictographic range
+- **Wave 2**: Fixed bitwise NOT accepting floats, fixed measure_text() docs
+- **Wave 3**: Fixed 10 documentation corrections across architecture/ files
+- **Wave 4**: Improved script detection, fixed check_if_number return type, CLI show_expression, primefactors docs
+- **Wave 5**: 22 low-priority improvements (docstrings, aliases, MCP outputSchemas, etc.)
+- **Wave 6**: Consolidated 3 pairs of duplicate documentation files into single files
