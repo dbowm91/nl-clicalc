@@ -1,226 +1,128 @@
-# Stale Items Report
+# Architecture Stale Item Report
 
 **Date:** 2026-05-28
 
-## Dead References
+## Dead References (Functions/Classes/Variables in Docs but Not Code)
 
-### Orphaned Review Plan Links
-The architecture docs reference review plan files that do not exist in `plans/`:
+- **`normalize_main` alias does not exist** (cli.md:13,16)
+  - Documentation claims `main()` is "aliased as `normalize_main()` for build compatibility" and shows import statement
+  - Code: No such alias exists in `normalize.py` or `__init__.py`
+  - The renaming only happens in `build_single.py` at line 234 during single-file build
+  - Impact: Any code/documentation referencing `normalize_main` will fail
 
-| Document | Line | Missing File |
-|----------|------|--------------|
-| `overview.md` | 510 | `plans/normalize_review.md` |
-| `overview.md` | 511 | `plans/evaluator_review.md` |
-| `overview.md` | 512 | `plans/units_review.md` |
-| `overview.md` | 513 | `plans/primitives_review.md` |
-| `overview.md` | 514 | `plans/unicode_tools_review.md` |
-| `overview.md` | 516 | `plans/diff_review.md` |
-| `overview.md` | 517 | `plans/validate_review.md` |
-| `overview.md` | 518 | `plans/synthesis_review.md` |
-| `overview.md` | 519 | `plans/confusables_review.md` |
-| `overview.md` | 520 | `plans/mcp_server_review.md` |
-| `overview.md` | 521 | `plans/cli_review.md` |
-| `overview.md` | 523 | `review_plan.md` (at project root, not in plans/) |
+- **`evaluate_with_timeout` docstring uses forbidden syntax** (evaluator.py:1368)
+  - The docstring example `sum(i**2 for i in range(10000))` uses a generator expression
+  - Code: `ast.GeneratorExp` is explicitly forbidden at evaluator.py:1261
+  - Impact: Example would raise `EvaluationError` if executed
 
-The actual files in `plans/` are named `review_improvements_*.md` not `*_review.md`.
+## Unimplemented Features (In Docs but Not Code)
 
-## Unimplemented Features
+- **`normalize_main` alias** (documented in cli.md but not implemented in source)
+  - The alias only exists during `build_single.py` build process, not in source
+  - Source `normalize.py` only has `main()`, no alias
 
-### None identified
-All documented features exist in code. No unimplemented features found.
+## Superseded/Conflicting Documentation
 
-## Orphaned Architecture Files
-
-### None identified
-All architecture documents have corresponding source modules:
-- `primitives.md` → `nl_calc/exact/primitives.py` ✓
-- `unicode_tools.md` → `nl_calc/exact/unicode_tools.py` ✓
-- `measure.md` → `nl_calc/exact/measure.py` ✓
-- `diff.md` → `nl_calc/exact/diff.py` ✓
-- `validate.md` → `nl_calc/exact/validate.py` ✓
-- `synthesis.md` → `nl_calc/exact/synthesis.py` ✓
-- `confusables.md` → `nl_calc/exact/confusables.py` ✓
-- `mcp.md` → `nl_calc/mcp/server.py`, `schemas.py`, `tools.py` ✓
-
-## Duplicate Documentation
-
-### FirstDiff TypedDict Declaration (diff.md)
-**Location:** `architecture/diff.md:88-92`
-
-The `FirstDiff` TypedDict is declared twice in the same file with different content:
-1. Lines 88-92 show incomplete 3-field version (stale)
-2. Lines 115-121 show correct 6-field version
-
-**Stale content:**
-```python
-class FirstDiff(TypedDict):
-    position: int
-    a_char: str
-    b_char: str
-```
-
-**Should be removed or updated to match lines 115-121:**
-```python
-class FirstDiff(TypedDict):
-    a_index: int
-    b_index: int
-    a_char: str
-    b_char: str
-    a_codepoint: str
-    b_codepoint: str
-```
-
-### FirstDiff Data Structure Description (diff.md)
-**Location:** `architecture/diff.md:113-121`
-
-Describes `position` field, but actual code uses `a_index` and `b_index`.
+- **Duplicate `G` / `gravitationalconstant` entry** (evaluator.md:155 and 161)
+  - The constants table lists `G` / `gravitationalconstant` twice with identical values
+  - Code: Only one entry exists in CONSTANTS dict
+  - Impact: Documentation clutter; no functional conflict but redundant
 
 ## Outdated Examples
 
-### common_prefix_suffix examples (diff.md)
-**Location:** `architecture/diff.md:53-59`
+- **ALL THREE `common_prefix_suffix` examples are wrong** (diff.md:53-59)
+  - `"hello", "hell"` doc says `common_prefix_len: 3` → code returns `4`
+  - `"hello", "yo"` doc says `common_prefix_len: 0` → code returns `0` but `common_suffix_len: 1` (doc says `0`)
+  - `"testing", "ing"` doc says `common_suffix_len: 0` → code returns `3`
+  - Code is correct; all three examples need updating
 
-All three examples return incorrect values:
+- **`FirstDiff` TypedDict declaration wrong** (diff.md:88-92)
+  - Docs show 3 fields: `position`, `a_char`, `b_char`
+  - Code has 6 fields: `a_index`, `b_index`, `a_char`, `b_char`, `a_codepoint`, `b_codepoint`
 
-| Input | Documented | Actual |
-|-------|------------|--------|
-| `"hello", "hell"` | `{'common_prefix_len': 3, 'common_suffix_len': 0}` | `{'common_prefix_len': 4, 'common_suffix_len': 0}` |
-| `"hello", "yo"` | `{'common_prefix_len': 0, 'common_suffix_len': 0}` | `{'common_prefix_len': 0, 'common_suffix_len': 1}` |
-| `"testing", "ing"` | `{'common_prefix_len': 0, 'common_suffix_len': 0}` | `{'common_prefix_len': 0, 'common_suffix_len': 3}` |
+- **`diff_spans` example shows filtered `equal` spans** (diff.md:105-109)
+  - Documentation shows output with `kind='equal'` spans
+  - Code explicitly filters out equal spans: `if tag == "equal": continue`
+  - Only non-equal spans are returned
 
-### diff_spans example (diff.md)
-**Location:** `architecture/diff.md:105-109`
+- **`visible_repr()` display order incomplete** (primitives.md:253-260)
+  - Docs describe 4 steps but code has 5 steps including BIDI handling (primitives.py:277-284)
+  - Missing: BIDI character checks (U+2060-U+206F range)
 
-Example shows `equal` spans in output, but code filters them out (line 232: `if tag == "equal": continue`).
+- **`normalize_expression` return type wrong** (api.md:130, normalize.md:143-146)
+  - Docs say: `normalize_expression(expression: str) -> str`
+  - Code: Returns `tuple[str, int]` (normalized_string, exit_code) and requires `operators` and `patterns` arguments
 
-**Documented output:**
-```python
-[DiffSpan(kind='equal', ...), DiffSpan(kind='replace', ...), DiffSpan(kind='equal', ...)]
-```
+## Orphaned Modules
 
-**Actual output:**
-```python
-[DiffSpan(kind='replace', ...)]  # equal spans filtered
-```
+- None confirmed. All documented modules exist in codebase.
 
-### diff_spans kind values (diff.md)
-**Location:** `architecture/diff.md:126`
+## Stale Line Numbers
 
-Lists `"equal"` as a valid `kind` value, but code never returns it.
+- None confirmed. Architecture docs generally avoid specific line number references.
 
-### Pipeline example (normalize.md)
-**Location:** `architecture/normalize.md:185-186`
+## Duplicate Content Across Files
 
-Step 4 shows `[5, +, 322]` but "three hundred twenty two" should be `3*100+22`, not combined into a single `322` token. The actual expression is `5+3*100+22=327`, not `5+322=327`.
+- **`common_prefix_suffix` overlap prevention behavior** documented in multiple places with inconsistent examples
+  - diff.md (lines 53-59) shows wrong examples
+  - synthesis.md references same examples but they are wrong
+  - The actual function correctly prevents prefix/suffix overlap, but docs show wrong return values
 
-### bitnot documentation (evaluator.md)
-**Location:** `architecture/evaluator.md:116`
+- **`FirstDiff` structure** appears in both diff.md (lines 28-36, 85-92) with different field definitions (correct version at lines 28-36, wrong version at 88-92)
 
-Documents `bitnot(a)` without noting it requires an integer operand. Code correctly raises `EvaluationError` for non-integer operands.
+- **Confusables data description** appears in both confusables.md and unicode_tools.md
+  - confusables.md describes data structure
+  - unicode_tools.md describes usage functions
+  - No conflict, but overlap in describing confusables table format
 
-## Outdated Counts/Metadata
+## Outdated Counts (Line counts, file sizes, etc.)
 
-### Test Count (overview.md)
-**Location:** `architecture/overview.md:5`
+- **confusables.py line count** (confusables.md:12,297)
+  - Docs say "~6581 lines" but actual is 6580 lines
+  - Minor: description already says "approximately"
 
-**Documented:** "**All 350 tests pass.**"
+- **confusables.py file size** (confusables.md:12,297, exact.md:338)
+  - Docs say "~180KB, ~6500 lines" and "~180KB, ~6580 lines"
+  - Actual: ~176KB, 6580 lines
+  - Slight size discrepancy (180KB vs 176KB)
 
-**Actual:** Test count should be verified - this appears to be a static claim that may become stale as tests are added/removed. No automated verification.
+## Missing Modules (Code has but no Doc)
 
-### Build Output Size (overview.md)
-**Location:** `architecture/overview.md:395`
+- **`reverse_confusables()` function** - exported in `__init__.py:52` and `unicode_tools.py:268-292` but completely absent from unicode_tools.md architecture document
+  - Fully implemented public API function with no documentation
 
-**Documented:** "**Output:** Self-contained executable (~394KB)"
+- **`load_user_config_extended()`** - exists in evaluator.py:168-187 but not documented anywhere
+  - Note: Intentionally not exported in `__init__.py` per docstring ("not officially supported")
 
-**Actual:** Size may vary and is not tracked. Could become stale.
+- **Multiple UnitValue public methods undocumented** (units.md)
+  - Missing: `__str__`, `__format__`, `__eq__`, `__hash__`, `__radd__`, `__rsub__`, `__rmul__`, `__rtruediv__`, `__neg__`, `__pos__`, `__abs__`, `__round__`, `__complex__`, `__int__`, `__float__`
+  - Docs only mention `convert_to()` and `__repr__()`
 
-## Other Documentation Issues
+- **`_handle_initialize` description imprecise** (mcp.md:203-208)
+  - Doc says "called inline" but it's routed through `handle_request` conditional
+  - Minor clarity issue
 
-### MAX_INPUT_LENGTH Inconsistency
-Two different values exist:
+## Additional Findings from Review Plans (Verified as Valid)
 
-| Module | Value |
-|--------|-------|
-| `normalize.py:42` | 10000 |
-| `validate.py:14` | 100000 |
+The following were identified in review plans and confirmed as valid stale items:
 
-This is documented in `review_improvements_overview.md` but not fixed. The API docs (api.md:164) only mention the 10000 value.
+1. **`--verbose` flag behavior mismatch** (cli.md:32 vs normalize.py:1441)
+   - Docs say "Show detailed error information and tracebacks"
+   - Code actually shows expression in output (equivalent to `--show`)
 
-### normalize_expression return type (api.md)
-**Location:** `architecture/api.md:130`
+2. **`check_if_number` return type annotation wrong** (normalize.md:156-166)
+   - Docs show `"type": type(token)` but code returns actual type string (e.g., `"int"`, `"float"`)
 
-**Documented:** `normalize_expression(expression: str) -> str`
+3. **`normalize_expression` `skip_validation` parameter undocumented** (normalize.md:143-146)
+   - Code has parameter at normalize.py:1109 but docs omit it
 
-**Actual:** Returns `tuple[str, int]` (normalized_expression, exit_code)
+4. **`evaluate_raw` incomplete signature** (api.md:19)
+   - Doc shows `evaluate_raw(expression: str)` without mentioning it calls `normalize_expression` internally
 
-### Variable functions return types (api.md)
-**Location:** `architecture/api.md:120-126`
+5. **`visible_repr()` display order incomplete** - BIDI handling missing from docs (primitives.md)
 
-| Function | Documented | Actual |
-|----------|------------|--------|
-| `setvar` | `dict[str, Any]` | `Any` (the value) |
-| `getvar` | `dict[str, Any]` | `Any` (the value, or 0 if not found) |
-| `delvar` | `dict[str, Any]` | `None` |
-| `listvars` | `dict[str, Any]` | `dict[str, Any]` (correct) |
-| `clearvars` | `dict[str, Any]` | `None` |
+6. **`normalize_expression` signature across docs** - multiple docs show simplified or wrong signatures
 
-### Undocumented exports in api.md
-The following are exported from `__init__.py` but not documented in `api.md`:
-- `load_user_config_extended()` (exists in evaluator.py:168)
-- `register_function()` (exists in evaluator.py:73)
-- `get_default_evaluator()` (exists in evaluator.py:1387)
-- `FLOAT_EPSILON` (exists in units.py:20)
-- `MAX_INPUT_LENGTH` from normalize (exported but not documented)
-- `MAX_NESTING_DEPTH` (duplicated in evaluator and normalize)
+## Summary
 
-### Undocumented function in evaluate_raw (evaluator.md, normalize.md)
-`evaluate_raw()` is exported and useful but has no dedicated documentation section. It appears in Key Exports but not in Evaluation Functions section.
-
-## Recommendations
-
-### HIGH Priority (should fix)
-
-1. **Fix orphaned links in overview.md** (lines 505-523)
-   - Either create the missing `plans/*_review.md` files, OR
-   - Update links to point to existing `review_improvements_*.md` files
-
-2. **Fix FirstDiff TypedDict in diff.md** (lines 88-92)
-   - Remove duplicate declaration or update to match actual 6-field structure
-
-3. **Fix common_prefix_suffix examples in diff.md** (lines 53-59)
-   - All three examples are incorrect - update to match actual output
-
-4. **Fix diff_spans example in diff.md** (lines 105-109)
-   - Either show actual output (no `equal` spans) or clarify they are filtered
-
-### MEDIUM Priority (should review)
-
-5. **Remove "equal" from DiffSpan kind values** (diff.md:126)
-   - Code never returns `equal` - update documentation
-
-6. **Fix normalize_expression return type in api.md** (line 130)
-   - Change from `-> str` to `-> tuple[str, int]`
-
-7. **Fix variable functions return types in api.md** (lines 120-126)
-   - setvar: `-> Any`
-   - getvar: `-> Any`
-   - delvar: `-> None`
-   - listvars: `-> dict[str, Any]` (correct)
-   - clearvars: `-> None`
-
-8. **Document load_user_config_extended(), register_function(), get_default_evaluator()** in api.md
-
-9. **Document evaluate_raw()** in evaluator.md
-
-### LOW Priority (consider fixing)
-
-10. **Update bitnot documentation to mention integer requirement** (evaluator.md:116)
-
-11. **Fix pipeline example in normalize.md** (line 185-186)
-    - Clarify that "three hundred twenty two" becomes `3*100+22`
-
-12. **Consider removing test count claim from overview.md** (line 5)
-    - Static counts become stale; rely on CI to verify
-
-13. **Remove build output size claim from overview.md** (line 395)
-    - Size varies; not meaningful to track in docs
+The architecture documentation has several significant stale items requiring correction. The most impactful are: (1) `normalize_main` alias documented as existing but not present in source code, (2) all three `common_prefix_suffix` examples in diff.md showing incorrect return values, (3) `FirstDiff` TypedDict documentation showing 3 fields when code has 6, and (4) `normalize_expression` return type documented as `str` when it returns `tuple[str, int]`. Most issues stem from documentation not being updated after code changes, particularly around return types and function signatures. The codebase is generally well-documented but these discrepancies between docs and actual API surface should be addressed.
