@@ -1,260 +1,52 @@
-# Measure Module Review - Improvement Plan
+# measure.py Module Review — Improvement Plan
 
-## Summary
+**Reviewed:** architecture/measure.md against nl_calc/exact/measure.py
+**Date:** 2026-05-28
 
-The `nl_calc/exact/measure.py` module provides text measurement primitives for line metrics, word metrics, and character category metrics. The implementation is well-tested (13 tests pass) and functionally correct. However, several discrepancies between documentation and code were identified.
+## Verified Claims (with line references)
 
----
-
-## Verified Claims (with Code References)
-
-### Line Metrics
-
-| Claim | Status | Code Reference |
-|-------|--------|----------------|
-| `lines` count via `splitlines()` | Verified | `measure.py:88` |
-| `nonempty_lines` and `blank_lines` tracking | Verified | `measure.py:106-115` |
-| `trailing_whitespace_lines` as 1-based indices | Verified | `measure.py:103` (`enumerate(lines, start=1)`) |
-| `max_line_length_codepoints` using `len(line)` | Verified | `measure.py:104` |
-| `newline_style` detection (LF/CRLF/CR/mixed/none) | Verified | `measure.py:46-63` |
-| `ends_with_newline` detection | Verified | `measure.py:92` |
-| Empty string returns zeros | Verified | `measure.py:77-86` |
-
-**Code Reference**: `measure.py:66-125`
-
-### Word Metrics
-
-| Claim | Status | Code Reference |
-|-------|--------|----------------|
-| Word filtering: only tokens containing letters | Verified | `measure.py:154` (`any(c.isalpha() for c in t)`) |
-| Casefolded unique word counting | Verified | `measure.py:159` (`w.casefold()`) |
-| `average_word_length` rounded to 2 decimals | Verified | `measure.py:196` (`round(avg_word_length, 2)`) |
-| Sentence estimation via regex | Verified | `measure.py:171-173` |
-| Paragraph counting (blank line separated) | Verified | `measure.py:176-185` |
-| Minimum 1 paragraph if content exists | Verified | `measure.py:188-189` |
-
-**Code Reference**: `measure.py:128-197`
-
-### Char Category Metrics
-
-| Claim | Status | Code Reference |
-|-------|--------|----------------|
-| Letters: category starts with "L" | Verified | `measure.py:223` |
-| Digits: category starts with "N" | Verified | `measure.py:225-226` |
-| Punctuation: category starts with "P" | Verified | `measure.py:227-228` |
-| Symbols: category starts with "S" | Verified | `measure.py:229-230` |
-| Spaces: category starts with "Z" | Verified | `measure.py:231-232` |
-| Control chars: Cc, Co, Cn count; Cf excluded | Verified | `measure.py:233-237` |
-| Combining marks: category starts with "M" | Verified | `measure.py:238-239` |
-
-**Code Reference**: `measure.py:200-249`
-
----
+- `line_metrics(text: str) -> LineMetrics` — VERIFIED at code line 66
+- `word_metrics(text: str) -> WordMetrics` — VERIFIED at code line 128
+- `char_category_metrics(text: str) -> CharCategoryMetrics` — VERIFIED at code line 200
+- TypedDict classes `LineMetrics`, `WordMetrics`, `CharCategoryMetrics` — VERIFIED at code lines 15, 26, 35
+- `LineMetrics` fields (lines, nonempty_lines, blank_lines, max_line_length_codepoints, trailing_whitespace_lines, newline_style, ends_with_newline) — VERIFIED at code lines 17-23
+- `WordMetrics` fields (words, unique_words_casefolded, sentences_estimate, paragraphs, average_word_length) — VERIFIED at code lines 28-32
+- `CharCategoryMetrics` fields (letters, digits, punctuation, symbols, spaces, control_chars, combining_marks) — VERIFIED at code lines 37-43
+- Cf (format) characters intentionally excluded from control_chars count per UTS #55 — VERIFIED at code lines 234-235
+- `average_word_length` rounded to 2 decimal places — VERIFIED at code line 196 (uses `round(avg_word_length, 2)`)
+- Word definition as sequences of non-whitespace characters — VERIFIED at code line 151 (`s.split()`) and 154 (filters tokens without letters)
+- Newline style values ("LF", "CRLF", "CR", "mixed", "none") — VERIFIED at code lines 52-63 and doc comment at line 22
 
 ## Discrepancies Between Documentation and Code
 
-### 1. **control_chars Documentation Error** (High Priority)
+- [MEDIUM] **Newline detection algorithm does not match documented steps**
+  - Documentation says: Steps 1-4 at docs lines 99-102 describe a simple sequential check if \r\n → "CRLF", else if \r → "CR", else if \n → "LF", else "none"
+  - Code actually does: Lines 52-55 FIRST check for "mixed" when CRLF coexists with standalone CR or LF, which is missing from reported algorithm
+  - Impact: Documentation underreports "mixed" detection complexity. For a string like "hello\r\nworld\n", docs would say "CRLF" but code returns "mixed" at line 52 because has_crlf AND standalone_lf > 0
 
-**Location**: `architecture/measure.md:74`
+## Potential Bugs
 
-**Documentation states**:
-```
-Control chars: category starts with "C" (excluding newlines/tabs)
-```
+- [LOW] **`max_line_length_codepoints` names suggest codepoint count but uses `len(line)`**
+  - Location: `nl_calc/exact/measure.py:104`
+  - Issue: `len(line)` in Python returns character count (Unicodescalar values), not necessarily codepoints for strings containing supplementary characters (characters outside BMP). For example, emoji like "😀" (U+1F600) is 2 code units (surrogate pair) but 1 codepoint. However, in Python 3, `len()` on a str returns the number of characters (Unicode scalar values), not UTF-16 code units. So technically `len()` returns codepoint-like behavior for most cases, but "character" would be more accurate terminology
+  - The documentation calls it `max_line_length_codepoints` which is technically correct for Python 3 str semantics, but could be misleading
 
-**Actual behavior**: Newlines (`\n`, `\r`) and tabs (`\t`) ARE counted as control characters. They have Unicode category `Cc` (Control).
-
-**Code at `measure.py:233-237`**:
-```python
-elif cat.startswith("C"):  # Other (control, format, etc.)
-    if cat == "Cf":  # Format characters (e.g., U+FEFF BOM)
-        pass  # Cf excluded from control_chars count per UTS #55
-    else:
-        control_chars += 1  # Cc, Co, Cn all count
-```
-
-**Verification**:
-```python
->>> char_category_metrics('\n\t\r')['control_chars']
-3  # All counted
-```
-
-**Fix**: Update documentation to remove "excluding newlines/tabs" and clarify that Cf (format characters) are the only exclusion per UTS #55.
-
----
-
-### 2. **Digits Category Documentation** (Medium Priority)
-
-**Location**: `architecture/measure.md:70`
-
-**Documentation states**:
-```
-Digits: category "Nd"
-```
-
-**Actual behavior**: Code uses `cat.startswith("N")` which includes:
-- `Nd` (Decimal Number)
-- `Nl` (Letter Number)
-- `No` (Other Number)
-
-**Code at `measure.py:225-226`**:
-```python
-elif cat.startswith("N"):  # Numbers
-    digits += 1
-```
-
-**Fix**: Update documentation to say "category starts with 'N'" or clarify that Nl and No are included.
-
----
-
-### 3. **Combining Marks Example Mismatch** (Low Priority)
-
-**Location**: `architecture/measure.md:77-82`
-
-**Example**: `char_category_metrics("Hello World! 123")` shows `combining_marks=0`
-
-**Issue**: The example uses NFC-normalized text where "é" is a single codepoint. To demonstrate combining marks, one should use NFD-normalized text like `"café"` with decomposed é (e + combining acute accent).
-
-**Note**: This is not a code bug; it's a documentation example issue.
-
----
-
-### 4. **average_word_length Rounding Not Documented** (Low Priority)
-
-**Location**: `architecture/measure.md:41`
-
-**Issue**: Documentation does not mention that `average_word_length` is rounded to 2 decimal places.
-
-**Code at `measure.py:196`**:
-```python
-average_word_length=round(avg_word_length, 2),
-```
-
----
-
-### 5. **Missing Cf Exclusion Context** (Low Priority)
-
-**Location**: `architecture/measure.md:74`
-
-**Issue**: The architecture doc does not mention that Cf (format) characters are excluded from control_chars per UTS #55, though the Session Learnings in AGENTS.md do note this.
-
-**Code at `measure.py:234-235`**:
-```python
-if cat == "Cf":  # Format characters (e.g., U+FEFF BOM)
-    pass  # Cf excluded from control_chars count per UTS #55
-```
-
----
-
-## Potential Bugs Identified
-
-### 1. **Missing Else Clause in char_category_metrics** (Low Priority - Defensive Coding)
-
-**Location**: `measure.py:220-239`
-
-**Issue**: The `elif` chain does not have a final `else` to handle unexpected Unicode categories. Characters with categories not starting with L, N, P, S, Z, C, or M are silently ignored.
-
-**Code**:
-```python
-for char in s:
-    cat = unicodedata.category(char)
-    if cat.startswith("L"):
-        letters += 1
-    elif cat.startswith("N"):
-        digits += 1
-    # ... etc
-    elif cat.startswith("M"):
-        combining_marks += 1
-    # No else clause!
-```
-
-**Impact**: Very low - Python's `unicodedata.category()` always returns a known general category. This would only matter if the Unicode standard adds new categories.
-
-**Recommendation**: Add defensive `else: pass` with a comment explaining this case cannot occur with valid Unicode.
-
----
-
-### 2. **word_metrics Ignores Non-Letter Tokens** (Documented Behavior, Not a Bug)
-
-**Location**: `measure.py:153-154`
-
-**Behavior**: Only tokens containing at least one letter are counted as words.
-
-**Example**:
-```python
->>> word_metrics("123 hello 456")
-WordMetrics(words=1, ..., average_word_length=5.0)
-```
-
-**Documentation at `measure.py:44`**:
-```
-Word Definition: Sequences of non-whitespace characters.
-```
-
-This comment is incorrect as it doesn't match the actual behavior. The code explicitly filters out tokens without letters (lines 153-154).
-
-**Impact**: The docstring at `measure.py:44` contradicts the actual implementation.
-
-**Recommendation**: Update the docstring to match the actual behavior: "Words are whitespace-separated tokens that contain at least one alphabetic character."
-
----
+- [LOW] **No validation or error handling for None input**
+  - Location: `nl_calc/exact/measure.py:66, 128, 200`
+  - Issue: Functions pass type annotation `s: str` but don't validate `s is not None`. Passing `None` would cause `AttributeError` at runtime rather than a clear error message
+  - Suggested investigation: Consider adding `if s is None: raise TypeError("text must be a string")` or similar guard
 
 ## Improvement Suggestions
 
-### High Priority
+### MEDIUM Priority
+- **Fix newline style detection algorithm documentation** (architecture/measure.md lines 98-102)
+  - Add explicit "mixed" detection step showing that CRLF + standalone CR or LF → "mixed"
+  - Restructure algorithm description to match code logic at measure.py lines 46-63
 
-1. **Fix control_chars documentation** (`architecture/measure.md:74`)
-   - Remove "(excluding newlines/tabs)"
-   - Clarify: "Control chars: category starts with 'C' (excluding 'Cf' format characters per UTS #55)"
-   - Add note that newlines and tabs ARE counted
+### LOW Priority
+- **Add type validation** at measure.py lines 66, 128, 200 for None input
+  - Consider raising a clear TypeError if None is passed
 
-### Medium Priority
+## Summary
 
-2. **Fix digits category documentation** (`architecture/measure.md:70`)
-   - Change `"Nd"` to `"N"` or clarify "category starts with 'N' (includes Nd, Nl, No)"
-
-3. **Add Cf exclusion note to documentation** (`architecture/measure.md:74`)
-   - Add "Cf (format characters) are excluded per UTS #55"
-
-### Low Priority
-
-4. **Fix word_metrics docstring** (`measure.py:44`)
-   - Change "Word Definition: Sequences of non-whitespace characters"
-   - To "Word Definition: Whitespace-separated tokens containing at least one alphabetic character"
-
-5. **Add rounding info for average_word_length** (`architecture/measure.md`)
-   - Document that `average_word_length` is rounded to 2 decimal places
-
-6. **Improve combining_marks example** (`architecture/measure.md:77-82`)
-   - Use NFD text or add a second example showing combining marks
-
-7. **Add defensive else clause** (`measure.py:239`)
-   - Add `else: pass  # All categories handled; cannot reach here with valid Unicode`
-
----
-
-## Test Coverage
-
-All 13 tests in `tests/test_exact.py::TestMeasure` pass:
-
-| Test | Status |
-|------|--------|
-| `test_line_metrics_lf` | PASS |
-| `test_line_metrics_crlf` | PASS |
-| `test_line_metrics_mixed` | PASS |
-| `test_line_metrics_trailing_whitespace` | PASS |
-| `test_line_metrics_max_line_length` | PASS |
-| `test_line_metrics_empty` | PASS |
-| `test_word_metrics_basic` | PASS |
-| `test_word_metrics_punctuation` | PASS |
-| `test_word_metrics_sentences` | PASS |
-| `test_word_metrics_paragraphs` | PASS |
-| `test_word_metrics_empty` | PASS |
-| `test_word_metrics_average_length` | PASS |
-| `test_char_category_metrics` | PASS |
-
----
-
-## Conclusion
-
-The measure module implementation is correct and well-tested. The main issues are documentation inaccuracies rather than code bugs. The highest priority fix is correcting the `control_chars` documentation which incorrectly states newlines and tabs are excluded when they are actually counted.
+The measure.py module documentation accurately describes the public API structure (TypedDict schemas, function signatures, return types) and correctly notes the Cf exclusion per UTS #55. The main discrepancy is that the newline detection algorithm description in architecture/measure.md does not capture the "mixed" detection logic that runs before the simple "CRLF/CR/LF/none" checks at code lines 56-63. There are no functional bugs in the code, but the documentation should be updated to reflect the actual detection priority. Minor improvement would be adding None input validation.
