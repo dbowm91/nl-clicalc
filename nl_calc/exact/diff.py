@@ -175,18 +175,14 @@ def longest_common_subsequence(a: str, b: str) -> str:
         return ""
 
     m, n = len(a), len(b)
-    prev_row = [0] * (n + 1)
-
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
     for i in range(1, m + 1):
-        curr_row = [0] * (n + 1)
         for j in range(1, n + 1):
             if a[i - 1] == b[j - 1]:
-                curr_row[j] = prev_row[j - 1] + 1
+                dp[i][j] = dp[i - 1][j - 1] + 1
             else:
-                curr_row[j] = max(prev_row[j], curr_row[j - 1])
-        prev_row = curr_row
-
-    lcs_len = prev_row[n]
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    lcs_len = dp[m][n]
     result = []
     i, j = m, n
     while i > 0 and j > 0:
@@ -194,7 +190,7 @@ def longest_common_subsequence(a: str, b: str) -> str:
             result.append(a[i - 1])
             i -= 1
             j -= 1
-        elif prev_row[j - 1] > prev_row[j]:
+        elif dp[i - 1][j] > dp[i][j - 1]:
             i -= 1
         else:
             j -= 1

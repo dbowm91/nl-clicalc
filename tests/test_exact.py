@@ -27,6 +27,7 @@ from nl_calc.exact import (
     first_diff,
     common_prefix_suffix,
     levenshtein_distance,
+    longest_common_subsequence,
     diff_spans,
     check_brackets,
     validate_json,
@@ -371,6 +372,16 @@ class TestDiff:
     def test_diff_spans_max_diffs(self):
         result = diff_spans("abc", "xyz", max_diffs=2)
         assert len(result) <= 2
+
+    def test_longest_common_subsequence_ab_ba(self):
+        result = longest_common_subsequence("ab", "ba")
+        assert len(result) == 1
+        assert result in ("a", "b")
+
+    def test_longest_common_subsequence_basic(self):
+        assert longest_common_subsequence("abcde", "ace") == "ace"
+        assert longest_common_subsequence("abc", "abc") == "abc"
+        assert longest_common_subsequence("abc", "def") == ""
 
 
 class TestValidate:
