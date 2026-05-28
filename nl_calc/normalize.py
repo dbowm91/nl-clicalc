@@ -1228,10 +1228,10 @@ def _run_repl(show_expression: bool = True) -> int:
             history.clear()
             continue
 
-        _, exit_code = run(line, NORMALIZE, PATTERNS, "plain", show_expression)
+        result, exit_code = run(line, NORMALIZE, PATTERNS, "plain", show_expression)
 
-        if exit_code == 0 and _ is not None:
-            history.append((line, _))
+        if exit_code == 0 and result is not None:
+            history.append((line, result))
 
     return 0
 

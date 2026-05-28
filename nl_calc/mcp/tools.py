@@ -274,6 +274,12 @@ def validate_brackets(text: str, pairs: dict[str, str] | None = None) -> dict:
             [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
         )
 
+    if pairs is not None and not isinstance(pairs, dict):
+        return _error_response(
+            "ValidationError",
+            f"pairs must be a dict or None, got {type(pairs).__name__}",
+        )
+
     try:
         result = _check_brackets(text, pairs)
         return _success_response(result)

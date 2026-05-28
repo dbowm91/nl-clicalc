@@ -480,6 +480,8 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "newtons": 1.0,
         "kN": 1000.0,
         "kilonewton": 1000.0,
+        "mN": 0.001,
+        "millinewton": 0.001,
         "dyne": 1e-5,
         "dynes": 1e-5,
         "lbf": 4.4482216152605,
@@ -627,7 +629,10 @@ def _rebuild_conversions() -> None:
 _rebuild_conversions()
 
 
-# Map all unit aliases to canonical forms
+# Map all unit aliases to canonical forms.
+# Self-mappings (e.g., "m": "m") ensure normalize_unit() recognizes canonical
+# forms via .get(unit, unit) — without them, canonical forms would pass through
+# unmapped and fall back to the raw input.
 UNIT_ALIASES: dict[str, str] = {
     # Length
     "m": "m",
