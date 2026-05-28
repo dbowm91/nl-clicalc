@@ -430,7 +430,7 @@ def check_if_number(token: str) -> dict:
     if cleaned.lower().startswith("0x"):
         try:
             val = int(cleaned, 16)
-            return {"bool": True, "converted": val, "type": type(token)}
+            return {"bool": True, "converted": val, "type": int}
         except ValueError:
             pass
 
@@ -438,7 +438,7 @@ def check_if_number(token: str) -> dict:
     if cleaned.lower().startswith("0b"):
         try:
             val = int(cleaned, 2)
-            return {"bool": True, "converted": val, "type": type(token)}
+            return {"bool": True, "converted": val, "type": int}
         except ValueError:
             pass
 
@@ -446,7 +446,7 @@ def check_if_number(token: str) -> dict:
     if cleaned.lower().startswith("0o"):
         try:
             val = int(cleaned, 8)
-            return {"bool": True, "converted": val, "type": type(token)}
+            return {"bool": True, "converted": val, "type": int}
         except ValueError:
             pass
 
