@@ -49,6 +49,7 @@ from .unicode_tools import (
     unicode_script,
     unicode_scripts,
     confusables_count,
+    reverse_confusables,
 )
 
 # Re-export validate
@@ -104,6 +105,7 @@ __all__ = [
     "detect_mixed_scripts",
     "detect_confusables",
     "confusables_count",
+    "reverse_confusables",
     "ScriptInfo",
     "ConfusableInfo",
     # Diff

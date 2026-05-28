@@ -245,3 +245,49 @@ def confusables_count(s: str) -> int:
         if key in CONFUSABLES:
             count += 1
     return count
+
+
+@functools.lru_cache(maxsize=1)
+def _build_reverse_index() -> dict[str, list[str]]:
+    """Build inverted index mapping target codepoints to source characters.
+
+    Returns:
+        Dict mapping target codepoint strings (e.g., "U+004F") to lists
+        of source characters that confusable-map to them.
+    """
+    index: dict[str, list[str]] = {}
+    for source_cp, target_cps_str in CONFUSABLES.items():
+        for target_cp in target_cps_str.split():
+            if target_cp not in index:
+                index[target_cp] = []
+            source_char = chr(int(source_cp[2:], 16))
+            index[target_cp].append(source_char)
+    return index
+
+
+def reverse_confusables(char: str) -> list[str]:
+    """Find all characters that are confusable with the given character.
+
+    Given a character, returns all characters from the confusables table
+    that confusable-map TO this character (i.e., characters that look
+    like the given character and could be confused with it).
+
+    Args:
+        char: Single character to look up.
+
+    Returns:
+        List of characters that are confusable with the input.
+
+    Raises:
+        ValueError: If input is not a single character.
+
+    Example:
+        >>> "0" in reverse_confusables("O")  # digit 0 looks like letter O
+        True
+    """
+    if len(char) != 1:
+        raise ValueError("char must be a single character")
+
+    target_cp = f"U+{ord(char):04X}"
+    reverse_index = _build_reverse_index()
+    return reverse_index.get(target_cp, [])
