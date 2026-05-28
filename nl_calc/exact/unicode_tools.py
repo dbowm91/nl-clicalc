@@ -28,11 +28,17 @@ class ScriptInfo(TypedDict):
 
 class ConfusableInfo(TypedDict):
     """Information about a confusable character."""
+    # Position of the character in the input string
     index: int
+    # The confusable character itself
     char: str
+    # Unicode codepoint in "U+XXXX" format
     codepoint: str
+    # Unicode character name (e.g., "LATIN SMALL LETTER A")
     name: str
+    # Character(s) this character is confusable with
     confusable_with: str
+    # Unicode name(s) of the confusable character(s)
     confusable_name: str
 
 
