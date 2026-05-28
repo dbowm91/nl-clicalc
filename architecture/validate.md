@@ -100,13 +100,14 @@ RegexTestResult(
 )
 ```
 
-**Supported flags**: `IGNORECASE`, `MULTILINE`, `DOTALL`, `VERBOSE`, `ASCII`
+**Supported flags**: `IGNORECASE`, `MULTILINE`, `DOTALL`, `UNICODE`, `DEBUG`, `VERBOSE`
 
 ## Error Handling
 
-All functions raise `ValueError` for:
-- Invalid regex patterns (handled gracefully in `regex_test`)
-- Input exceeding size limits
+All functions return result dicts with error information rather than raising exceptions:
+- `check_brackets` returns `CheckBracketsResult` with `balanced=False` and unmatched entries
+- `validate_json` returns `ValidateJsonResult` with `valid=False` and error details
+- `regex_test` returns `RegexTestResult` with `valid_pattern=False` and error message for invalid patterns or input exceeding size limits
 
 ## Index
 
