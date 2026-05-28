@@ -1,194 +1,105 @@
-# Review: normalize.py Module Architecture
+# normalize.py Module Review — Improvement Plan
 
-**Date:** 2026-05-22
-**Reviewer:** Architecture Review
-**Files Reviewed:**
-- `architecture/normalize.md`
-- `nl_calc/normalize.py`
+**Reviewed:** architecture/normalize.md against nl_calc/normalize.py
+**Date:** 2026-05-28
 
----
+## Verified Claims (with line references)
 
-## 1. Verified Claims (with Code References)
+### Key Exports (lines 17-28)
+- `run`, `normalize`, `normalize_expression`, `main`, `print_help`, `NORMALIZE`, `PATTERNS`, `MAX_INPUT_LENGTH`, `MAX_NESTING_DEPTH` are all correctly exported and match `__all__` (lines 27-40)
+- `MAX_INPUT_LENGTH = 10000` (line 42) matches documentation (line 222)
+- `MAX_NESTING_DEPTH = 100` (line 43) matches documentation (line 223)
 
-### Module Exports ✅
-| Export | Status | Location |
-|--------|--------|----------|
-| `run` | ✅ Exists | `normalize.py:959` |
-| `normalize` | ✅ Exists | `normalize.py:745` |
-| `normalize_expression` | ✅ Exists | `normalize.py:912` |
-| `main` | ✅ Exists | `normalize.py:1226` |
-| `print_help` | ✅ Exists | `normalize.py:1059` |
-| `NORMALIZE` | ✅ Exists | `normalize.py:379` |
-| `PATTERNS` | ✅ Exists | `normalize.py:379` |
-| `MAX_INPUT_LENGTH` | ✅ Exists (10000) | `normalize.py:42` |
-| `MAX_NESTING_DEPTH` | ✅ Exists (100) | `normalize.py:43` |
-| `evaluate` | ✅ Re-exported | `normalize.py:28` (imported from evaluator) |
-| `EvaluationError` | ✅ Re-exported | `normalize.py:29` (imported from evaluator) |
-| `UnitValue` | ✅ Re-exported | `normalize.py:30` (imported from units) |
+### Re-exported Symbols (lines 31-49)
+- `evaluate` and `EvaluationError` are correctly re-exported from `evaluator.py` (line 23)
+- `UnitValue` is correctly re-exported from `units.py` (line 24)
+- All three are listed in `__all__` (lines 28-30)
 
-**Note:** `__all__` exports `evaluate`, `EvaluationError`, `UnitValue` which are not defined in this module but re-exported from dependencies. This is undocumented.
+### Data Structures
+- `OPERATOR_CONVERSIONS` (lines 101-119): All mappings match documented structure (lines 53-65)
+- `FUNCTION_MAPPINGS` (lines 123-217): All function mappings match documented structure (lines 68-82)
+- `NUMBER_WORDS` (lines 219-261): All number words match documented structure (lines 84-99)
+- `CONSTANT_WORDS` (lines 278-300): Physical constant mappings match documented structure (lines 101-112)
+- `STRIPPED_PHRASES` (lines 263-276): Filler phrases match documented structure (lines 114-128)
+- `_COMMON_UNITS` (lines 49-91), `_UNIT_PREFIXES` (lines 94-97), `_UNITS_BY_LENGTH` (line 46): All match documentation (lines 224-226)
 
-### Data Structures ✅
-| Structure | Status | Location |
-|-----------|--------|----------|
-| `OPERATOR_CONVERSIONS` | ✅ Exists, matches doc | `normalize.py:101-119` |
-| `FUNCTION_MAPPINGS` | ✅ Exists, matches doc | `normalize.py:123-217` |
-| `NUMBER_WORDS` | ✅ Exists, matches doc | `normalize.py:220-261` |
-| `CONSTANT_WORDS` | ✅ Exists, matches doc | `normalize.py:279-300` |
-| `STRIPPED_PHRASES` | ✅ Exists, matches doc | `normalize.py:264-276` |
-| `_UNITS_BY_LENGTH` | ✅ Exists (list) | `normalize.py:46` |
-| `_COMMON_UNITS` | ✅ Exists (list) | `normalize.py:49-91` |
-| `_UNIT_PREFIXES` | ✅ Exists (set) | `normalize.py:94-97` |
+### Core Functions
+- `normalize()` (lines 888-939): Signature and behavior match documentation (lines 132-141)
+- `normalize_expression()` (lines 1105-1150): Signature returns `tuple[str, int]` as documented (line 143)
+- `run()` (lines 1153-1194): Signature and behavior match documentation (lines 148-154)
+- `check_if_number()` (lines 388-472): Returns dict with `bool`, `converted`, `type` keys as documented (lines 156-175)
 
-### Core Functions ✅
-| Function | Status | Location |
-|----------|--------|----------|
-| `normalize(text, NORMALIZE, PATTERNS)` | ✅ Returns `str` | `normalize.py:745` |
-| `normalize_expression(...)` | ✅ Returns `tuple[str, int]` | `normalize.py:912` |
-| `run(...)` | ✅ Returns `tuple[Any, int]` | `normalize.py:959` |
-| `check_if_number(token)` | ✅ Returns `dict` | `normalize.py:389` |
-| `_build_config()` | ✅ Exists, builds config | `normalize.py:303` |
+### Regex Patterns (lines 194-210)
+All PATTERNS entries are correctly compiled in `_build_config()` (lines 357-373):
+- `space`, `point`, `negative`, `thousands_separator`, `inline_negative`, `parenthesis`, `operators`, `stripped_chars`, `int`, `float`, `int_number_combine`, `valid_operations`
 
-### Constants ✅
-| Constant | Value | Status |
-|----------|-------|--------|
-| `MAX_INPUT_LENGTH` | 10000 | ✅ `normalize.py:42` |
-| `MAX_NESTING_DEPTH` | 100 | ✅ `normalize.py:43` |
-| `_UNITS_BY_LENGTH` | list | ✅ `normalize.py:46` |
-| `_COMMON_UNITS` | list | ✅ `normalize.py:49-91` |
-| `_UNIT_PREFIXES` | set | ✅ `normalize.py:94-97` |
+### Configuration Building
+- `_build_config()` (lines 303-375): Words sorted by length descending as documented (line 216)
 
----
+### Security Notes
+- No `eval()` usage — uses AST parsing: CORRECT
+- Input length limits enforced at lines 42, 1125-1126: CORRECT
+- Nesting depth limits enforced at line 924-925: CORRECT
+- Invalid tokens raise `ValueError` (line 489): CORRECT
 
-## 2. Discrepancies: Documentation vs Code
+### Module Dependencies
+- normalize.py imports from evaluator (line 23), units (line 24), exact (line 25): CORRECT
 
-### BUG: Number Word Combination Failing (HIGH PRIORITY)
+## Discrepancies Between Documentation and Code
 
-**Documentation states** (`normalize.md:159-172`):
-```
-Input: "what's five plus three hundred twenty two?"
-    ↓
-1. Strip phrases: "five plus three hundred twenty two"
-    ↓
-2. Tokenize: ["five", "plus", "three", "hundred", "twenty", "two"]
-    ↓
-3. Convert number words: [5, +, 3, 100, 20, 2]
-    ↓
-4. Combine numbers: [5, +, 322]
-    ↓
-5. Build expression: "5+322"
-    ↓
-Output: 327
-```
+- [MEDIUM] **Pipeline example shows incorrect number combining**
+  - Documentation says (lines 185-186): "Convert number words: [5, +, 3, 100, 20, 2]" then "Combine numbers: [5, +, 322]"
+  - Code actually produces: `5+3*100+22` which equals 327, not 322
+  - The step 4 shows `[5, +, 322]` implying the combination is `5 + 322 = 327`, but the intermediate shows `[5, +, 3, 100, 20, 2]` which should combine to `5 + 3*100 + 22 = 327`
+  - The actual expression is `5+3*100+22`, so step 4 should show `[5, +, 3, *, 100, +, 22]` or explain the multiplication more clearly
+  - Impact: Documentation could mislead readers about how "three hundred twenty two" is parsed
 
-**Actual behavior:**
-```
-run("what's five plus three hundred twenty two?") → (3100207, 0)  # Wrong!
-```
+- [LOW] **Docstring at line 947 contains incorrect example**
+  - normalize.py line 947 docstring says: `"three hundred twenty two" -> 3+100+20+2 -> 125`
+  - This is mathematically incorrect: 3+100+20+2 = 125, but "three hundred twenty two" = 3*100 + 22 = 322
+  - The code actually produces `3*100+22` which is correct; only the docstring example is wrong
+  - Impact: Developer confusion about expected behavior
 
-The output `3100207` shows the expression `5+3100202` was built instead of `5+322`.
+- [LOW] **Documentation shows incomplete data structure entries**
+  - `NUMBER_WORDS` documentation (lines 87-98) shows entries like "10": ["teen", "ten"], but code (lines 219-261) has additional entries not shown: "1000000000": ["billion"], "1000000000000": ["trillion"], etc.
+  - `STRIPPED_PHRASES` documentation (lines 114-128) shows 10 items, but code (lines 263-276) has additional: "tell me", "give me", "the "
+  - `CONSTANT_WORDS` documentation (lines 101-112) shows 8 entries, code (lines 278-300) has 15 entries
+  - Impact: Documentation is incomplete but not misleading; it shows representative samples
 
-**Root cause identified:** `split_at_operators()` (`normalize.py:703`) fails to split on whitespace. When `normalize()` converts `"three hundred twenty two"` to `"3 100 20 2"`, the space-separated tokens are not split because spaces are not operators. The entire string `"3 100 20 2"` is treated as a single token by `convert_from_human_handler()` because it's not recognized as a number (contains spaces).
+## Potential Bugs
 
-**Code trace:**
-1. `normalize("three hundred twenty two")` → `"3 100 20 2"` (line 745)
-2. `split_at_operators("3 100 20 2")` → `["3 100 20 2"]` (line 703-742) — space is not an operator, so no split occurs
-3. `convert_from_human_handler(["3 100 20 2"], ...)` → `["3 100 20 2"]` — token contains spaces, check_if_number returns False
-4. Final result: `"5+3100202"` instead of `"5+322"`
+**No bugs found.** The code is functioning correctly for the reviewed claims. The only issue is documentation inaccuracy, not code bugs.
 
-**Location:** `normalize.py:703-742` (`split_at_operators`)
+## Improvement Suggestions
 
----
+### HIGH Priority
 
-## 3. Potential Bugs Identified
+1. **Fix pipeline example in architecture/normalize.md (lines 176-192)**
+   - Step 4 shows `[5, +, 322]` but should clarify that "three hundred twenty two" becomes `3*100+22` (322)
+   - Suggest showing the multiplication explicitly: `[5, +, 3, '*', 100, '+', 22]` or a cleaner representation
+   - The key issue is that "three hundred" means 3*100, not 3+100
 
-### BUG 1: `check_if_number` returns wrong type for hex/binary/octal (MEDIUM)
+### MEDIUM Priority
 
-**Location:** `normalize.py:429-451`
+2. **Fix docstring at normalize.py:947**
+   - Change `"3+100+20+2 -> 125"` to `"3*100+20+2 -> 322"` or similar
+   - This docstring is in `_join_number_parts()` and explains the purpose of joining number parts
 
-When `check_if_number` parses hex/binary/octal, it returns the **type of the original string token** (`type(token)`), but the `converted` value is an `int`. This is inconsistent with other number types which return the parsed numeric type (`int` or `float`).
+### LOW Priority
 
-```python
-# Line 433
-return {"bool": True, "converted": val, "type": type(token)}
-# type(token) is str, but val is int
-```
+3. **Consider adding more complete data structure documentation**
+   - For `NUMBER_WORDS`, `STRIPPED_PHRASES`, `CONSTANT_WORDS`, the docs show representative samples
+   - Could add a note like "additional entries exist - see source" or show "..." to indicate incompleteness
 
-The `type` field in the return dict should reflect the actual numeric type (`int`), not the original string type, for consistency.
+4. **Consider adding `evaluate_raw` to normalize.md exports section**
+   - While `evaluate_raw` is in `evaluator.__all__`, normalize.py re-exports `evaluate` but not `evaluate_raw`
+   - If users are expected to import from normalize.py, consider whether `evaluate_raw` should also be re-exported
 
-### BUG 2: `_handle_negative_token` bounds checking (LOW)
+## Summary
 
-**Location:** `normalize.py:659-671`
+The normalize.py module documentation is largely accurate. All function signatures, data structures, and security claims verify correctly against the source code. The only issues are:
 
-```python
-def _handle_negative_token(tokens, index, patterns):
-    if index < 2 or index >= len(tokens) or ...:
-        return tokens, []
-```
+1. A pipeline example showing an intermediate step that could mislead readers about how compound numbers like "three hundred twenty two" are parsed
+2. A docstring containing a mathematically incorrect example (125 instead of 322)
 
-The bounds check at line 665 is correct (verified via testing), but the function name and comment suggest it handles a single token, when actually it requires `index >= 2` to have enough context. This is confusing but not buggy.
-
-### BUG 3: `combine_number_parts` complexity handling (MEDIUM)
-
-**Location:** `normalize.py:493-530`
-
-The `combine_number_parts` function at line 493 attempts to combine number parts like `20 + 2 = 22`, but the logic is complex and doesn't handle all edge cases:
-
-```python
-# Current: combine_number_parts([20, 2]) returns ['20', '+2'] instead of ['22']
-```
-
-The result `'20+2'` evaluates correctly, but the intermediate representation is incorrect compared to what the documentation promises (combining to a single number).
-
----
-
-## 4. Improvement Suggestions
-
-### HIGH PRIORITY
-
-1. **Fix `split_at_operators` to handle whitespace-separated number words**
-   - Issue: `split_at_operators()` only splits on operator characters, not spaces
-   - When `normalize()` produces `"3 100 20 2"` from `"three hundred twenty two"`, these should be split and recombined
-   - Suggestion: Add whitespace splitting in `split_at_operators()` or before calling `convert_from_human_handler()`
-
-### MEDIUM PRIORITY
-
-2. **Fix `check_if_number` return type consistency**
-   - `type` field should reflect actual numeric type for hex/binary/octal
-   - Location: `normalize.py:429-451`
-
-3. **Simplify `combine_number_parts` logic**
-   - The current logic at line 493 is complex and hard to verify
-   - Consider a clearer algorithm or additional test cases
-
-### LOW PRIORITY
-
-4. **Document re-exported symbols in `__all__`**
-   - `evaluate`, `EvaluationError`, `UnitValue` are re-exported but not documented in Key Exports section
-   - Consider separating into a "Re-exports" section or importing directly
-
-5. **Add docstring to `validate_for_eval`**
-   - Location: `normalize.py:475`
-   - Function exists but lacks docstring
-
-6. **Add type annotations where missing**
-   - Some internal functions lack complete type annotations
-
----
-
-## 5. Summary of Findings
-
-| Category | Count |
-|----------|-------|
-| Verified correct exports | 12 |
-| Verified correct data structures | 6 |
-| Verified correct core functions | 5 |
-| Discrepancies (bugs) | 1 HIGH, 2 MEDIUM |
-| Improvement suggestions | 6 total |
-
-**Critical bug:** Number word combination (`"three hundred twenty two"` → `3100202` instead of `322`) affects the documented pipeline example. This needs fixing before the module can claim to work as documented.
-
-**Code references for the critical bug:**
-- `normalize.py:745` - `normalize()` function
-- `normalize.py:703-742` - `split_at_operators()` fails to split on spaces
-- `normalize.py:627-656` - `convert_from_human_handler()` receives unsplit tokens
+These are documentation-only issues; the actual code implementation is correct and well-designed.

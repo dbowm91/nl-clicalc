@@ -1,144 +1,179 @@
-# diff.py Module Review - Improvement Plan
+# diff Module Review — Improvement Plan
 
-## Verified Claims
+**Reviewed:** architecture/diff.md against nl_calc/exact/diff.py
+**Date:** 2026-05-28
 
-### levenshtein_distance (lines 118-161)
-- **Correct**: Uses O(mn) time with O(min(m,n)) space optimization via two rows
-- Dynamic programming recurrence matches doc: `dp[i][j] = min(prev_row[j] + 1, curr_row[j-1] + 1, prev_row[j-1] + (0 if match else 1))`
-- Correctly raises ValueError for strings exceeding MAX_LEVENSHTEIN_LEN (10000)
+## Verified Claims (with line references)
 
-### first_diff (lines 43-76)
-- **Correct**: Returns FirstDiff TypedDict with a_index, b_index, a_char, b_char, a_codepoint, b_codepoint
-- Correctly returns None when strings are identical
+### `__all__` list is defined ✓
+- **Code**: `nl_calc/exact/diff.py:15-25`
+- Exports: `FirstDiff`, `CommonPrefixSuffix`, `DiffSpan`, `MAX_LEVENSHTEIN_LEN`, `first_diff`, `common_prefix_suffix`, `levenshtein_distance`, `longest_common_subsequence`, `diff_spans`
+
+### `first_diff(a, b)` returns FirstDiff with position of first difference ✓
+- **Code**: `nl_calc/exact/diff.py:56-89`
+- Returns `FirstDiff | None` with fields: `a_index`, `b_index`, `a_char`, `b_char`, `a_codepoint`, `b_codepoint`
+- Returns `None` when strings are identical
 - Codepoint format `U+XXXX` is correct
 
-### diff_spans (lines 205-237)
-- **Correct**: Uses difflib.SequenceMatcher (lines 218-232)
-- Returns [start, end) half-open intervals as documented
-- max_diffs truncation works correctly (lines 234-235)
+### `common_prefix_suffix(a, b)` returns CommonPrefixSuffix ✓
+- **Code**: `nl_calc/exact/diff.py:92-128`
+- Returns `CommonPrefixSuffix` TypedDict with `common_prefix_len` and `common_suffix_len`
+- Correctly avoids overlapping prefix/suffix
+
+### `levenshtein_distance(a, b)` returns edit distance (int) ✓
+- **Code**: `nl_calc/exact/diff.py:131-174`
+- Uses O(mn) time with O(min(m,n)) space optimization via two-row technique
+- Raises `ValueError` for strings exceeding `MAX_LEVENSHTEIN_LEN` (10000)
+- Recurrence matches documented formula
+
+### `diff_spans(a, b)` returns list of DiffSpan segments that differ ✓
+- **Code**: `nl_calc/exact/diff.py:214-246`
+- Uses `difflib.SequenceMatcher` (line 227)
+- Returns `[start, end)` half-open intervals
+- `max_diffs` truncation works correctly (lines 243-244)
 - Skips 'equal' operations as documented
+
+### `longest_common_subsequence(a, b)` returns LCS string via dynamic programming ✓
+- **Code**: `nl_calc/exact/diff.py:177-211`
+- Uses full DP table (`dp[m+1][n+1]`) for both fill and backtrack
+- Backtracking tie-breaking correctly uses `dp[i-1][j] > dp[i][j-1]`
+- All test cases pass with correct LCS length
 
 ---
 
-## Discrepancies: Documentation vs Code
+## Discrepancies Between Documentation and Code
 
-### 1. TypedDict vs "Named tuple" (HIGH priority)
-**Doc**: Lines 98, 108, 117 describe `FirstDiff`, `DiffSpan`, `CommonPrefixSuffix` as "Named tuple"
-**Code**: All three are `TypedDict` classes (lines 15-37)
+### [HIGH] `FirstDiff` TypedDict fields are incomplete in documentation
+- **Documentation says** (lines 88-92):
+  ```python
+  class FirstDiff(TypedDict):
+      position: int
+      a_char: str
+      b_char: str
+  ```
+- **Code actually has** (`diff.py:28-35`):
+  ```python
+  class FirstDiff(TypedDict):
+      a_index: int
+      b_index: int
+      a_char: str
+      b_char: str
+      a_codepoint: str
+      b_codepoint: str
+  ```
+- **Impact**: Documentation shows 3 fields, code has 6. Also field names differ (`position` vs `a_index`/`b_index`). The data structures section (lines 115-121) correctly lists the 6 fields with `a_index`, `b_index`, `a_codepoint`, `b_codepoint`, suggesting the initial declaration at 88-92 is outdated.
 
-**Fix needed**: Update architecture/diff.md lines 98-119 to say "TypedDict" instead of "Named tuple"
+### [HIGH] `common_prefix_suffix` examples are wrong
+- **Documentation says** (lines 53-59):
+  ```python
+  >>> common_prefix_suffix("hello", "hell")
+  {'common_prefix_len': 3, 'common_suffix_len': 0}
+  >>> common_prefix_suffix("hello", "yo")
+  {'common_prefix_len': 0, 'common_suffix_len': 0}
+  >>> common_prefix_suffix("testing", "ing")
+  {'common_prefix_len': 0, 'common_suffix_len': 0}
+  ```
+- **Code actually returns**:
+  ```
+  {'common_prefix_len': 4, 'common_suffix_len': 0}
+  {'common_prefix_len': 0, 'common_suffix_len': 1}
+  {'common_prefix_len': 0, 'common_suffix_len': 3}
+  ```
+- **Impact**: All three examples are incorrect. Code is correct; documentation examples are wrong.
 
-### 2. common_prefix_suffix Example Error (HIGH priority)
-**Doc**: Line 57 shows `common_prefix_suffix("hello", "hell")` → `{'common_prefix_len': 3, 'common_suffix_len': 0}`
-**Code**: Implementation returns `{'common_prefix_len': 3, 'common_suffix_len': 1}`
+### [MEDIUM] `diff_spans` documentation shows `equal` spans that don't appear in output
+- **Documentation says** (lines 105-109):
+  ```python
+  >>> list(diff_spans("hello", "hallo"))
+  [DiffSpan(kind='equal', a_span=[0, 2], b_span=[0, 2], a_text='he', b_text='he'),
+   DiffSpan(kind='replace', a_span=[2, 3], b_span=[2, 3], a_text='l', b_text='a'),
+   DiffSpan(kind='equal', a_span=[3, 5], b_span=[3, 5], a_text='lo', b_text='lo')]
+  ```
+- **Code actually returns** (line 232: `if tag == "equal": continue`):
+  ```python
+  [{'kind': 'replace', 'a_span': [1, 2], 'b_span': [1, 2], 'a_text': 'e', 'b_text': 'a'}]
+  ```
+- **Impact**: Example shows `equal` spans filtered out in code. Actual output only includes `replace`, `insert`, `delete` kinds.
 
-Trace for "hello" vs "hell":
-- prefix_len = 3 (h,e,l match, then 'o' != end of "hell")
-- min_len = 4, suffix check allows suffix_len < 4-3 = 1
-- a[4]='o' == b[3]='o' → suffix_len = 1
-
-**Fix needed**: Update doc example at line 54-55 to show `{'common_prefix_len': 3, 'common_suffix_len': 1}`
-
-### 3. common_prefix_suffix "testing"/"ing" Example (MEDIUM priority)
-**Doc**: Line 59 shows `common_prefix_suffix("testing", "ing")` → `{'common_prefix_len': 0, 'common_suffix_len': 0}`
-**Code**: Returns `{'common_prefix_len': 0, 'common_suffix_len': 3}`
-
-Trace:
-- prefix_len = 0 (no common prefix)
-- min_len = 3, suffix check allows suffix_len < 3-0 = 3
-- a[6]='g' == b[2]='g', suffix_len=1
-- a[5]='n' == b[1]='n', suffix_len=2
-- a[4]='i' == b[0]='i', suffix_len=3
-- Loop ends, returns suffix_len=3
-
-**Fix needed**: Update doc example at lines 58-59 to show `{'common_prefix_len': 0, 'common_suffix_len': 3}`
-
-### 4. diff_spans merging claim (LOW priority)
-**Doc**: Line 139 states "Merges consecutive operations of the same type"
-**Code**: No merging logic exists in diff_spans()
-
-**Fix needed**: Remove merging claim from doc or add merging logic to code
+### [LOW] `diff_spans` documentation at line 126 claims `equal` is a valid kind
+- **Documentation says** (line 126): `kind`: Type of diff ("equal", "insert", "delete", "replace")
+- **Code only returns**: `"replace"`, `"insert"`, `"delete"` (skips `"equal"`)
+- **Impact**: Minor inconsistency - doc lists `equal` as possible kind but function never returns it
 
 ---
 
 ## Potential Bugs
 
-### 1. longest_common_subsequence Backtracking Logic (HIGH priority)
-**Location**: diff.py:197-199
-
-```python
-elif prev_row[j - 1] > prev_row[j]:
-    i -= 1
-else:
-    j -= 1
-```
-
-**Problem**: `prev_row[j]` is from the current iteration's row after inner loop, not the actual previous row (dp[i-1][j]). This breaks tie-breaking when dp[i-1][j-1] == dp[i-1][j].
-
-**Example where bug manifests**: "ab" vs "ba"
-- DP table builds correctly
-- Backtracking with bug: trace at (2,2), a[1]='b' != b[0]='a', prev_row[0]=1 == prev_row[1]=1 → moves left (j--)
-- Result "b" instead of correct LCS "a" or "b"
-
-**Fix**: Use full DP table instead of two-row optimization for correct backtracking. Change lines 178-187 to:
-
-```python
-m, n = len(a), len(b)
-dp = [[0] * (n + 1) for _ in range(m + 1)]
-for i in range(1, m + 1):
-    for j in range(1, n + 1):
-        if a[i - 1] == b[j - 1]:
-            dp[i][j] = dp[i - 1][j - 1] + 1
-        else:
-            dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
-
-lcs_len = dp[m][n]
-result = []
-i, j = m, n
-while i > 0 and j > 0:
-    if a[i - 1] == b[j - 1]:
-        result.append(a[i - 1])
-        i -= 1
-        j -= 1
-    elif dp[i - 1][j] > dp[i][j - 1]:
-        i -= 1
-    else:
-        j -= 1
-```
-
-**Priority**: HIGH - Produces incorrect results for certain input pairs
+### No bugs found
+The implementation is correct. All functions behave as documented:
+- `levenshtein_distance`: Correct O(mn) time with space optimization
+- `first_diff`: Correct handling of identical strings and length mismatches
+- `common_prefix_suffix`: Correct non-overlapping prefix/suffix logic
+- `diff_spans`: Correct SequenceMatcher usage with max_diffs truncation
+- `longest_common_subsequence`: Correct DP table and backtracking (verified with multiple test cases)
 
 ---
 
 ## Improvement Suggestions
 
-### Priority HIGH
+### HIGH Priority
 
-1. **Fix longest_common_subsequence backtracking bug**
-   - Use full O(mn) DP table instead of two-row optimization
-   - Fix backtrack tie-breaking to use `dp[i-1][j] > dp[i][j-1]` instead of `prev_row[j-1] > prev_row[j]`
+1. **Fix `FirstDiff` TypedDict declaration in documentation**
+   - Location: `architecture/diff.md:88-92`
+   - Change from:
+     ```python
+     class FirstDiff(TypedDict):
+         position: int
+         a_char: str
+         b_char: str
+     ```
+   - To:
+     ```python
+     class FirstDiff(TypedDict):
+         a_index: int
+         b_index: int
+         a_char: str
+         b_char: str
+         a_codepoint: str
+         b_codepoint: str
+     ```
 
-2. **Update architecture/diff.md documentation**
-   - Change "Named tuple" to "TypedDict" for FirstDiff, DiffSpan, CommonPrefixSuffix
-   - Fix common_prefix_suffix examples
-   - Remove false merging claim
+2. **Fix `common_prefix_suffix` examples in documentation**
+   - Location: `architecture/diff.md:53-59`
+   - Change `"hello", "hell"` result from `{'common_prefix_len': 3, 'common_suffix_len': 0}` to `{'common_prefix_len': 4, 'common_suffix_len': 0}`
+   - Change `"hello", "yo"` result from `{'common_prefix_len': 0, 'common_suffix_len': 0}` to `{'common_prefix_len': 0, 'common_suffix_len': 1}`
+   - Change `"testing", "ing"` result from `{'common_prefix_len': 0, 'common_suffix_len': 0}` to `{'common_prefix_len': 0, 'common_suffix_len': 3}`
 
-### Priority MEDIUM
+3. **Fix `diff_spans` example in documentation**
+   - Location: `architecture/diff.md:105-109`
+   - Either update example to match actual output (no `equal` spans), or clarify that `equal` spans are filtered out
 
-3. **Add LCS test case** for "ab" vs "ba" expecting length 1 (any valid LCS)
+### MEDIUM Priority
 
-4. **Consider adding type annotations** to function signatures (currently missing return type hints)
+4. **Update `kind` documentation for DiffSpan**
+   - Location: `architecture/diff.md:126`
+   - Remove `"equal"` from list of possible kinds since function never returns it
 
-### Priority LOW
+### LOW Priority
 
-5. **Add docstring example for first_diff** showing length mismatch case
-
-6. **Consider adding `__all__`** export list for cleaner imports
+5. **Add test cases for `common_prefix_suffix`** specifically covering:
+   - `"hello", "hell"` (prefix overlap with suffix)
+   - `"testing", "ing"` (suffix only)
 
 ---
 
 ## Summary
 
-The diff.py module is generally well-implemented with correct Levenshtein distance, first_diff, and diff_spans functions. However, **longest_common_subsequence has a critical bug** in its backtracking logic that can produce incorrect results due to the two-row space optimization breaking the tie-breaking invariant.
+The `nl_calc/exact/diff.py` implementation is **correct and bug-free**. All five core functions work as expected:
+- `levenshtein_distance`: O(mn) time, O(min(m,n)) space ✓
+- `first_diff`: Returns FirstDiff or None ✓
+- `common_prefix_suffix`: Returns CommonPrefixSuffix with non-overlapping prefix/suffix ✓
+- `diff_spans`: Returns DiffSpan list without `equal` spans ✓
+- `longest_common_subsequence`: Correct DP with proper backtracking ✓
 
-The documentation has several discrepancies with the code, primarily around class types (TypedDict vs Named tuple) and incorrect examples for common_prefix_suffix.
+The **documentation has significant errors**:
+1. `FirstDiff` TypedDict declaration shows wrong fields (3 instead of 6)
+2. Three `common_prefix_suffix` examples are all wrong
+3. `diff_spans` example shows `equal` spans that code filters out
+
+**Recommended action**: Update `architecture/diff.md` to fix the discrepancies listed above.

@@ -1,137 +1,188 @@
-# Evaluator Module Review - Improvement Plan
+# evaluator.py Module Review — Improvement Plan
+
+**Reviewed:** architecture/evaluator.md against nl_calc/evaluator.py
+**Date:** 2026-05-28
 
 ## Verified Claims (with line references)
 
-### AST-Based Evaluation
-- **Confirmed**: `evaluate()` at line 1280 uses `ast.parse()` for safe AST-based evaluation (not `eval()`)
-- **Confirmed**: `_validate_node()` at line 1219 validates all nodes and forbids dangerous types like `ast.Subscript`, `ast.Lambda`, `ast.IfExp`, `ast.Compare`, `ast.BoolOp`
-- **Confirmed**: `Evaluator` class (line 821) implements `ast.NodeVisitor` pattern with `visit_*` methods
+### Key Exports (lines 13-35)
+All documented exports are present in `__all__` (lines 29-54):
+- `EvaluationError` (line 30)
+- `Evaluator` (line 31)
+- `evaluate` (line 32)
+- `evaluate_raw` (line 33)
+- `evaluate_cached` (line 34)
+- `evaluate_async` (line 35)
+- `evaluate_with_timeout` (line 36)
+- `get_default_evaluator` (line 37)
+- `register_constant`, `register_function`, `load_user_config` (lines 38-40)
+- `PyCalcApp` (line 41)
+- `TimeoutError` (line 42)
+- All memory functions (lines 43-48)
+- All variable functions (lines 49-53)
 
-### Operator Handling
-- **Confirmed**: `BINOPS` dict at line 1007 maps all arithmetic operators including bitwise
-- **Confirmed**: `UNARYOPS` dict at line 1024 handles `+`, `-`, `~`
-- **Confirmed**: Bitwise operations require integers (line 1151-1152)
+### Security Architecture (lines 37-55)
+- AST-based parsing via `ast.parse()` (line 1283): VERIFIED
+- No `eval()` usage: VERIFIED
+- Whitelisted operations only: VERIFIED via `_validate_node()` (lines 1244-1278)
 
-### Function Implementations
-- **Confirmed**: Trigonometric functions (line 888-893) use `_complex_aware` wrapper
-- **Confirmed**: Statistical functions (`_mean`, `_median`, `_mode`, `_std`, `_variance`) at lines 217-370
-- **Confirmed**: Random functions at lines 529-564 use dedicated `_random_generator` instance
-- **Confirmed**: Complex number functions at lines 308-342
+### AST Node Handlers (lines 57-75)
+Table matches implementation:
+- `ast.Constant` → `visit_Constant` (lines 1100-1119): CORRECT
+- `ast.BinOp` → `visit_BinOp` (lines 1135-1180): CORRECT (supports +, -, *, /, //, %, **)
+- `ast.UnaryOp` → `visit_UnaryOp` (lines 1182-1197): CORRECT (supports +, -, ~)
+- `ast.Call` → `visit_Call` (lines 1199-1242): CORRECT
+- `ast.Name` → `visit_Name` (lines 1121-1133): CORRECT
 
-### Security Limits
-- **Confirmed**: `MAX_EXPONENT = 10000` (line 60) enforced in `_safe_pow()`
-- **Confirmed**: `MAX_FACTORIAL = 1000` (line 61) enforced in `_safe_factorial()`
-- **Confirmed**: `MAX_NESTING_DEPTH` and `MAX_RESULT_VALUE` defined at lines 62-63
+Forbidden node types correctly raise `EvaluationError` (lines 1267-1272):
+- `ast.Compare`, `ast.BoolOp`, `ast.Subscript`, `ast.List`, `ast.Dict`, `ast.Set`, `ast.ListComp`, `ast.DictComp`
 
-### Unit Handling
-- **Confirmed**: `visit_Constant()` at line 1078 parses unit suffixes
-- **Confirmed**: `visit_BinOp()` at line 1113 handles unit conversion for addition/subtraction
+### Safe Math Functions (lines 76-136)
 
----
+#### Arithmetic (line 81)
+- `abs`, `round`, `sign`: VERIFIED (lines 932, 936, 598-604)
+- `min`, `max`, `clamp`: VERIFIED (lines 962-963, 610-612)
+- `hypot`: VERIFIED (line 618-620)
+
+#### Trigonometric (lines 85-89)
+All trig functions implemented via `_complex_aware` wrapper (lines 654-664):
+- `sin`, `cos`, `tan`, `asin`, `acos`, `atan`: VERIFIED
+- `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`: VERIFIED
+
+#### Logarithmic/Exponential (lines 91-96)
+- `log`, `ln` (lines 655, 922): CORRECT
+- `log10`, `log2` (lines 656-657, 923-924): CORRECT
+- `exp` (line 658, 926): CORRECT
+- `sqrt`, `cbrt` (lines 654, 671, 929, 947): CORRECT
+
+#### Statistical (lines 98-102)
+- `mean`, `median`, `std`, `variance`, `sum`: VERIFIED (lines 952-961)
+
+#### Combinatorics (lines 104-108)
+- `factorial`, `fact`, `perm`, `comb`, `gcd`, `lcm`: VERIFIED (lines 939-944)
+
+#### Complex Numbers (lines 110-112)
+- `real`, `imag`, `conj`, `phase`, `polar`, `rect`: VERIFIED (lines 965-971)
+
+#### Bitwise (lines 114-117)
+- `bitand`, `bitor`, `bitxor`, `bitnot`, `lshift`, `rshift`: VERIFIED (lines 977-982)
+
+#### Random (lines 119-124)
+- `random`, `randint`, `randn`, `gauss`, `seed`: VERIFIED (lines 993-999)
+
+#### Number Theory (lines 126-128)
+- `isprime`, `primefactors`, `nextprime`, `prevprime`: VERIFIED (lines 984-991)
+
+#### Format Conversion (lines 130-131)
+- `bin`, `hex`, `oct`: VERIFIED (lines 973-975)
+
+#### Percentage (lines 133-135)
+- `percentof`, `aspercent`: VERIFIED (lines 1001-1004)
+
+### Constants (lines 137-171)
+All documented constants exist in `CONSTANTS` dict (lines 836-902):
+- Mathematical constants (`pi`, `e`, `tau`, `inf`, `nan`): VERIFIED (lines 837-841)
+- Imaginary unit (`i`, `j`): VERIFIED (lines 843-844)
+- Physical constants (lines 846-901): All match documented values
+  - `c/c0/speedoflight/speedoflightvacuum`: 299792458 (lines 858-861)
+  - `na/avogadro/avogadros`: 6.02214076e23 (lines 846-848)
+  - `h/planck/planckconstant`: 6.62607015e-34 (lines 852-854)
+  - `k/boltzmann/boltzmannconstant`: 1.380649e-23 (lines 855-857)
+  - `r/gasconstant/idealgasconstant`: 8.314462618 (lines 849-851)
+  - `g/standardgravity`: 9.80665 (lines 875-876)
+  - `G/gravitationalconstant`: 6.67430e-11 (lines 878-879)
+  - All other constants verified
+
+### Memory System (lines 172-189)
+- `Memory` class (lines 680-738): Implements calculator-style memory
+- Global `_memory` instance (line 742): VERIFIED
+- Functions: `memory_store`, `memory_recall`, `memory_add`, `memory_subtract`, `memory_clear`, `memory_list`: VERIFIED (lines 745-772)
+- Named registers supported: VERIFIED
+
+### Variable Storage (lines 191-203)
+- `setvar`, `getvar`, `delvar`, `listvars`, `clearvars`: VERIFIED (lines 781-824)
+- Thread-safe via `_variables_lock` (line 778): VERIFIED
+
+### Limits (lines 205-214)
+All limits match code:
+- `MAX_EXPONENT = 10000` (line 60): CORRECT
+- `MAX_FACTORIAL = 1000` (line 61): CORRECT
+- `MAX_NESTING_DEPTH = 100` (line 62): CORRECT
+- `MAX_RESULT_VALUE = 1e308` (line 63): CORRECT
+- `DEFAULT_CACHE_SIZE = 1024` (line 64): CORRECT
+
+### Evaluation Functions (lines 215-241)
+- `evaluate()` (lines 1305-1311): Direct AST evaluation, expects valid Python syntax: CORRECT
+- `evaluate_raw()` (lines 1314-1337): Applies NL normalization first: CORRECT
+- `evaluate_cached()` (lines 138-150): LRU cached evaluation: CORRECT
+- `evaluate_async()` (lines 153-165): Async evaluation: CORRECT
+- `evaluate_with_timeout()` (lines 1346-1381): Timeout-based evaluation with `TimeoutError`: CORRECT
+
+### Complex Number Support (lines 243-256)
+- `_complex_aware()` (lines 623-651): Creates complex-aware wrapper functions: VERIFIED
+- `_sqrt`, `_log`, `_log10`, `_log2`, `_exp`, trig functions all use `_complex_aware` with appropriate parameters (lines 654-671): CORRECT
+
+### PyCalcApp (lines 257-267)
+- Class definition (lines 1396-1516): VERIFIED
+- `calculate()` method (lines 1429-1455): VERIFIED
+- Async support via `calculate_async()` (lines 1457-1472): VERIFIED
+
+### Unit Handling (lines 268-281)
+- `UnitValue` returned for expressions with units (lines 1100-1119, 1172-1180): VERIFIED
+- `.value`, `.unit`, `.convert_to()` methods work as documented: VERIFIED
+
+### Module Dependencies (lines 283-289)
+- evaluator.py imports from units.py (lines 20-27): CORRECT
 
 ## Discrepancies Between Documentation and Code
 
-### 1. Missing `fact` Alias (HIGH priority)
-**Documentation**: `evaluator.md` line 105 says `factorial(n)` / `fact(n)` are equivalent
-**Code**: `FUNCTIONS` dict (line 920) only has `"factorial": _safe_factorial` - `fact` is missing
+- [MEDIUM] **bitnot operand type not documented**
+  - Documentation (line 116) says: `bitnot(a)` — no mention of type requirements
+  - Code (line 1190-1191) requires integer operand: `if op_class is ast.Invert and not isinstance(operand, int): raise EvaluationError("Bitwise NOT requires an integer operand")`
+  - Impact: Users may try `~5.5` and be surprised by the error. Should document "bitnot(a)" requires integer `a`.
 
-### 2. Missing `wien` Constant (MEDIUM priority)
-**Documentation**: `evaluator.md` line 162 lists `wien` constant as 2.897771955e-3
-**Code**: `CONSTANTS` dict (line 830-883) does NOT contain `wien` or `wienconstant`
-
-### 3. Missing `me`, `mp`, `mn`, `re`, `alpha` Constants (MEDIUM priority)
-**Documentation**: `evaluator.md` lines 155-159 list electron/proton/neutron mass, electron radius, fine structure constant
-**Code**: `CONSTANTS` dict only has:
-- `mu0` (line 867) but NOT `me`, `mp`, `mn`, `re`, `alpha`
-
-Note: `mu0` IS present at line 867.
-
-### 4. `evaluate_raw()` Description Mismatch (LOW priority)
-**Documentation**: `evaluator.md` line 220-221 says "Evaluates with NL normalization (calls `normalize_expression` first)"
-**Code**: `evaluate_raw()` at line 1289 does NOT call `normalize_expression` - it calls `normalize_expression` with `skip_validation=True` which is different behavior
-
----
+- [LOW] **evaluate_raw not documented in Evaluation Functions section**
+  - `evaluate_raw` appears in Key Exports (line 19) but has no dedicated documentation section
+  - The function exists (lines 1314-1337) and is useful for NL input
+  - Impact: Missing documentation for a useful function
 
 ## Potential Bugs
 
-### Bug 1: Bitwise NOT on Float Returns Integer (MEDIUM priority)
-**Location**: `evaluator.py:1027`
-```python
-ast.Invert: (lambda x: ~int(x)),
-```
-For `~5.5`, this returns `-6` (bitwise NOT of integer 5), not an error. Should raise an error for non-integers.
-
-### Bug 2: `primefactors` Returns String Instead of List (MEDIUM priority)
-**Location**: `evaluator.py:475`
-```python
-def _prime_factors(n: int) -> str:
-```
-Returns `"2 × 3 × 5"` as a formatted string. For consistency with other functions that return lists (e.g., `gcd` returns integer), this should return a list or the formatted output should be configurable.
-
-### Bug 3: `variance` vs `variance_sample` Naming Inconsistency (LOW priority)
-**Location**: `evaluator.py:936-938`
-```python
-"variance": _variance,
-"var": _variance,
-"variance_sample": _variance_sample,
-```
-Both `var` and `variance` map to population variance. This is fine, but the sample variance has a different name `variance_sample` while it could also be aliased as `var_s` or similar.
-
----
+**No bugs found.** The code correctly implements all documented functionality. The bitnot integer requirement is correctly enforced in code, but simply not documented.
 
 ## Improvement Suggestions
 
 ### HIGH Priority
 
-1. **Add `fact` alias**
-   - Location: `evaluator.py` line 920
-   - Change: Add `"fact": _safe_factorial,` alongside `"factorial": _safe_factorial,`
-   - Reason: Documentation promises this alias
-
-2. **Add missing physical constants**
-   - Location: `evaluator.py` lines 830-883
-   - Add: `me` (9.1093837015e-31), `mp` (1.67262192369e-27), `mn` (1.67493e-27), `re` (2.817952326e-15), `alpha` (7.2973525693e-3), `wien` (2.897771955e-3)
-   - Reason: Documentation lists these constants
-
-3. **Fix `ast.Invert` to reject floats**
-   - Location: `evaluator.py:1027`
-   - Change: Check if input is integer, raise `EvaluationError` if float
-   - Reason: Bitwise NOT on floats is typically unintended
+1. **Add bitnot type requirement to documentation (line 116)**
+   - Change from: `bitnot(a)` 
+   - To: `bitnot(a)` — integer operand required (bitwise NOT on floats raises error)
+   - This is already correctly implemented in code, just needs documentation
 
 ### MEDIUM Priority
 
-4. **Add `fact` alias for combinatorics**
-   - Location: `evaluator.py` line 924
-   - Add: `"nCr": _comb,` could also have `"nPr": _perm,` (already present at 925)
-   - Already has `nCr` at line 926
+2. **Document evaluate_raw function**
+   - Add a section similar to `evaluate()` (lines 217-224) documenting `evaluate_raw()` 
+   - Should explain it applies NL normalization and is equivalent to what `run()` does internally
 
-5. **Document the `skip_validation=True` behavior difference**
-   - Location: Either in `evaluator.md` or change `evaluate_raw()` to match docs
-   - Reason: Currently `evaluate_raw()` skips validation which may be intentional but differs from documentation
-
-6. **Consider adding `fact` to combinatorics aliases**
-   - Add `"fact": _safe_factorial` near line 925
+3. **Add PyCalcApp.calculate_async documentation**
+   - The class exists and has `calculate_async()` (lines 1457-1472) but is not documented
+   - Would be helpful for async web framework users
 
 ### LOW Priority
 
-7. **Consider adding `round` overload variants**
-   - `round(5.5)` → 6 (banker's rounding) vs `round(5.5, 0)` → 6.0
-   - Already works correctly via Python's `round()`
+4. **Consider documenting TimeoutError separately from EvaluationError**
+   - Currently mentioned only in `evaluate_with_timeout` section (line 241)
+   - Both are in `__all__` and can be imported directly
 
-8. **Consider adding `median` aliased as `med`**
-   - Consistency with other short aliases
-
-9. **`variance_sample` alias**
-   - Add `"vars"` or `"var_sample"` as aliases for sample variance
-
----
+5. **Add "seed() returns None" to documentation**
+   - `seed()` function (lines 567-570) returns `None`, not the seed value
+   - Noted in docstring but not in main documentation
 
 ## Summary
 
-The evaluator module is well-architected with strong security boundaries. The AST-based approach is sound, and most functions work correctly. Main issues are:
+The evaluator.py module documentation is highly accurate. All function signatures, constants, AST handlers, security claims, and behavior verify correctly against the source code. 
 
-1. **Missing `fact` alias** - documented but not implemented
-2. **Missing physical constants** (`me`, `mp`, `mn`, `re`, `alpha`, `wien`) - listed in docs but absent in code
-3. **Bitwise NOT accepts floats** - potential bug for type safety
+The only issue found is a documentation omission: the `bitnot()` function correctly requires an integer operand in code (and raises a clear error otherwise), but this requirement is not mentioned in the documentation. All other discrepancies are minor omissions of useful functions (`evaluate_raw`, `PyCalcApp.calculate_async`).
 
-The module correctly uses `evaluate_raw()` or `run()` for NL/unit expressions, not `evaluate()` directly, which aligns with the architecture documentation.
+No actual bugs were found in the code — the implementation is solid and well-designed with proper thread-safety, security constraints, and error handling.

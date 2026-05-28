@@ -1,148 +1,179 @@
-# Units Module Review - Improvement Plan
+# units Module Review — Improvement Plan
 
-## Verified Claims (with code references)
+**Reviewed:** architecture/units.md against nl_calc/units.py
+**Date:** 2026-05-28
+
+## Verified Claims (with line references)
+
+### Key Exports (lines 15-26)
+- `UnitValue` - **Verified** at units.py:24
+- `normalize_unit` - **Verified** at units.py:1056
+- `get_conversion_factor` - **Verified** at units.py:1100
+- `get_all_units` - **Verified** at units.py:1293
+- `is_unit` - **Verified** at units.py:1115
+- `are_units_compatible` - **Verified** at units.py:1269
+- `convert_temperature` - **Verified** at units.py:1079
+- `FLOAT_EPSILON` - **Verified** at units.py:20
 
 ### UnitValue Class
-- Constructor `UnitValue(value: float, unit: str | None = None)` - **Verified** at `units.py:31`
-- Arithmetic operations (+, -, *, /, **) - **Verified** at `units.py:58-111`
-- `convert_to(target_unit)` method - **Verified** at `units.py:134-164`
-- Automatic unit conversion on add/subtract - **Verified** at `units.py:58-79`
+- Constructor `UnitValue(value: float, unit: str | None = None)` - **Verified** at units.py:31
+- Properties (value, unit) - **Verified** at units.py:32-33
+- Methods: `convert_to(target_unit)` - **Verified** at units.py:134
+- Arithmetic: `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__pow__` - **Verified** at units.py:58-111
 
 ### Temperature Conversions
-All formulas in TEMPERATURE_CONVERSIONS verified against documentation:
-| From/To | Formula | Code Location |
-|---------|---------|---------------|
-| C → F | C × 9/5 + 32 | `units.py:1063` (1.8, 32.0) |
-| F → C | (F - 32) × 5/9 | `units.py:1064` (1/1.8, -32/1.8) |
-| K → C | K - 273.15 | `units.py:1059` (1.0, -273.15) |
-| K → F | K × 9/5 - 459.67 | `units.py:1061` (1.8, -459.67) |
-| K → R | K × 9/5 | `units.py:1065` (1.8, 0.0) |
-| R → K | R × 5/9 | `units.py:1066` (1/1.8, 0.0) |
-| C → R | (C + 273.15) × 9/5 | `units.py:1067` (1.8, 491.67) |
-| R → C | R × 5/9 - 273.15 | `units.py:1068` (1/1.8, -273.15) |
-| F → R | F + 459.67 | `units.py:1069` (1.0, 459.67) |
-| R → F | R - 459.67 | `units.py:1070` (1.0, -459.67) |
+All formulas in TEMPERATURE_CONVERSIONS verified correct:
+- `convert_temperature(0, "C", "F")` → 32.0 ✓ (units.py:1068)
+- `convert_temperature(100, "C", "F")` → 212.0 ✓
+- `convert_temperature(0, "K", "C")` → -273.15 ✓ (units.py:1064)
 
-### Key Functions
-- `normalize_unit()` - **Verified** at `units.py:1051-1053`
-- `get_conversion_factor()` - **Verified** at `units.py:1095-1107`
-- `is_unit()` - **Verified** at `units.py:1110-1112`
-- `are_units_compatible()` - **Verified** at `units.py:1264-1285`
-- `get_unit_category()` - **Verified** at `units.py:1258-1261`
-- `get_all_units()` - **Verified** at `units.py:1288-1289`
-- `convert_temperature()` - **Verified** at `units.py:1074-1092`
+### Unit Categories Table (lines 71-93)
+- Most categories match code: Length, Time, Mass, Data, Volume, Pressure, Energy, Power, Speed, Temperature, Frequency, Force, Voltage, Current, Area, Data Rate
+- Canonical forms: `kn` (not `knot`), `R` (not `Ra`)
 
-### Unit Definitions
-- Binary prefixes (1024) for data storage - **Verified** at `units.py:276` comment
-- Decimal prefixes (1000) for data rate - **Verified** at `units.py:308` comment
-- SI prefixes correctly applied across Voltage, Current, Power, Energy, Pressure, Frequency
+### Functions
+- `normalize_unit()` - **Verified** at units.py:1056
+- `get_conversion_factor("km", "m")` → 1000.0 ✓
+- `get_conversion_factor("ft", "m")` → 0.3048 ✓
+- `is_unit()`, `are_units_compatible()`, `get_unit_category()`, `get_all_units()` - **Verified**
+
+### Prefixed Units
+- kN (kilonewton), mV (millivolt), mA (milliampere) - **All verified working**
 
 ## Discrepancies Between Documentation and Code
 
-### HIGH PRIORITY
+### HIGH Priority
 
-**1. Force Category Missing "dyne" and "lbf" (Documentation)**
-- Documentation says: `Force | N | kN, mN`
-- Code has at `units.py:477-487`: `N`, `kN`, `kilonewton`, `dyne`, `dynes`, `lbf`, `poundforce`
-- **Issue**: "mN" (millinewton) missing from UNIT_BASE, "dyne" and "lbf" missing from docs
+- [HIGH] **Bug: Same-unit multiplication produces wrong unit**
+  - Documentation says: `UnitValue * UnitValue` → "Compound (e.g., `m*m`)"
+  - Code actually does: When units are the same (e.g., `m * m`), returns just `m` instead of `m*m` (units.py:89-90)
+  - Impact: Mathematically incorrect - `2m * 2m` should equal `4 m²`, not `4 m`
+  - Example: `UnitValue(2, "m") * UnitValue(2, "m")` returns `4 m` instead of `4 m*m`
 
-**2. Voltage Category Missing "uV" and "μV" (Documentation)**
-- Documentation says: `Voltage | V | mV, kV`
-- Code has at `units.py:488-499`: `V`, `kV`, `mV`, `uV`, `μV`, `microvolt`
-- **Issue**: Microvolt variants missing from docs
+- [HIGH] **Bug: Dead code in `convert_to()` - negative Kelvin warning unreachable**
+  - Code location: units.py:146-162
+  - The `elif self.value < 0 and self.unit in ("K", "kelvin", "kelvins") and self.value < 0:` branch (line 157) can never execute
+  - Reason: When converting temperature to temperature (e.g., K to F), the function returns early at line 148 before reaching line 157
+  - Impact: Code for negative Kelvin warning is dead code
+  - Additionally: `self.value < 0` is checked twice (redundant)
 
-**3. Current Category Missing "uA" and "μA" (Documentation)**
-- Documentation says: `Current | A | mA, kA`
-- Code has at `units.py:500-512`: `A`, `mA`, `uA`, `μA`, `microamp`, `microampere`
-- **Issue**: Microamp variants missing from docs
+### MEDIUM Priority
 
-**4. "acre" Missing from UNIT_ALIASES (Bug)**
-- Code has `acre: 4046.8564224` in UNIT_BASE at `units.py:562`
-- But `acre` and `acres` are NOT in UNIT_ALIASES at `units.py:995-1016`
-- **Bug**: `normalize_unit("acre")` returns `"acre"` which may not find conversion
+- [MEDIUM] **Conversion factor documentation has wrong value and direction**
+  - Documentation says: `get_conversion_factor("kg", "lb") → 0.453592`
+  - Code actually returns: `2.2046226218487757`
+  - Reason: Docs show lb→kg factor but label it as kg→lb
+  - Impact: User calling `get_conversion_factor("kg", "lb")` gets wrong value
+  - Fix: Change to `get_conversion_factor("lb", "kg") → 0.453592` OR `get_conversion_factor("kg", "lb") → 2.20462`
 
-### MEDIUM PRIORITY
+- [MEDIUM] **Temperature-to-non-temperature warning is misleading**
+  - Code location: units.py:149-156
+  - Warning says "This may give physically meaningless results"
+  - Code then calls `get_conversion_factor()` which raises `ValueError`
+  - Impact: Warning suggests a bad result will be returned, but actually an exception is raised
 
-**5. Area Units in Documentation Incomplete**
-- Documentation lists only: `m2`, `km2`, `cm2`, `mm2`, `ha`, `acre`, `ft2`, `in2`, `mi2`, `yd2`
-- Code has at `units.py:540-584`: Also `m^2`, `km^2`, `cm^2`, `mm^2`, `ft^2`, `sqft`, `in^2`, `sqin`, `mi^2`, `sqmi`, `yd^2`, `sqyd`, `sqm`
-- **Issue**: Many area variants not documented
+- [MEDIUM] **Unit Categories table (lines 71-93) is incomplete**
+  - Missing from Force: `dyne`, `lbf` (code has them at units.py:485-487)
+  - Missing from Voltage: `μV`, `uV` variants (code has them at units.py:498-500)
+  - Missing from Current: `μA`, `uA` variants (code has them at units.py:509-513)
+  - Missing from Frequency: `THz` (code has at units.py:597)
+  - Missing area variants: `m^2`, `km^2`, `sqft`, `sqin`, `sqmi`, `sqyd`, `sqm`
+  - Missing data units: `EB`, `ZB`, `YB`, `bit`
+  - Missing volume: `uL`, `μL`, `floz`, `fl oz`, `tbsp`, `tsp`
+  - Missing time: `ps`, `fortnight`, `decade`, `century`, `millennium`
 
-**6. Speed "knot" vs "kn" Discrepancy**
-- Documentation says: `Speed | m/s | km/h, mph, knot`
-- Code uses `kn` as canonical (`units.py:534`), with `knot` and `knots` as aliases
-- **Issue**: Documentation should reference "kn" as canonical
+- [MEDIUM] **Key Exports missing `MAX_RESULT_VALUE`**
+  - Documentation (lines 236-239) documents `MAX_RESULT_VALUE = 1e308`
+  - But it's not listed in Key Exports section (lines 15-26)
+  - Impact: Users don't know this constant is available
 
-**7. Frequency "THz" Missing from Documentation**
-- Documentation doesn't list THz in table or unit categories
-- Code has `THz` at `units.py:595`
+### LOW Priority
 
-### LOW PRIORITY
+- [LOW] **Prefixed Units table (lines 219-232) is incomplete**
+  - Only lists: milli, centi, deci, kilo, mega, giga, tera
+  - Missing: micro (μ), nano (n), pico (p)
+  - Example uses kN, mV, mA which are correct but not comprehensive
 
-**8. Unit Aliases Mapping Redundancy**
-- Many entries like `"m": "m"`, `"km": "km"` map to themselves
-- **Note**: These may be intentional for uniform lookups, not a bug
+- [LOW] **Case sensitivity in normalize_unit**
+  - `normalize_unit("kelvin")` → `"K"` (works)
+  - `normalize_unit("Kelvin")` → `"Kelvin"` (case-sensitive, doesn't normalize)
+  - `normalize_unit("KELVIN")` → `"KELVIN"` (case-sensitive)
+  - Impact: Users must use exact case for proper normalization
 
-**9. MicroPrefix Inconsistency in Aliases**
-- `"uV": "μV"` but `"μV": "μV"` - inconsistent direction
-- `"uA": "μA"` but `"μA": "μA"` - inconsistent direction
-- **Note**: Both directions normalized in practice
-
-**10. Documentation Missing "Frequency" Base Unit**
-- Table shows `"Frequency | Hz | kHz, MHz, GHz"` but doesn't mention THz
+- [LOW] **Rankine shown as "R" in docs but "Ra" alias not explained**
+  - Code has `"Ra": "R"` in UNIT_ALIASES (line 980)
+  - Docs only show "R" in table (line 86)
+  - Impact: Minor confusion about canonical form
 
 ## Potential Bugs
 
-### BUG 1: "acre" Not in UNIT_ALIASES (HIGH)
-- **Location**: `units.py:631-1048`
-- **Issue**: `acre` and `acres` defined in UNIT_BASE but not in UNIT_ALIASES
-- **Impact**: `normalize_unit("acre")` returns `"acre"` which then fails conversion lookup
-- **Fix**: Add `"acre": "acre"` and `"acres": "acre"` to UNIT_ALIASES
+### BUG 1: Same-unit multiplication produces mathematically incorrect result
+- **Location**: units.py:89-90
+- **Code**: `if self.unit == other.unit: return UnitValue(self.value * other.value, self.unit)`
+- **Problem**: When multiplying `m * m`, should return `m*m` (or `m²`), not `m`
+- **Fix**: Change to `return UnitValue(self.value * other.value, f"{self.unit}*{other.unit}")` when same unit
 
-### BUG 2: Temperature Conversion Offset Precision (LOW)
-- **Location**: `units.py:1056-1071`
-- Some offsets like 255.372222 appear truncated (should be 255.372222...)
-- **Impact**: Minor precision loss on reverse conversions
-- **Fix**: Use more precise fractional representations where possible
+### BUG 2: Dead code - unreachable elif branch
+- **Location**: units.py:157
+- **Problem**: `elif self.value < 0 and self.unit in ("K", "kelvin", "kelvins") and self.value < 0:` is unreachable
+- **Reason**: Early return at line 148 for temperature-to-temperature conversion
+- **Fix**: Remove dead code, or restructure to handle this case
+
+### BUG 3: Redundant condition
+- **Location**: units.py:157
+- **Problem**: `self.value < 0` checked twice in the same condition
+- **Fix**: Remove duplicate check
 
 ## Improvement Suggestions
 
-### HIGH PRIORITY
+### HIGH Priority
 
-1. **Add "acre"/"acres" to UNIT_ALIASES** - Fixes conversion failure for acre units
+1. **Fix same-unit multiplication bug** (units.py:89-90)
+   - Change: `if self.unit == other.unit: return UnitValue(self.value * other.value, self.unit)`
+   - To: `if self.unit == other.unit: return UnitValue(self.value * other.value, f"{self.unit}*{other.unit}")`
+   - This ensures `m * m = m*m` (m squared) instead of just `m`
 
-2. **Update Documentation** - Sync Unit Categories table with actual code:
-   - Force: `N | kN, dyne, lbf` (remove "mN", add "dyne", "lbf")
-   - Voltage: `V | mV, kV, μV`
-   - Current: `A | mA, kA, μA`
-   - Add `THz` to Frequency
-   - Add area variants (`m^2`, `sqft`, etc.)
-   - Update Speed to show "kn" as canonical
+2. **Remove dead code in convert_to()** (units.py:157)
+   - The negative Kelvin warning code is unreachable due to early return at line 148
+   - Either remove it or restructure the logic to handle K→non-K temperature conversions with the warning
 
-### MEDIUM PRIORITY
+3. **Fix documentation for kg/lb conversion** (architecture/units.md:124)
+   - Change: `get_conversion_factor("kg", "lb") → 0.453592`
+   - To: `get_conversion_factor("kg", "lb") → 2.20462` OR `get_conversion_factor("lb", "kg") → 0.453592`
 
-3. **Add `mN` (millinewton) to Force category** if SI compliance desired
-   - Currently missing from UNIT_BASE despite SI prefix support
+### MEDIUM Priority
 
-4. **Clean up UNIT_ALIASES** - Consider removing self-mappings like `"m": "m"` for clarity
-   - Though may be intentional for uniform dictionary behavior
+4. **Update Unit Categories table with complete unit list**
+   - Add missing Force units: dyne, lbf
+   - Add missing Voltage units: μV, uV
+   - Add missing Current units: μA, uA
+   - Add THz to Frequency
+   - Add area variants, data variants, volume variants, time variants
 
-5. **Add missing area units to UNIT_ALIASES**:
-   - `sqft`, `sqin`, `sqmi`, `sqyd`, `sqm`
+5. **Add `MAX_RESULT_VALUE` to Key Exports** (architecture/units.md:16-26)
+   - Add `MAX_RESULT_VALUE` to the list of exported names
 
-### LOW PRIORITY
+6. **Clarify temperature-to-non-temperature behavior** (units.py:149-156)
+   - Either: Issue warning AND return a meaningless result (continue with factor-based conversion)
+   - Or: Remove the misleading warning since ValueError is raised anyway
 
-6. **Refine Temperature Offset Precision** - Consider using Fraction for exact values:
-   - `F → K`: Use `(value - 32) * 5/9 + 273.15` instead of pre-computed offset
+### LOW Priority
 
-7. **Consider Adding `acre` to UNIT_CATEGORIES** - Ensure `acre`/`acres` get correct category mapping
+7. **Add micro, nano, pico to Prefixed Units table** (architecture/units.md:219-232)
+
+8. **Consider case-insensitive normalization** (units.py:1056-1058)
+   - Or document the case sensitivity behavior
+
+9. **Update Prefixed Units examples** to include more prefix+unit combinations
 
 ## Summary
 
-The units module is generally well-implemented with accurate temperature conversions and comprehensive unit coverage. Main issues are:
+The units module is well-implemented with accurate temperature conversions and comprehensive unit coverage. Key issues found:
 
-1. **Critical bug**: `acre` missing from UNIT_ALIASES causes conversion failures
-2. **Documentation gaps**: Many unit variants (μV, μA, THz, area variants) not documented
-3. **Inconsistencies**: Some alias mappings are redundant or inconsistent in direction
+1. **Critical bug**: Same-unit multiplication (`m * m`) returns `m` instead of `m*m` (m squared)
+2. **Critical bug**: Dead code in `convert_to()` - negative Kelvin warning unreachable
+3. **Documentation error**: kg→lb conversion factor is wrong direction (shows 0.453592 which is lb→kg)
+4. **Documentation gaps**: Many unit variants not listed in Unit Categories table
+5. **Minor issues**: Case sensitivity, dead code, incomplete exports list
 
-All temperature conversion formulas verified correct against documentation.
+All temperature conversion formulas verified correct against code. The module is production-ready aside from the multiplication bug which should be fixed for mathematical correctness.

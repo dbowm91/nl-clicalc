@@ -263,6 +263,30 @@ During Phase 2, the stale item scanner flags items for pruning:
 
 ---
 
+## Existing Review Plans (from prior review)
+
+The following improvement plans already exist from a previous review. These may be refreshed or replaced based on the current review:
+
+- `plans/review_improvements_api.md` — API documentation review
+- `plans/review_improvements_cli.md` — CLI documentation review
+- `plans/review_improvements_confusables.md` — confusables.py documentation review
+- `plans/review_improvements_diff.md` — diff.py documentation review
+- `plans/review_improvements_evaluator.md` — evaluator.py documentation review
+- `plans/review_improvements_exact.md` — exact/ subpackage documentation review
+- `plans/review_improvements_mcp.md` — MCP server documentation review
+- `plans/review_improvements_measure.md` — measure.py documentation review
+- `plans/review_improvements_normalize.md` — normalize.py documentation review
+- `plans/review_improvements_overview.md` — overview documentation review
+- `plans/review_improvements_primitives.md` — primitives.py documentation review
+- `plans/review_improvements_synthesis.md` — synthesis.py documentation review
+- `plans/review_improvements_unicode_tools.md` — unicode_tools.py documentation review
+- `plans/review_improvements_units.md` — units.py documentation review
+- `plans/review_improvements_validate.md` — validate.py documentation review
+
+Subagents should overwrite these files with fresh analysis based on the current state of the codebase.
+
+---
+
 ## Progress Tracking
 
 | Phase | Status | Notes |

@@ -1,175 +1,140 @@
-# CLI Module Review - Improvement Plan
+# cli Module Review — Improvement Plan
 
-## Review Summary
+**Reviewed:** architecture/cli.md against nl_calc/__main__.py and nl_calc/normalize.py
+**Date:** 2026-05-28
 
-Document reviewed:
-- `architecture/cli.md` (125 lines)
-- `nl_calc/__main__.py` (19 lines)
-- `nl_calc/normalize.py` main function (lines 1226-1340), REPL (lines 1002-1042), text commands (lines 1117-1223)
+## Verified Claims (with line references)
 
----
+### Entry Point Bootstrap ✓
+- `__main__.py:12-18` correctly imports `main` from `normalize.py` and calls `sys.exit(main())`
+- `normalize.py:1421` defines `main() -> int` as the CLI entry point
 
-## Verified Claims
+### CLI Arguments (normalize.py:1426-1461)
+All documented CLI options exist in code:
+- `-h`, `--help` → line 1434
+- `--usage` → line 1437
+- `-v`, `--version` → line 1439
+- `-e`, `--expression` → lines 1443-1449 (dest="single_expr")
+- `-q`, `--quiet` → line 1440
+- `-s`, `--show` → lines 1453-1458
+- `--json` → line 1442
+- `-i`, `--interactive` → lines 1450-1452
+- `--mcp` → lines 1459-1461
+- `--verbose` → line 1441
 
-### Entry Point Architecture ✓
-- `__main__.py:12-18` correctly bootstraps by importing `main` from `normalize.py` and calling it
-- Build system correctly renames `normalize.main()` to `normalize_main()` in single-file build (`build_single.py:236`)
+### Text Commands (normalize.py:1312-1418)
+- `inspect`, `count`, `regex` commands implemented and imported from exact module (line 25)
+- Command syntax matches documentation
 
-### Text Commands ✓
-- `inspect`, `count`, `regex` commands implemented in `_cli_text_command()` at `normalize.py:1117-1223`
-- Commands follow documented syntax
+### Interactive REPL (normalize.py:1196-1236)
+- Commands `help`, `history`, `clear`, `quit`/`exit`/`exit()` all work (lines 1207-1229)
+- REPL always passes `show_expression=True` to `run()` (line 1231)
 
-### Interactive REPL ✓
-- REPL implemented in `_run_repl()` at `normalize.py:1002-1042`
-- Commands `help`, `history`, `clear`, `quit`/`exit` work as documented
+### Shell Glob Detection (normalize.py:1491-1512)
+- Detection logic exists and warning message matches documentation
 
-### Shell Glob Detection ✓
-- Glob expansion detection at `normalize.py:1296-1316`
-- Error message matches documentation
+### Error Messages (normalize.py:637-650)
+- All documented error message formats exist in `error_message()` function
 
----
+## Discrepancies Between Documentation and Code
 
-## Discrepancies
+- [HIGH] `--verbose` flag description is incorrect
+  - Documentation says (`cli.md:32`): "Show detailed error information and tracebacks"
+  - Code actually does (`normalize.py:1441`): `action="store_true", help="Show expression in output"`
+  - `--verbose` behaves identically to `--show` (see `normalize.py:1520`: `show_expression = not args.quiet and (args.verbose or args.show)`)
+  - Impact: Users expecting tracebacks from `--verbose` get expression display instead. The actual traceback-enabling behavior is via the `verbose` parameter to `error_message()`, but `main()` never passes `verbose=True` to `run()`.
 
-### 1. `--verbose` vs `--show` Documentation Error
+- [MEDIUM] `normalize_main()` alias documentation is misleading
+  - Documentation says (`cli.md:13-16`): "main() in normalize.py (aliased as normalize_main() for build compatibility)" and shows import statement
+  - Code actually does: `normalize.py` only defines `def main()`. The `normalize_main()` name is created by `build_single.py:236` during single-file assembly
+  - Impact: Readers may look for `normalize_main` in source and not find it, or try to import it
 
-**Documentation** (`cli.md:28`):
-```
-| `-s`, `--show` | Show expression in output |
-```
+- [LOW] `exit()` REPL command undocumented
+  - Documentation lists (`cli.md:80`): `quit` / `exit`
+  - Code actually accepts (`normalize.py:1215`): `("quit", "exit", "exit()")`
+  - Impact: Minor - `exit()` works but isn't documented
 
-**Code** (`normalize.py:1246,1258-1263`):
-```python
-parser.add_argument("--verbose", action="store_true", help="Show expression in output")
-parser.add_argument("-s", "--show", action="store_true", help="Show expression in output (default for interactive)")
-```
-
-**Issue**: Documentation only mentions `-s`/`--show` but code also has `--verbose` that does the same thing. This is undocumented functionality.
-
-**Severity**: Low (docs just need updating)
-
-### 2. Interactive Mode Expression Display Logic Bug
-
-**Documentation** (`cli.md:71`):
-```
-# >>> five plus two
-# 5+2 -> 7
-```
-
-**Code** (`normalize.py:1287,1328-1333`):
-```python
-if args.interactive:
-    return _run_repl(show_expression=True)
-
-# ...
-elif args.show:
-    show_expression = True
-elif quiet_by_default:
-    show_expression = False
-else:
-    show_expression = False  # BUG: Should be True for interactive by default
-```
-
-**Issue**: When running `calc -i`, `show_expression=True` is passed correctly to `_run_repl`. However, when `run()` is called inside REPL (`normalize.py:1037`), the logic at lines 1330-1333 has `quiet_by_default=False` for interactive mode, but the final `else` also sets `show_expression = False`, contradicting the explicitly passed `True`.
-
-**Severity**: Medium (feature works due to `_run_repl` passing `show_expression=True` directly, but logic is convoluted)
-
-### 3. REPL Exit Command `exit()` vs `exit`
-
-**Documentation** (`cli.md:79`):
-```
-- `quit` / `exit` - Exit REPL
-```
-
-**Code** (`normalize.py:1021`):
-```python
-if line.lower() in ("quit", "exit", "exit()"):
-```
-
-**Issue**: Documentation doesn't mention `exit()` as valid, but code accepts it.
-
-**Severity**: Low (docs need updating)
-
----
+- [LOW] REPL example output differs slightly from code
+  - Documentation shows (`cli.md:71-73`):
+    ```
+    # >>> five plus two
+    # 5+2 -> 7
+    ```
+  - Code shows (`normalize.py:1200`): "nl-calc interactive mode. Type 'help'..." header before REPL starts
+  - Impact: First-time user may see extra header text
 
 ## Potential Bugs
 
-### Bug 1: REPL History Result Variable Conflict
+### Bug 1: Type mismatch in `run()` return when exit_code == 2
+- **Location**: `normalize.py:1168-1171`
+- **Code**:
+  ```python
+  if exit_code != 0:
+      if exit_code == 2:
+          print(joined, file=sys.stderr)
+      return None, exit_code
+  ```
+- **Problem**: When `normalize_expression()` returns length error, `run()` returns `(None, 2)`. But `main()` at line 1522 does `_, exit_code = run(...)` which would try to unpack `None` as a tuple, causing `TypeError: cannot unpack non-iterable NoneType object`
+- **Trigger**: Input longer than `MAX_INPUT_LENGTH` (10000 chars)
+- **Severity**: HIGH - crashes with TypeError instead of proper error
 
-**Location**: `normalize.py:1039-1040`
-```python
-if exit_code == 0 and _ is not None:
-    history.append((line, _))
-```
+### Bug 2: `--verbose` never enables tracebacks despite documentation promise
+- **Location**: `normalize.py:637-650` (`error_message`) and how it's called from `run()` (line 1188-1193)
+- **Problem**: `run()` calls `error_message(original, e)` without passing `verbose=True`, so even with `--verbose` flag, tracebacks are never shown. The `--verbose` flag only affects `show_expression` (line 1520)
+- **Impact**: Documentation promises tracebacks via `--verbose` but code never delivers them
 
-**Issue**: Uses `_` as result variable but `_` is a Python built-in for last expression value. While this works, it's shadowing a useful Python feature. The `_` from `run()` is the first return value (result), but the code doesn't use it consistently.
-
-**Severity**: Low (works but confusing)
-
-### Bug 2: JSON Output Format Inconsistency
-
-**Location**: `normalize.py:981-987`
-```python
-if output_format == "json":
-    import json
-    if show_expression:
-        print(json.dumps({"expression": joined, "result": str(result)}))
-    else:
-        print(json.dumps({"result": str(result)}))
-```
-
-**Issue**: Documentation (`cli.md:111-115`) shows JSON output without the `joined` (normalized) expression. The code includes `joined` when `show_expression=True`. This could be intentional but differs from plain output behavior.
-
-**Severity**: Low (could be intentional design)
-
----
+### Bug 3: Hardcoded "calc" in glob error message
+- **Location**: `normalize.py:1506`
+- **Code**: `f'  calc "{" ".join(args.expression)}"'`  (hardcoded "calc")
+- **Problem**: When invoked as `python -m nl_calc`, the suggested command should be `nl_calc` or `python -m nl_calc`, not `calc`
+- **Impact**: Minor confusion for module users
 
 ## Improvement Suggestions
 
-### High Priority
+### HIGH Priority
 
-1. **Fix confusing show_expression logic** (`normalize.py:1324-1333`)
-   - Current logic is hard to follow
-   - Should explicitly handle each case with clear precedence
+1. **Fix `run()` return type mismatch bug** (`normalize.py:1168-1171`)
+   - `run()` declares return type `tuple[Any, int]` but returns `tuple[None, int]` when exit_code == 2
+   - `main()` unpacking at line 1522: `_, exit_code = run(...)` will crash
+   - Fix: Either change return to `(None, exit_code)` tuple consistently with typing, or change `main()` to handle `None` first value
 
-### Medium Priority
+2. **Fix `--verbose` traceback behavior or update documentation**
+   - Option A: Make `--verbose` actually pass `verbose=True` to `error_message()` in `run()` at lines 1188-1193
+   - Option B: Update documentation to accurately describe that `--verbose` shows expressions (same as `--show`)
+   - Recommended: Option A - make `--verbose` work as documented
 
-2. **Update documentation for `--verbose` flag**
-   - Add to CLI options table in `cli.md:20-29`
-   - Currently only `-s`/`--show` documented
+3. **Fix misleading `normalize_main()` documentation**
+   - Update `cli.md:13-16` to clarify this is a build-time transformation, not a source-level alias
+   - Change from: "aliased as `normalize_main()` for build compatibility"
+   - To: "renamed to `normalize_main()` during single-file assembly by build_single.py"
 
-3. **Add `exit()` to REPL documentation**
-   - Update `cli.md:79` to mention `exit()` as valid
+### MEDIUM Priority
 
-### Low Priority
+4. **Document `exit()` REPL command**
+   - Update `cli.md:80` to: `quit` / `exit` / `exit()`
 
-4. **Consider renaming REPL result variable**
-   - `normalize.py:1039` uses `_` which shadows Python's last-expression-value built-in
-   - Could use `result` instead for clarity
+5. **Update REPL header documentation**
+   - Either document the startup header in `cli.md:71-73`, or remove it from code if unwanted
 
-5. **Consider consolidating duplicate logic**
-   - `_run_repl` hardcodes `show_expression=True` then passes it to `run()`
-   - The `show_expression` logic in `main()` is then partially ignored
+6. **Use `sys.argv[0]` or `prog` for glob error message**
+   - Replace hardcoded "calc" at `normalize.py:1506` with proper program name
 
----
+### LOW Priority
 
-## Code Reference Summary
+7. **Consider consolidating `--verbose` and `--show`**
+   - They do the same thing (line 1520)
+   - Could simplify by removing one, or make `--verbose` do actual tracebacks (see Bug 2)
 
-| Component | Location | Status |
-|-----------|----------|--------|
-| Entry point bootstrap | `__main__.py:12-18` | ✓ Correct |
-| Main CLI function | `normalize.py:1226-1336` | ✓ Works |
-| REPL implementation | `normalize.py:1002-1042` | ✓ Works |
-| Text commands | `normalize.py:1117-1223` | ✓ Works |
-| Glob detection | `normalize.py:1296-1316` | ✓ Works |
-| Help system | `normalize.py:1059-1114` | ✓ Works |
-| Build renaming | `build_single.py:236` | ✓ Correct |
+8. **Consider using `result` instead of `_` in REPL** (`normalize.py:1233`)
+   - Using `_` shadows Python's last-expression-value feature
+   - Minor readability concern
 
----
+## Summary
 
-## Files Reviewed
+The CLI module is mostly well-implemented and matches documentation. Three issues require attention:
 
-- `architecture/cli.md` - 125 lines
-- `nl_calc/__main__.py` - 19 lines
-- `nl_calc/normalize.py` - key sections at lines 959-1340
-- `build_single.py` - lines 230-270 (build compatibility)
+1. **Critical bug**: `run()` returns `None` when exit_code == 2 but `main()` unpacks assuming tuple
+2. **Documentation error**: `--verbose` described as showing tracebacks but only shows expressions
+3. **Misleading docs**: `normalize_main()` claimed as source alias but is build-time artifact
+
+The core entry point, text commands, REPL, and glob detection all work as documented. With the above fixes, the CLI would fully match its documentation.
