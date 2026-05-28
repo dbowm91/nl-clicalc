@@ -479,6 +479,12 @@ class TestRegexTest:
         result = regex_test(r"abc", ["ABC"], flags=["IGNORECASE"])
         assert result["results"][0]["matches"] is True
 
+    def test_regex_test_sample_length_limit(self):
+        long_sample = "a" * 20000
+        result = regex_test(r"^a+$", [long_sample])
+        assert result["results"] == []
+        assert "MAX_SAMPLE_LENGTH" in result["error"]
+
 
 class TestMeasure:
     """Tests for measurement primitives."""
@@ -589,9 +595,9 @@ class TestSynthesis:
             "accent_or_diacritic_difference",
         ]
 
-    def test_explain_diff_classification_normalization(self):
-        result = explain_diff("cafe\u0301", "café")
-        assert result["classification"] == "accent_or_diacritic_difference"
+    def test_text_equal_case_and_diacritic(self):
+        result = text_equal("café", "CAFÉ")
+        assert result["classification"] == "case_only"
 
     def test_explain_diff_classification_case(self):
         result = explain_diff("HELLO", "hello")
@@ -600,6 +606,12 @@ class TestSynthesis:
     def test_explain_diff_classification_insert(self):
         result = explain_diff("hello", "hello!")
         assert result["classification"] == "length_only"
+
+    def test_explain_diff_symmetry_length_only(self):
+        result1 = explain_diff("hello!", "hello")
+        result2 = explain_diff("hello", "hello!")
+        assert result1["classification"] == "length_only"
+        assert result2["classification"] == "length_only"
 
     def test_explain_diff_security_findings(self):
         result = explain_diff("\u200b", "")  # ZWSP vs empty

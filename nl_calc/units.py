@@ -146,20 +146,11 @@ class UnitValue:
         if cat == "temperature" and target_cat == "temperature":
             converted = convert_temperature(self.value, self.unit, target_unit)
             return UnitValue(converted, target_unit)
-        if cat == "temperature":
-            if target_cat != "temperature":
-                warnings.warn(
-                    f"Converting temperature ({self.unit}={self.value}) to non-temperature unit ({target_unit}). "
-                    f"This may give physically meaningless results.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-            elif self.value < 0 and self.unit in ("K", "kelvin", "kelvins") and self.value < 0:
-                warnings.warn(
-                    f"Absolute zero is 0 K. Converting negative Kelvin value {self.value} K will give incorrect results.",
-                    UserWarning,
-                    stacklevel=2,
-                )
+        if cat == "temperature" and target_cat != "temperature":
+            raise ValueError(
+                f"Cannot convert temperature unit '{self.unit}' to non-temperature unit '{target_unit}'. "
+                f"Temperature units (K, C, F, R) can only be converted to other temperature units."
+            )
         factor = get_conversion_factor(self.unit, target_unit)
         return UnitValue(self.value * factor, target_unit)
 

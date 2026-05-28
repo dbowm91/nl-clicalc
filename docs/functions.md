@@ -117,6 +117,7 @@ calc "comb(5, 3)"     # 10
 | `real(z)` | Real part |
 | `imag(z)` | Imaginary part |
 | `conj(z)` | Complex conjugate |
+| `conjugate(z)` | Complex conjugate (alias) |
 | `phase(z)` | Phase angle |
 | `polar(z)` | Polar coordinates |
 | `rect(r, phi)` | Rectangular form |
@@ -136,6 +137,7 @@ calc "conj(3+4i)"     # 3-4j
 | `mode(x, ...)` | Mode |
 | `std(x, ...)` | Standard deviation |
 | `variance(x, ...)` | Population variance |
+| `var(x, ...)` | Population variance (alias) |
 | `variance_sample(x, ...)` | Sample variance (n-1) |
 | `sum(x, ...)` | Sum |
 | `min(x, ...)` | Minimum |
@@ -152,6 +154,7 @@ calc "std(1, 2, 3, 4, 5)"       # 1.414...
 | Function | Description |
 |----------|-------------|
 | `isprime(n)` | Check if prime |
+| `is_prime(n)` | Check if prime (alias) |
 | `primefactors(n)` | Prime factorization |
 | `nextprime(n)` | Next prime after n |
 | `prevprime(n)` | Previous prime before n |
@@ -206,6 +209,7 @@ calc "hex(255)"       # '0xff'
 | `store(x)` | Store in memory |
 | `recall()` | Recall from memory |
 | `MR` | Alias for recall |
+| `M` | Alias for recall (memory register) |
 | `Mplus(x)` | Add to memory |
 | `Mminus(x)` | Subtract from memory |
 | `MC` | Clear memory |

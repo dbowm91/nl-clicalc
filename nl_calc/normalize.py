@@ -365,7 +365,7 @@ def _build_config() -> tuple[dict, dict]:
         # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
         "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in STRIPPED_PHRASES])})"),
         "int": re.compile(r"^[-|+]?[0-9]\d*$"),
-        "float": re.compile(r"^[-|+]?[0-9]\d*\.\d+?$"),
+        "float": re.compile(r"^[-+]?[0-9]\d*\.\d+?$"),
         "int_number_combine": re.compile(r"^[-|+|*]?[0-9]\d*$"),
         "valid_operations": re.compile(
             f"^({'|'.join([re.escape(s) for s in symbols] + [re.escape(f) for f in FUNCTION_MAPPINGS.values()] + [re.escape(c) for c in CONSTANT_WORDS.keys()])}){{1}}$"
@@ -1175,10 +1175,7 @@ def run(
         if output_format == "json":
             import json
 
-            if show_expression:
-                print(json.dumps({"expression": joined, "result": str(result)}))
-            else:
-                print(json.dumps({"result": str(result)}))
+            print(json.dumps({"expression": joined, "result": str(result)}))
         else:
             if show_expression:
                 print(f"{joined} -> {result}")
@@ -1393,7 +1390,7 @@ def _cli_text_command(expression: str) -> int:
         text = " ".join(parts[2:])
         try:
             result = regex_test(pattern, [text])
-        except Exception as e:
+        except re.error as e:
             print(f"Error: Invalid regex pattern: {e}", file=sys.stderr)
             return 1
 
@@ -1495,7 +1492,7 @@ def main() -> int:
         glob_indicators = []
         for arg in args.expression:
             path = os.path.join(cwd, arg)
-            if os.path.exists(path) and arg not in (".", ".."):
+            if os.path.exists(path) and arg not in (".", "..") and not arg.startswith("./") and not arg.startswith("../"):
                 glob_indicators.append(arg)
 
         if glob_indicators:

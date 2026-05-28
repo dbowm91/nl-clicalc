@@ -69,6 +69,20 @@ Features:
 - LRU cache with configurable size
 - Async support
 
+### `Evaluator`
+
+Low-level AST evaluator class for fine-grained control.
+
+```python
+evaluator = Evaluator()
+evaluator.visit(ast.parse("5 + 3"))
+```
+
+Features:
+- Direct AST node visitor pattern
+- Fine-grained operator control
+- Used internally by higher-level evaluate() functions
+
 ## Configuration Functions
 
 ### `register_constant(name: str, value: float) -> None`
@@ -171,7 +185,7 @@ MAX_NESTING_DEPTH = 100    # Maximum parentheses nesting
 
 ```python
 uv = UnitValue(5, "m")
-print(f"{uv}")        # "5 m"
+print(f"{uv}")        # "5.0 m"
 print(uv.value)      # 5.0
 print(uv.unit)       # "m"
 ```

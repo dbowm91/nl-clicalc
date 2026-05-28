@@ -114,7 +114,7 @@ Maps physical constant names to symbols:
 ### `STRIPPED_PHRASES`
 Filler words removed during normalization:
 ```python
-[
+STRIPPED_PHRASES = [
     "what's",
     "what is",
     "a ",
@@ -123,7 +123,9 @@ Filler words removed during normalization:
     "calculate",
     "compute",
     "convert",
-    ...
+    "tell me",
+    "give me",
+    "the ",
 ]
 ```
 
@@ -140,8 +142,14 @@ Tokenizes and normalizes input text.
 5. Convert function names to canonical forms
 6. Parse unit suffixes
 
-### `normalize_expression(text: str, NORMALIZE: dict, PATTERNS: dict) -> tuple[str, int]`
+### `normalize_expression(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]], skip_validation: bool = False) -> tuple[str, int]`
 Converts natural language to Python syntax string.
+
+**Parameters:**
+- `expression`: The raw expression to normalize
+- `operators`: The operators configuration dict
+- `patterns`: The compiled regex patterns dict
+- `skip_validation`: If True, skip token validation (for custom evaluators)
 
 **Returns:** `(normalized_string, exit_code)`
 
@@ -161,7 +169,7 @@ Checks if a token represents a number.
 {
     "bool": True/False,
     "converted": parsed_number_or_original,
-    "type": type(token)
+    "type": "int" or "float" or "str"
 }
 ```
 

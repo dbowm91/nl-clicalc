@@ -36,10 +36,20 @@ class ConfusableInfo(TypedDict):
     codepoint: str
     # Unicode character name (e.g., "LATIN SMALL LETTER A")
     name: str
-    # Character(s) this character is confusable with
+    # Character(s) this character is confusable with (can be multi-character)
     confusable_with: str
     # Unicode name(s) of the confusable character(s)
     confusable_name: str
+
+
+class MixedScriptsResult(TypedDict):
+    """Result of mixed script detection."""
+    # True if multiple scripts present (excluding Common/Inherited/Other)
+    mixed_scripts: bool
+    # Distinct scripts found (excluding Common/Inherited/Other)
+    scripts: list[str]
+    # Position details for non-Common/Inherited/Other characters
+    positions: list[ScriptInfo]
 
 
 # Unicode script ranges for heuristic detection
@@ -147,7 +157,7 @@ def unicode_scripts(s: str) -> list[str]:
     return [_get_script_heuristic(char) for char in s]
 
 
-def detect_mixed_scripts(s: str) -> dict:
+def detect_mixed_scripts(s: str) -> MixedScriptsResult:
     """Detect if string contains mixed scripts.
 
     Ignores Common, Inherited, and Other scripts for the mixed-script
@@ -158,7 +168,7 @@ def detect_mixed_scripts(s: str) -> dict:
         s: Input string.
 
     Returns:
-        Dictionary with mixed_scripts (bool), scripts (list of distinct
+        MixedScriptsResult with mixed_scripts (bool), scripts (list of distinct
         scripts excluding Common/Inherited/Other), and positions (list of
         ScriptInfo dicts for non-Common/Inherited/Other chars).
     """
@@ -177,11 +187,11 @@ def detect_mixed_scripts(s: str) -> dict:
                 codepoint=codepoint_str,
             ))
 
-    return {
-        "mixed_scripts": len(scripts) > 1,
-        "scripts": sorted(scripts),
-        "positions": positions,
-    }
+    return MixedScriptsResult(
+        mixed_scripts=len(scripts) > 1,
+        scripts=sorted(scripts),
+        positions=positions,
+    )
 
 
 def detect_confusables(s: str) -> list[ConfusableInfo]:

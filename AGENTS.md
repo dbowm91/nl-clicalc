@@ -249,16 +249,18 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 
 ### Known Bugs (from architecture review)
 
-**Wave 1 - Critical Bugs:**
-1. `units.py:146-164` - Temperature-to-non-temperature conversion crashes after warning
-2. `synthesis.py:704-714` - Dead code in `list_compare()` - `"unicode_normalization_only"` near_match classification unreachable
+**Wave 1 - Critical Bugs (FIXED):**
+1. `units.py:146-164` - Temperature-to-non-temperature conversion now raises clear ValueError (was warning+crash)
+2. `synthesis.py:704-714` - Removed unreachable `unicode_normalization_only` near_match code
+3. `normalize.py:368` - Fixed float regex `[-|+]?` to `[-+]?`
 
 **Verified as NOT bugs (do not list in plan):**
 - `_classify_difference()` lines 337-338 - Branch IS reachable when NFC-equal strings have different byte representations after casefold (precomposed vs decomposed forms)
 - `_handle_negative_token()` - Bounds checking and regex guard prevent IndexError
 
-**Investigations needed:**
-- `normalize.py:368` - Float regex pattern bug: `[-|+]?` matches literal pipe (should be `[-+]?`)
+**Investigations completed:**
+- `visible_repr()` combining mark check order - CORRECT, VS check precedes combining marks for proper display
+- Redundant temperature condition - NOT PRESENT in current code
 
 See `plans/plan.md` for full implementation plan with 56 items across 5 waves.
 
@@ -266,13 +268,13 @@ See `plans/plan.md` for full implementation plan with 56 items across 5 waves.
 
 The `plans/plan.md` contains the active implementation plan with items organized into waves:
 
-- **Wave 1**: Critical bugs (temperature crash, list_compare dead code, float regex bug)
-- **Wave 2**: Documentation corrections (normalize_expression return type, FirstDiff, common_prefix_suffix examples)
-- **Wave 3**: Missing documentation (reverse_confusables, first_diff, CommonPrefixSuffix)
-- **Wave 4**: Code quality improvements
-- **Wave 5**: Low priority improvements
+- **Wave 1**: Critical bugs (temperature crash, list_compare dead code, float regex bug) ✓ COMPLETED
+- **Wave 2**: Documentation corrections (normalize_expression return type, FirstDiff, common_prefix_suffix examples) ✓ COMPLETED
+- **Wave 3**: Missing documentation (reverse_confusables, first_diff, CommonPrefixSuffix) ✓ COMPLETED
+- **Wave 4**: Code quality improvements ✓ COMPLETED
+- **Wave 5**: Low priority improvements ✓ COMPLETED
 
-All 350 tests must continue to pass as items are addressed.
+All 352 tests must continue to pass as items were addressed.
 
 ## Verification Notes (from planning session)
 

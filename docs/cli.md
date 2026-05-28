@@ -93,10 +93,13 @@ calc --json "5 + 3"
 # {"result": 8, "expression": "5+3"}
 ```
 
-### Interactive Mode
+### Interactive Mode <!-- cli.md:96 -->
+
+When entering interactive mode, a welcome message is displayed:
 
 ```bash
 calc -i
+# nl-calc interactive mode. Type 'help' for available commands, 'quit' or 'exit' to exit.
 >>> 5 + 3
 8
 >>> sin(pi/2)

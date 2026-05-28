@@ -6,7 +6,7 @@ Provides validation utilities for checking brackets, JSON syntax, and testing re
 
 ## Core Functions
 
-### `check_brackets(text: str, pairs: dict[str, str] | None = None) -> CheckBracketsResult`
+### `check_brackets(s: str, pairs: dict[str, str] | None = None) -> CheckBracketsResult`
 
 Check whether delimiters are structurally balanced.
 
@@ -38,7 +38,7 @@ CheckBracketsResult(balanced=False, unmatched_openers=[...],
                     unmatched_closers=[...])
 ```
 
-### `validate_json(text: str) -> ValidateJsonResult`
+### `validate_json(s: str) -> ValidateJsonResult`
 
 Validate JSON syntax and report precise parse errors.
 
@@ -51,6 +51,8 @@ class ValidateJsonResult(TypedDict):
     position: int | None
     type: str | None
     top_level_keys: list[str] | None
+
+**Note:** `top_level_keys` is only populated for objects (returns the root-level keys). For arrays and primitives, it returns `None` since there are no "keys" in the traditional sense.
 ```
 
 ```python

@@ -67,7 +67,7 @@ def line_metrics(s: str) -> LineMetrics:
     """Calculate line-level metrics for a string.
 
     Args:
-        s: Input string.
+        s: Input string. None is treated as empty string (returns zero metrics).
 
     Returns:
         Dictionary with lines, nonempty_lines, blank_lines,
@@ -132,7 +132,7 @@ def word_metrics(s: str) -> WordMetrics:
     estimates sentences, paragraphs, and average word length.
 
     Args:
-        s: Input string.
+        s: Input string. None is treated as empty string (returns zero metrics).
 
     Returns:
         Dictionary with words, unique_words_casefolded, sentences_estimate,
@@ -203,11 +203,14 @@ def char_category_metrics(s: str) -> CharCategoryMetrics:
     Categorizes each character by Unicode general category.
 
     Args:
-        s: Input string.
+        s: Input string. Must not be None.
 
     Returns:
         Dictionary with counts for letters, digits, punctuation,
         symbols, spaces, control_chars, combining_marks.
+
+    Raises:
+        TypeError: If s is None.
     """
     letters = 0
     digits = 0

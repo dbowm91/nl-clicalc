@@ -1365,7 +1365,7 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
         will fail with EvaluationError before the timeout is reached.
 
     Example:
-        >>> result = evaluate_with_timeout("sum(i**2 for i in range(10000))", timeout=1.0)
+        >>> result = evaluate_with_timeout("sum([i**2 for i in range(100)])", timeout=1.0)
         # May raise TimeoutError for slow expressions
     """
     import concurrent.futures

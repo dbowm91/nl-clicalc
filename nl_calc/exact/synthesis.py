@@ -168,6 +168,24 @@ class CountCharsResult(TypedDict):
     text_length_codepoints: int
 
 
+class NearMatch(TypedDict):
+    """A near match between list items."""
+    a: str
+    b: str
+    classification: str
+
+
+class ListCompareResult(TypedDict):
+    """List comparison result with near-match detection."""
+    same_ordered: bool
+    same_unordered: bool
+    only_in_a: list[str]
+    only_in_b: list[str]
+    duplicates_a: list[str]
+    duplicates_b: list[str]
+    near_matches: list[NearMatch]
+
+
 def measure_text(text: str) -> MeasureTextResult:
     """Measure text properties combining multiple primitives.
 
@@ -625,7 +643,7 @@ def list_compare(
     ignore_order: bool = True,
     casefold: bool = False,
     normalization: str = "NFC",
-) -> dict:
+) -> ListCompareResult:
     """Compare two lists with optional ignore_order, casefold, normalization.
 
     Args:
@@ -636,7 +654,7 @@ def list_compare(
         normalization: Unicode normalization form.
 
     Returns:
-        Comparison result with same_ordered, same_unordered, only_in_a,
+        ListCompareResult with same_ordered, same_unordered, only_in_a,
         only_in_b, duplicates_a, duplicates_b, near_matches.
     """
     def transform(s: str) -> str:
@@ -656,16 +674,13 @@ def list_compare(
     only_in_a = [a[i] for i, x in enumerate(a_transformed) if x not in b_set]
     only_in_b = [b[i] for i, x in enumerate(b_transformed) if x not in a_set]
 
-    # Duplicates
     from collections import Counter
     a_counts = Counter(a_transformed)
     b_counts = Counter(b_transformed)
     duplicates_a = [x for x, c in a_counts.items() if c > 1]
     duplicates_b = [x for x, c in b_counts.items() if c > 1]
 
-    # Near matches (case-only or normalization-only differences)
-    # Use set-based matching for O(n) instead of O(n²)
-    near_matches: list[dict] = []
+    near_matches: list[NearMatch] = []
     seen_pairs: set[tuple[str, str]] = set()
     seen_a_positions: set[int] = set()
 
@@ -699,29 +714,17 @@ def list_compare(
                 pair = (a_item, b_item) if a_item <= b_item else (b_item, a_item)
                 if pair not in seen_pairs:
                     seen_pairs.add(pair)
-                    near_matches.append({"a": a_item, "b": b_item, "classification": "case_only"})
-
-    for nfc_key, a_group in norm_groups.items():
-        if nfc_key in b_norm_index:
-            b_item = b_norm_index[nfc_key]
-            for a_pos, a_item, _ in a_group:
-                if a_pos in seen_a_positions:
-                    continue
-                seen_a_positions.add(a_pos)
-                pair = (a_item, b_item) if a_item <= b_item else (b_item, a_item)
-                if pair not in seen_pairs:
-                    seen_pairs.add(pair)
-                    near_matches.append({"a": a_item, "b": b_item, "classification": "unicode_normalization_only"})
+                    near_matches.append(NearMatch(a=a_item, b=b_item, classification="case_only"))
 
     same_ordered = ignore_order or (a_transformed == b_transformed)
     same_unordered = a_set == b_set
 
-    return {
-        "same_ordered": same_ordered,
-        "same_unordered": same_unordered,
-        "only_in_a": only_in_a,
-        "only_in_b": only_in_b,
-        "duplicates_a": duplicates_a,
-        "duplicates_b": duplicates_b,
-        "near_matches": near_matches,
-    }
+    return ListCompareResult(
+        same_ordered=same_ordered,
+        same_unordered=same_unordered,
+        only_in_a=only_in_a,
+        only_in_b=only_in_b,
+        duplicates_a=duplicates_a,
+        duplicates_b=duplicates_b,
+        near_matches=near_matches,
+    )

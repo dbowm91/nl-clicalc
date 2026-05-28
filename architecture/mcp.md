@@ -239,6 +239,7 @@ def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
 
 | Code | Name | Description |
 |------|------|-------------|
+| -32700 | ParseError | Invalid JSON |
 | -32600 | InvalidRequest | Invalid JSON-RPC request |
 | -32601 | MethodNotFound | Unknown method |
 | -32602 | InvalidParams | Invalid method parameters |

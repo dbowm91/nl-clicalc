@@ -31,7 +31,7 @@ class ConfusableInfo(TypedDict):
     char: str              # The confusable character
     codepoint: str         # "U+XXXX" format
     name: str              # Unicode name
-    confusable_with: str   # What it might be confused with
+    confusable_with: str   # What it might be confused with (can be multi-character)
     confusable_name: str    # Confusing character's name
 ```
 
@@ -56,7 +56,9 @@ unicode_script("あ")      # → "Hiragana"
 
 ### `unicode_scripts(s: str) -> list[str]`
 
-Returns script for all characters in string.
+Returns script for each character in the string (per-character analysis).
+
+**Note:** This function returns a list with one script name per character, not a summary. For example, `"abc123"` returns `["Latin", "Latin", "Latin", "Latin", "Latin", "Latin"]` (digits are classified as "Latin" via the script heuristics). Use `detect_mixed_scripts()` if you need to detect mixed-script strings.
 
 ```python
 unicode_scripts("Hello")     # → ["Latin", "Latin", "Latin", "Latin", "Latin"]
@@ -72,7 +74,7 @@ Detects runs of mixed scripts in a string.
 {
     "mixed_scripts": bool,      # True if multiple scripts present
     "scripts": list[str],       # Distinct scripts (excluding Common/Inherited)
-    "positions": list[ScriptInfo]  # Positions of non-Common/Inherited chars
+    "positions": list[ScriptInfo]  # Positions of non-Common/Inherited/Other chars
 }
 ```
 
@@ -127,6 +129,8 @@ confusables_count("а")       # → 1 if Cyrillic 'а' looks like Latin 'a'
 | Cherokee | Ꭰ-Ꮏ | U+13A0-U+13FF |
 | Canadian Aboriginal | ᐀-ᗿ | U+1400-U+167F |
 | CJK | Various | U+3000-U+303F |
+
+**Note:** The `unicode_scripts()` function returns per-character script analysis (a list with one entry per character), not a list of distinct scripts. See `unicode_scripts()` documentation for details.
 
 ## Confusables Database
 
@@ -221,5 +225,6 @@ Test cases should include:
 - `detect_mixed_scripts()`
 - `detect_confusables()`
 - `confusables_count()`
+- `reverse_confusables()`
 
 See [overview.md](overview.md) for the module index.

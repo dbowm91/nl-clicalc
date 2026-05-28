@@ -99,7 +99,8 @@ Detection algorithm:
 1. If text contains \r\n → "CRLF"
 2. If text contains \r (not followed by \n) → "CR"
 3. If text contains \n → "LF"
-4. Otherwise → "none"
+4. If CRLF coexists with standalone CR or standalone LF → "mixed"
+5. Otherwise → "none"
 
 ## Index
 

@@ -32,6 +32,9 @@ from nl_calc.evaluator import (
     # Variable functions
     setvar, getvar, delvar, listvars, clearvars,
 )
+
+# Internal (not exported, available if needed):
+#   load_user_config_extended() — loads CUSTOM_NUMBER_WORDS and CUSTOM_OPERATOR_WORDS
 ```
 
 ## Security Architecture
@@ -261,7 +264,7 @@ Webapp wrapper with caching:
 ```python
 from nl_calc import PyCalcApp
 
-app = PyCalcApp(cache_size=1024)
+app = PyCalcApp(cache_size=1024, enable_cache=True)
 result = app.calculate("five plus two")
 ```
 

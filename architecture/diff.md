@@ -51,11 +51,11 @@ Find common prefix and suffix lengths between two strings.
 
 ```python
 >>> common_prefix_suffix("hello", "hell")
-{'common_prefix_len': 3, 'common_suffix_len': 0}
+{'common_prefix_len': 4, 'common_suffix_len': 0}
 >>> common_prefix_suffix("hello", "yo")
 {'common_prefix_len': 0, 'common_suffix_len': 0}
 >>> common_prefix_suffix("testing", "ing")
-{'common_prefix_len': 0, 'common_suffix_len': 0}
+{'common_prefix_len': 0, 'common_suffix_len': 3}
 ```
 
 ### `longest_common_subsequence(a: str, b: str) -> str`
@@ -86,9 +86,12 @@ class DiffSpan(TypedDict):
 
 ```python
 class FirstDiff(TypedDict):
-    position: int
+    a_index: int
+    b_index: int
     a_char: str
     b_char: str
+    a_codepoint: str
+    b_codepoint: str
 ```
 
 ### CommonPrefixSuffix (TypedDict)
@@ -103,9 +106,7 @@ class CommonPrefixSuffix(TypedDict):
 
 ```python
 >>> list(diff_spans("hello", "hallo"))
-[DiffSpan(kind='equal', a_span=[0, 2], b_span=[0, 2], a_text='he', b_text='he'),
- DiffSpan(kind='replace', a_span=[2, 3], b_span=[2, 3], a_text='l', b_text='a'),
- DiffSpan(kind='equal', a_span=[3, 5], b_span=[3, 5], a_text='lo', b_text='lo')]
+[DiffSpan(kind='replace', a_span=[2, 3], b_span=[2, 3], a_text='l', b_text='a')]
 ```
 
 ## Data Structures

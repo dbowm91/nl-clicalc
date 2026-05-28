@@ -29,7 +29,7 @@ from nl_calc.exact import (
 
     # Unicode tools
     unicode_script, unicode_scripts, detect_mixed_scripts,
-    detect_confusables, confusables_count,
+    detect_confusables, confusables_count, reverse_confusables,
 
     # Diff
     first_diff, common_prefix_suffix, levenshtein_distance,
@@ -65,7 +65,7 @@ Low-level operations built on Python's `unicodedata` module.
 | `normalized_equal(a, b)` | bool | Equality after NFC normalization |
 | `measure_basic(s)` | MeasureBasic | Basic text metrics |
 | `count_graphemes(s)` | int | Grapheme cluster count |
-| `truncate_to_grapheme(s, max_len)` | str | Truncate to grapheme boundary |
+| `truncate_to_grapheme(s, max_graphemes)` | str | Truncate to grapheme boundary |
 | `find_invisibles(s)` | list[InvisibleCharInfo] | Detect hidden characters |
 | `visible_repr(s)` | str | Display-safe representation |
 
@@ -83,8 +83,18 @@ Low-level operations built on Python's `unicodedata` module.
     "\u2028": "LINE SEPARATOR",
     "\u2029": "PARAGRAPH SEPARATOR",
     "\u202a": "LEFT-TO-RIGHT EMBEDDING (LRE)",
+    "\u202b": "RIGHT-TO-LEFT EMBEDDING (RLE)",
+    "\u202c": "POP DIRECTIONAL FORMATTING (PDF)",
+    "\u202d": "LEFT-TO-RIGHT OVERRIDE (LRO)",
+    "\u202e": "RIGHT-TO-LEFT OVERRIDE (RLO)",
     "\u2060": "WORD JOINER",
+    "\u2066": "LEFT-TO-RIGHT ISOLATE (LRI)",
+    "\u2067": "RIGHT-TO-LEFT ISOLATE (RLI)",
+    "\u2068": "FIRST STRONG ISOLATE (FSI)",
+    "\u2069": "POP DIRECTIONAL ISOLATE (PDI)",
     "\u00ad": "SOFT HYPHEN (SHY)",
+    "\u180e": "MONGOLIAN VOWEL SEPARATOR (MVS)",
+    "\u034f": "COMBINING GRAPHEME JOINER (CGJ)",
     ...
 }
 ```
@@ -127,6 +137,7 @@ MeasureBasic(
 | `detect_mixed_scripts(s)` | list[ScriptInfo] | Find mixed-script runs |
 | `detect_confusables(s)` | list[ConfusableInfo] | Find confusable homoglyphs |
 | `confusables_count(s)` | int | Fast confusable count |
+| `reverse_confusables(char)` | list[str] | Find chars that confusable-map TO this char |
 
 ### Script Detection
 
@@ -140,6 +151,21 @@ Identifies characters that appear identical but have different Unicode code poin
 # Latin 'a' vs Cyrillic 'а'
 detect_confusables("access")  # Returns confusables in Latin 'a' → Cyrillic 'а'
 ```
+
+### reverse_confusables
+
+```python
+reverse_confusables(char: str) -> list[str]
+```
+
+Given a character, returns all characters from the confusables table that confusable-map TO this character (i.e., characters that look like the given character).
+
+```python
+# Digit 0 looks like letter O
+"0" in reverse_confusables("O")  # True
+```
+
+Returns an empty list if no characters confusable-map to the input.
 
 ---
 
@@ -207,14 +233,33 @@ DiffSpan(
 )
 ```
 
+### FirstDiff
+
+```python
+FirstDiff(
+    a_index=int,         # Position of first difference in string a
+    b_index=int,         # Position of first difference in string b
+    a_char=str,          # Character at position in string a
+    b_char=str,          # Character at position in string b
+    a_codepoint=str,     # "U+XXXX" format
+    b_codepoint=str,     # "U+XXXX" format
+)
+```
+
+### CommonPrefixSuffix
+
+```python
+CommonPrefixSuffix(
+    common_prefix_len=int,   # Length of common prefix
+    common_suffix_len=int,   # Length of common suffix (non-overlapping)
+)
+```
+
 ### Examples
 
 ```python
 first_diff("hello", "hallo")
-# → FirstDiff(index=1, a_char='e', b_char='a')
-
-levenshtein_distance("kitten", "sitting")
-# → 3 (kitten → sitten → sittin → sitting)
+# → FirstDiff(a_index=1, b_index=1, a_char='e', b_char='a', ...)
 
 common_prefix_suffix("abc123", "abc456")
 # → CommonPrefixSuffix(common_prefix_len=3, common_suffix_len=0)

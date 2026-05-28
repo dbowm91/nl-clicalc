@@ -28,6 +28,7 @@ calc "e^(i*pi)"       # -1+0j
 | `boltzmann` | k | 1.381e-23 | J/K |
 | `planck` | h | 6.626e-34 | J·s |
 | `hbar` | ℏ | 1.055e-34 | J·s |
+| `planckbar` | ℏ | 1.055e-34 | J·s |
 | `c` | c | 299792458 | m/s |
 | `echarge` | e | 1.602e-19 | C |
 | `amu` | u | 1.661e-27 | kg |

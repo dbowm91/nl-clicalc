@@ -48,6 +48,8 @@ result = evaluate("10")       # 10
 
 Full pipeline evaluation. Handles natural language, spaces, units, and mixed input. **Main function for user-facing applications.**
 
+Internally calls `normalize_expression()` to convert natural language before evaluation.
+
 ```python
 from nl_clicalc import evaluate_raw
 
@@ -93,7 +95,7 @@ Thread-safe wrapper optimized for web applications. Each instance has isolated c
 ```python
 from nl_clicalc import PyCalcApp
 
-app = PyCalcApp(cache_size=1000)
+app = PyCalcApp(cache_size=1000, enable_cache=True)
 
 # Basic usage - natural language works
 result = app.calculate("five plus three")  # 8
@@ -138,7 +140,7 @@ result = evaluate_raw("2 * pi * earth_radius")  # 40075...
 
 ### `register_function(name: str, func: Callable) -> None`
 
-Register a custom function globally (thread-safe). **Only call during initialization, never with user input.**
+Register a custom function globally (thread-safe).
 
 ```python
 from nl_clicalc import register_function, evaluate_raw

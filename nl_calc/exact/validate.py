@@ -14,6 +14,7 @@ from typing import TypedDict
 MAX_INPUT_LENGTH = 100_000
 MAX_PATTERN_LENGTH = 1000
 MAX_PATTERN_NESTING = 5
+MAX_SAMPLE_LENGTH = 10_000
 
 
 class BracketError(TypedDict):
@@ -316,6 +317,12 @@ def regex_test(
     results: list[RegexMatch] = []
 
     for sample in samples:
+        if len(sample) > MAX_SAMPLE_LENGTH:
+            return RegexTestResult(
+                valid_pattern=True,
+                results=[],
+                error=f"Sample length {len(sample)} exceeds MAX_SAMPLE_LENGTH {MAX_SAMPLE_LENGTH}",
+            )
         match = compiled.search(sample)
         if match is None:
             results.append(RegexMatch(

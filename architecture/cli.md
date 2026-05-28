@@ -10,11 +10,7 @@ python -m nl_calc "five plus two"
 
 ## Main Function
 
-`main()` in `normalize.py` (aliased as `normalize_main()` for build compatibility) handles all CLI parsing and execution:
-
-```python
-from nl_calc.normalize import main, normalize_main  # Both refer to same function
-```
+`main()` in `normalize.py` handles all CLI parsing and execution. When assembled into a single file by `build_single.py`, it is aliased as `normalize_main()` to avoid conflict with the MCP server's `main()` function.
 
 ## CLI Options
 
@@ -29,7 +25,7 @@ from nl_calc.normalize import main, normalize_main  # Both refer to same functio
 | `--json` | Output result as JSON |
 | `-i`, `--interactive` | Start interactive REPL mode |
 | `--mcp` | Run as MCP server for exact text tools |
-| `--verbose` | Show detailed error information and tracebacks |
+| `--verbose` | Show expression in output |
 
 ## Text Commands
 

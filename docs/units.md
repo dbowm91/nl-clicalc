@@ -297,6 +297,43 @@ calc "temp(212, F, C)"
 | Fahrenheit | Celsius | `temp(x, F, C)` → (x - 32) / 1.8 |
 | Celsius | Kelvin | `temp(x, C, K)` → x + 273.15 |
 
+## UnitValue Methods
+
+The `UnitValue` class represents a numeric value with optional units:
+
+```python
+from nl_clicalc import UnitValue
+
+uv = UnitValue(30, "m")
+```
+
+**Constructor:**
+- `UnitValue(value: float, unit: str | None = None)`
+
+**String representation:**
+- `__repr__()` → `"30 m"` (value and unit)
+- `__str__()` → `"30 m"` (delegates to `__repr__`)
+- `__format__(format_spec)` → `"30.00 m"` (formats value with spec)
+
+**Comparison:**
+- `__eq__(other)` → `True`/`False` (compares value and unit, uses epsilon for floats)
+- Unitless values compare equal to their numeric equivalents
+
+**Hashing:**
+- `__hash__()` → Hash of `(value, unit)` tuple
+
+**Arithmetic operations:**
+- `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__pow__`, `__neg__`, `__abs__`, `__round__`
+- Automatic unit conversion when adding/subtracting compatible units
+
+**Type conversions:**
+- `__int__()` → `int(value)`
+- `__float__()` → `float(value)`
+- `__complex__()` → `complex(value)`
+
+**Unit conversion:**
+- `convert_to(target_unit)` → Returns new `UnitValue` in target unit
+
 ## Python API
 
 ```python

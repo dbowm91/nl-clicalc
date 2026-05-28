@@ -248,7 +248,8 @@ Grapheme clusters are counted using Unicode segmentation:
 2. Check for combining characters (category 'M' or 'Mn')
 3. Check for variation selectors (U+FE00-U+FE0F)
 4. Check for zero-width joiners (ZWJ U+200D)
-5. Group connected codepoints into graphemes
+5. Check for Regional Indicator pairs (GB12/GB13: flags like 🇺🇸 = U+1F1FA U+1F1F8)
+6. Group connected codepoints into graphemes
 
 ### Visible Representation Display Order
 
@@ -257,7 +258,8 @@ The `visible_repr()` function has specific ordering for detecting invisible char
 1. First check for known invisible characters (ZWSP, BOM, etc.)
 2. Then check for variation selectors (U+FE00-U+FE0F)
 3. Then check for combining marks (category 'Mn', 'Mc')
-4. Then report character as-is
+4. Then check for BIDI override characters (U+2060-206F, U+202A-202E)
+5. Then report character as-is
 
 This ordering matters because some variation selectors can look like combining marks but should be handled differently.
 
