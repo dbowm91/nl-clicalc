@@ -1515,16 +1515,7 @@ def main() -> int:
         return 0  # Command was handled
 
     output_format = "json" if args.json else "plain"
-    if args.quiet:
-        show_expression = False
-    elif args.verbose:
-        show_expression = True
-    elif args.show:
-        show_expression = True
-    elif quiet_by_default:
-        show_expression = False
-    else:
-        show_expression = False
+    show_expression = not args.quiet and (args.verbose or args.show) and not quiet_by_default
 
     _, exit_code = run(expression, NORMALIZE, PATTERNS, output_format, show_expression)
     return exit_code
