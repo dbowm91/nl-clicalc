@@ -125,6 +125,17 @@ User-defined variables:
 | `listvars()` | List all variables |
 | `clearvars()` | Clear all variables |
 
+## Normalization Functions
+
+### `normalize_expression(expression: str) -> str`
+
+Normalize a natural language or mathematical expression into a canonical form.
+
+```python
+normalize_expression("five plus three")  # "5+3"
+normalize_expression("30m + 100ft")      # "30 m+100 ft"
+```
+
 ## Utility Functions
 
 ```python
