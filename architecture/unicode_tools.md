@@ -38,7 +38,6 @@ Detect if string contains mixed scripts.
 ```
 
 ```python
-@dataclass
 class ScriptInfo(TypedDict):
     index: int
     char: str

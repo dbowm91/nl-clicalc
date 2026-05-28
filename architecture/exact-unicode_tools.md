@@ -201,7 +201,7 @@ if mixed:
 # Check for confusables
 confusables = detect_confusables(text)
 for c in confusables:
-    print(f"Confusable: {c['char']} ({c['name']}) looks like {c['confusable_for']}")
+    print(f"Confusable: {c['char']} ({c['name']}) looks like {c['confusable_with']}")
 ```
 
 ## Testing
