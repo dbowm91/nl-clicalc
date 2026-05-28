@@ -93,12 +93,11 @@ def math_eval(expression: str) -> dict:
         return _error_response("UnexpectedError", str(e))
 
 
-def text_measure(text: str, include_codepoints: bool = False) -> dict:
+def text_measure(text: str) -> dict:
     """Measure text properties.
 
     Args:
         text: Input string.
-        include_codepoints: Include codepoint details (not yet implemented).
 
     Returns:
         Success envelope with metrics, or error envelope.

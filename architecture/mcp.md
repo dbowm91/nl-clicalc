@@ -93,8 +93,7 @@ Registry of all available tools:
     "inputSchema": {
         "type": "object",
         "properties": {
-            "text": {"type": "string"},
-            "include_codepoints": {"type": "boolean", "default": False}
+            "text": {"type": "string"}
         },
         "required": ["text"]
     }
@@ -160,7 +159,7 @@ def _sanitize_error(message: str) -> str:
 | Function | Wraps | Notes |
 |----------|-------|-------|
 | `math_eval(expression)` | `evaluate_raw()` | Math evaluation |
-| `text_measure(text, include_codepoints)` | `measure_text()` | Text metrics |
+| `text_measure(text)` | `measure_text()` | Text metrics |
 | `text_equal(a, b, normalization, casefold, trim)` | `text_equal()` | String comparison |
 | `text_diff_explain(a, b, max_diffs, ...)` | `explain_diff()` | Diff explanation |
 | `text_inspect(text, include_codepoints, ...)` | `inspect_text()` | Hidden char inspection |

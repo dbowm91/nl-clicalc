@@ -48,11 +48,6 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "string",
                     "description": "Input string to measure",
                 },
-                "include_codepoints": {
-                    "type": "boolean",
-                    "description": "Include codepoint details (not yet implemented)",
-                    "default": False,
-                },
             },
             "required": ["text"],
         },
