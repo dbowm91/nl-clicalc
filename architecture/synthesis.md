@@ -8,7 +8,7 @@ Combines primitives from `primitives.py`, `unicode_tools.py`, `diff.py`, `measur
 
 ### Text Measurement
 
-### `measure_text(text: str, include_codepoints: bool = False) -> MeasureTextResult`
+### `measure_text(text: str) -> MeasureTextResult`
 
 Comprehensive text measurement combining multiple primitives.
 
