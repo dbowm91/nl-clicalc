@@ -187,6 +187,13 @@ class TestPrimitives:
         assert "⟦ZWSP⟧" in result
         assert "world" in result
 
+    def test_is_extended_pictographic_cjk_not_emoji(self):
+        from nl_calc.exact.primitives import _is_extended_pictographic
+        assert not _is_extended_pictographic('\u4e00')  # CJK character '一'
+        assert not _is_extended_pictographic('\u4e2d')  # CJK character '中'
+        assert not _is_extended_pictographic('\u0410')  # Cyrillic 'А'
+        assert not _is_extended_pictographic('\u0627')  # Arabic 'ا'
+
 
 class TestUnicodeTools:
     """Tests for Unicode tools."""
