@@ -106,7 +106,7 @@ Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool acce
 - New tests must use the correct API:
   - For NL/unit functionality → use `run()` or test through CLI
   - For pure math expressions → use `evaluate()`
-- 346 tests currently pass (as of last run)
+- 350 tests currently pass (as of last run)
 
 ### Code Style
 - Follow existing patterns in the codebase
