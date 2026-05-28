@@ -28,6 +28,26 @@ from nl_calc.normalize import (
 )
 ```
 
+## Re-exported Symbols
+
+`normalize.py` re-exports symbols from sibling modules for convenience. These are defined in `__all__` and imported at module top level:
+
+```python
+from .evaluator import EvaluationError, evaluate
+from .units import UnitValue
+```
+
+| Symbol | Origin | Purpose |
+|--------|--------|---------|
+| `evaluate` | `evaluator.py` | AST-based expression evaluation |
+| `EvaluationError` | `evaluator.py` | Exception raised on evaluation failures |
+| `UnitValue` | `units.py` | Wrapper for numeric values with a unit |
+
+This allows consumers to import directly from `nl_calc.normalize`:
+```python
+from nl_calc.normalize import evaluate, EvaluationError, UnitValue
+```
+
 ## Data Structures
 
 ### `OPERATOR_CONVERSIONS`
