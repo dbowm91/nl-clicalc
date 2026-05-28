@@ -1,7 +1,7 @@
 # Architecture Review Plan
 
 **Created:** 2026-05-28  
-**Status:** READY FOR EXECUTION
+**Status:** COMPLETE — 2026-05-28
 
 Systematic review of all architecture documentation against the nl-clicalc codebase. Uses subagents to review discrete modules in parallel, with each producing an improvement plan.
 
@@ -291,19 +291,80 @@ Subagents should overwrite these files with fresh analysis based on the current 
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 1: Batch 1 (overview, api, normalize, evaluator, units) | PENDING | |
-| Phase 1: Batch 2 (primitives, unicode_tools, confusables) | PENDING | |
-| Phase 1: Batch 3 (validate, diff, measure, synthesis) | PENDING | |
-| Phase 1: Batch 4 (cli, mcp, exact) | PENDING | |
-| Phase 2: Stale item identification | PENDING | |
-| Phase 3: Consolidation | PENDING | |
+| Phase 1: Batch 1 (overview, api, normalize, evaluator, units) | COMPLETE | 15 review files generated |
+| Phase 1: Batch 2 (primitives, unicode_tools, confusables) | COMPLETE | 3 review files generated |
+| Phase 1: Batch 3 (validate, diff, measure, synthesis) | COMPLETE | 4 review files generated |
+| Phase 1: Batch 4 (cli, mcp, exact) | COMPLETE | 3 review files generated |
+| Phase 2: Stale item identification | COMPLETE | 1 stale items report generated |
+| Phase 3: Consolidation | COMPLETE | This file updated |
 
 ---
 
-## Completion Criteria
+## Completion Summary
 
-This review is complete when:
-1. All 15 modules have corresponding `plans/review_improvements_<module>.md` files
-2. Each file contains verified claims, discrepancies, bugs, and prioritized improvements
-3. Stale items are documented in `plans/review_stale_items.md`
-4. This file is updated with final status and consolidation summary
+**All 15 modules reviewed** with corresponding improvement plans:
+- overview, api, normalize, evaluator, units
+- primitives, unicode_tools, confusables
+- validate, diff, measure, synthesis
+- cli, mcp, exact
+
+**Key Findings by Priority:**
+
+### HIGH Priority Issues (Require Attention)
+1. **evaluator.md**: Missing constants `g`/`standardgravity` and `wien`/`wienconstant`
+2. **diff.md**: All `common_prefix_suffix` examples return wrong values
+3. **diff.md**: `FirstDiff` TypedDict shows 3 fields but code has 6
+4. **api.md/normalize.md**: `normalize_expression` return type documented as `str` but returns `tuple[str, int]`
+5. **cli.md**: `normalize_main` alias documented but doesn't exist in source
+6. **cli.md**: `--verbose` flag behavior mismatch (shows expression vs tracebacks)
+7. **units.py**: Temperature-to-non-temperature conversion crashes after warning
+8. **unicode_tools.md**: `reverse_confusables()` undocumented public function
+
+### MEDIUM Priority Issues
+- `evaluate_with_timeout` docstring uses forbidden generator expression syntax
+- `diff_spans` example shows `equal` spans that code filters out
+- `visible_repr()` BIDI handling undocumented
+- Multiple UnitValue methods undocumented
+- `load_user_config_extended()` undocumented
+- Dead code in `_classify_difference()` and `list_compare()`
+
+### Known Bugs (Code Issues, Not Documentation)
+- **units.py**: Temperature conversion crashes after warning (HIGH)
+- **primitives.py**: `_is_extended_pictographic` range check returns early, bypassing category/name filter
+- **normalize.py**: `_handle_negative_token` may crash on empty split; float regex pattern concerns
+- **synthesis.py**: Unreachable code branches for `accent_or_diacritic_difference` classification
+
+---
+
+## Generated Review Files
+
+All review files are in `plans/` directory:
+- `review_improvements_overview.md`
+- `review_improvements_api.md`
+- `review_improvements_normalize.md`
+- `review_improvements_evaluator.md`
+- `review_improvements_units.md`
+- `review_improvements_primitives.md`
+- `review_improvements_unicode_tools.md`
+- `review_improvements_confusables.md`
+- `review_improvements_validate.md`
+- `review_improvements_diff.md`
+- `review_improvements_measure.md`
+- `review_improvements_synthesis.md`
+- `review_improvements_cli.md`
+- `review_improvements_mcp.md`
+- `review_improvements_exact.md`
+- `review_stale_items.md`
+
+---
+
+## Next Steps
+
+This review identified documentation and code issues requiring attention. Priority should be given to:
+1. Fix HIGH priority documentation discrepancies (wrong examples, missing exports)
+2. Investigate and fix HIGH priority code bugs (temperature conversion, dead code)
+3. Address MEDIUM priority issues in subsequent iterations
+
+**Status:** REVIEW COMPLETE — 2026-05-28
+
+---
