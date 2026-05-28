@@ -31,6 +31,13 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["expression"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "result": {"type": "string", "description": "Evaluation result as string"},
+                "type": {"type": "string", "description": "Python type name of the result"},
+            },
+        },
     },
     "text_measure": {
         "description": "Measure exact text properties: UTF-8 byte length, codepoint count, words, lines, whitespace, newline style, Unicode normalization state, invisibles, and mixed-script signals.",
@@ -48,6 +55,18 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "bytes_utf8": {"type": "integer"},
+                "codepoints": {"type": "integer"},
+                "graphemes": {"type": "integer"},
+                "words": {"type": "integer"},
+                "lines": {"type": "integer"},
+                "nonempty_lines": {"type": "integer"},
+                "blank_lines": {"type": "integer"},
+            },
         },
     },
     "text_equal": {
@@ -76,6 +95,13 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["a", "b"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "equal": {"type": "boolean"},
+                "classification": {"type": "string"},
+            },
+        },
     },
     "text_diff_explain": {
         "description": "Explain why two strings differ, including spans, codepoints, Unicode names, normalization equivalence, confusables, invisibles, and agent-facing classification.",
@@ -102,6 +128,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["a", "b"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "classification": {"type": "string"},
+                "spans": {"type": "array"},
+                "a_codepoints": {"type": "array"},
+                "b_codepoints": {"type": "array"},
+            },
+        },
     },
     "text_inspect": {
         "description": "Inspect a string for hidden characters, Unicode confusables, mixed scripts, normalization state, and display-safe representation.",
@@ -122,6 +157,16 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "invisibles": {"type": "array"},
+                "confusables": {"type": "array"},
+                "scripts": {"type": "array"},
+                "normalization": {"type": "string"},
+                "visible_repr": {"type": "string"},
+            },
+        },
     },
     "text_count": {
         "description": "Count exact characters or produce a character frequency table with codepoint positions.",
@@ -141,6 +186,14 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer"},
+                "positions": {"type": "array"},
+                "frequency": {"type": "object"},
+            },
         },
     },
     "text_truncate": {
@@ -269,6 +322,16 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "required": ["a", "b"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "equal": {"type": "boolean"},
+                "missing_in_b": {"type": "array"},
+                "missing_in_a": {"type": "array"},
+                "duplicates_in_a": {"type": "array"},
+                "duplicates_in_b": {"type": "array"},
+            },
         },
     },
 }

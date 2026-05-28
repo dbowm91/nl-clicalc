@@ -243,7 +243,7 @@ def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
         elif char == ')' and not in_char_class:
             nesting_depth -= 1
             if nesting_depth < 0:
-                nesting_depth = 0
+                return False, f"Unmatched closing '{char}' at position {i}"
 
         i += 1
 
