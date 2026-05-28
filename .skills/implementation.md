@@ -66,10 +66,11 @@ The `_classify_difference()` function in synthesis.py returns different classifi
 
 #### exact/ modules (always separate)
 - `primitives.py` - UTF-8, codepoints, visible_repr
-- `unicode_tools.py` - Script detection, confusables
-- `diff.py` - Levenshtein, diff_spans
+- `unicode_tools.py` - Script detection, confusables (forward and reverse)
+- `confusables.py` - Auto-generated data file (CONFUSABLES dict only)
+- `diff.py` - Levenshtein, diff_spans, `__all__` exports
 - `measure.py` - Line/word metrics
-- `validate.py` - Bracket/JSON/regex validation
+- `validate.py` - Bracket/JSON/regex validation with input limits
 - `synthesis.py` - Text comparison/explanation
 
 ### Always Run Tests
