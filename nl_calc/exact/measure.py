@@ -237,6 +237,8 @@ def char_category_metrics(s: str) -> CharCategoryMetrics:
                 control_chars += 1  # Cc, Co, Cn all count
         elif cat.startswith("M"):  # Mark categories
             combining_marks += 1
+        else:  # Defensive: all valid Unicode categories are L/N/P/S/Z/C/M
+            pass
 
     return CharCategoryMetrics(
         letters=letters,
