@@ -82,12 +82,13 @@ Units are organized by category (length, mass, time, etc.):
 | Pressure | Pa | kPa, bar, psi, atm |
 | Energy | J | kJ, cal, kcal, Wh, kWh, BTU, eV |
 | Power | W | kW, MW, hp |
-| Speed | m/s | km/h, mph, knot |
+| Speed | m/s | km/h, mph, kn |
 | Temperature | K | C, F, R |
-| Frequency | Hz | kHz, MHz, GHz |
-| Force | N | kN, mN |
-| Voltage | V | mV, kV |
-| Current | A | mA, kA |
+| Frequency | Hz | kHz, MHz, GHz, THz |
+| Force | N | kN, dyne, lbf |
+| Voltage | V | mV, kV, μV |
+| Current | A | mA, μA |
+| Area | m2 | km2, cm2, mm2, ha, acre, ft2, sqft, in2, mi2, yd2 |
 | Data Rate | bps | Kbps, Mbps, Gbps |
 
 ## Unit Definition Structure (UNIT_BASE)
