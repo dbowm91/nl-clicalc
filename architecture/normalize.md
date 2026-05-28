@@ -109,7 +109,7 @@ Filler words removed during normalization:
 
 ## Core Functions
 
-### `normalize(text: str, NORMALIZE: dict, PATTERNS: dict) -> list[str]`
+### `normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str`
 Tokenizes and normalizes input text.
 
 **Process:**
@@ -125,7 +125,7 @@ Converts natural language to Python syntax string.
 
 **Returns:** `(normalized_string, exit_code)`
 
-### `run(text: str, NORMALIZE: dict, PATTERNS: dict) -> Any`
+### `run(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]], output_format: str = "plain", show_expression: bool = True) -> tuple[Any, int]`
 Full pipeline: normalize input, then evaluate.
 
 ```python
