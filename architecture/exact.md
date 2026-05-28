@@ -190,7 +190,7 @@ LineMetrics(
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `first_diff(a, b)` | FirstDiff | Position of first difference |
-| `common_prefix_suffix(a, b)` | CommonPrefixSuffix | Longest common prefix/suffix |
+| `common_prefix_suffix(a, b)` | CommonPrefixSuffix | Longest common prefix/suffix lengths |
 | `levenshtein_distance(a, b)` | int | Edit distance |
 | `diff_spans(a, b)` | list[DiffSpan] | Spans that differ |
 | `longest_common_subsequence(a, b)` | str | LCS via dynamic programming |
@@ -217,7 +217,7 @@ levenshtein_distance("kitten", "sitting")
 # → 3 (kitten → sitten → sittin → sitting)
 
 common_prefix_suffix("abc123", "abc456")
-# → CommonPrefixSuffix(prefix="abc", suffix="")
+# → CommonPrefixSuffix(common_prefix_len=3, common_suffix_len=0)
 ```
 
 ---

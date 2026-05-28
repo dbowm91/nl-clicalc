@@ -10,7 +10,7 @@ Provides functions to detect Unicode scripts and identify confusable homoglyph c
 
 Determine the Unicode script of a single character.
 
-Returns script name: `"Latin"`, `"Cyrillic"`, `"Greek"`, `"Han"`, `"Hiragana"`, `"Katakana"`, `"Arabic"`, `"Hebrew"`, `"Devanagari"`, `"Common"`, `"Inherited"`, `"Other"`
+Returns script name: `"Latin"`, `"Cyrillic"`, `"Greek"`, `"Han"`, `"Hiragana"`, `"Katakana"`, `"Arabic"`, `"Hebrew"`, `"Devanagari"`, `"Thai"`, `"Hangul"`, `"Georgian"`, `"Armenian"`, `"Cherokee"`, `"Canadian_Aboriginal"`, `"CJK"`, `"Common"`, `"Inherited"`, `"Other"`
 
 ```python
 >>> unicode_script("A")

@@ -115,6 +115,8 @@ Or use -e flag:
 {"expression": "30*m+100*ft", "result": "60.48 m"}
 ```
 
+The `expression` field contains the normalized expression (after NL processing), not the original input.
+
 ## Error Handling
 
 Errors are printed to stderr with user-friendly messages:
