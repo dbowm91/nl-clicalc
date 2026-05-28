@@ -1,105 +1,101 @@
-# normalize.py Module Review — Improvement Plan
+# normalize Module Review — Improvement Plan
 
 **Reviewed:** architecture/normalize.md against nl_calc/normalize.py
 **Date:** 2026-05-28
 
 ## Verified Claims (with line references)
-
-### Key Exports (lines 17-28)
-- `run`, `normalize`, `normalize_expression`, `main`, `print_help`, `NORMALIZE`, `PATTERNS`, `MAX_INPUT_LENGTH`, `MAX_NESTING_DEPTH` are all correctly exported and match `__all__` (lines 27-40)
-- `MAX_INPUT_LENGTH = 10000` (line 42) matches documentation (line 222)
-- `MAX_NESTING_DEPTH = 100` (line 43) matches documentation (line 223)
-
-### Re-exported Symbols (lines 31-49)
-- `evaluate` and `EvaluationError` are correctly re-exported from `evaluator.py` (line 23)
-- `UnitValue` is correctly re-exported from `units.py` (line 24)
-- All three are listed in `__all__` (lines 28-30)
-
-### Data Structures
-- `OPERATOR_CONVERSIONS` (lines 101-119): All mappings match documented structure (lines 53-65)
-- `FUNCTION_MAPPINGS` (lines 123-217): All function mappings match documented structure (lines 68-82)
-- `NUMBER_WORDS` (lines 219-261): All number words match documented structure (lines 84-99)
-- `CONSTANT_WORDS` (lines 278-300): Physical constant mappings match documented structure (lines 101-112)
-- `STRIPPED_PHRASES` (lines 263-276): Filler phrases match documented structure (lines 114-128)
-- `_COMMON_UNITS` (lines 49-91), `_UNIT_PREFIXES` (lines 94-97), `_UNITS_BY_LENGTH` (line 46): All match documentation (lines 224-226)
-
-### Core Functions
-- `normalize()` (lines 888-939): Signature and behavior match documentation (lines 132-141)
-- `normalize_expression()` (lines 1105-1150): Signature returns `tuple[str, int]` as documented (line 143)
-- `run()` (lines 1153-1194): Signature and behavior match documentation (lines 148-154)
-- `check_if_number()` (lines 388-472): Returns dict with `bool`, `converted`, `type` keys as documented (lines 156-175)
-
-### Regex Patterns (lines 194-210)
-All PATTERNS entries are correctly compiled in `_build_config()` (lines 357-373):
-- `space`, `point`, `negative`, `thousands_separator`, `inline_negative`, `parenthesis`, `operators`, `stripped_chars`, `int`, `float`, `int_number_combine`, `valid_operations`
-
-### Configuration Building
-- `_build_config()` (lines 303-375): Words sorted by length descending as documented (line 216)
-
-### Security Notes
-- No `eval()` usage — uses AST parsing: CORRECT
-- Input length limits enforced at lines 42, 1125-1126: CORRECT
-- Nesting depth limits enforced at line 924-925: CORRECT
-- Invalid tokens raise `ValueError` (line 489): CORRECT
-
-### Module Dependencies
-- normalize.py imports from evaluator (line 23), units (line 24), exact (line 25): CORRECT
+- `normalize.py` re-exports `evaluate`, `EvaluationError`, `UnitValue` — VERIFIED at lines 23-24
+- `__all__` exports match docs — VERIFIED at lines 27-40
+- `OPERATOR_CONVERS` structure and content — VERIFIED at lines 101-119
+- `FUNCTION_MAPPINGS` structure and content — VERIFIED at lines 123-217
+- `NUMBER_WORDS` structure and content — VERIFIED at lines 220-261
+- `CONSTANT_WORDS` includes `avogadros` (plural) — VERIFIED at line 280 (docs omitted at line 105)
+- `STRIPPED_PHRASES` includes most items — VERIFIED at lines 264-276 (docs line 117-128 incomplete)
+- `MAX_INPUT_LENGTH = 10000` — VERIFIED at line 42 (matches docs line 222)
+- `MAX_NESTING_DEPTH = 100` — VERIFIED at line 43 (matches docs line 223)
+- `_UNITS_BY_LENGTH` and `_COMMON_UNITS` pre-computed for performance — VERIFIED at lines 46-91
+- `_build_config()` sorts by length descending — VERIFIED at lines 322-324, 341-342
+- Module-level config at line 379 matches docs — VERIFIED
+- `check_if_number()` returns `dict` with keys `bool`, `converted`, `type` — VERIFIED at line 389 (docs line 156-166)
+- Pipeline diagram in docs (lines 178-192) matches actual processing flow
+- Security notes (lines 238-244) accurate: no eval(), input limits, nesting limits
+- Module dependencies listed at lines 246-251 are accurate
 
 ## Discrepancies Between Documentation and Code
 
-- [MEDIUM] **Pipeline example shows incorrect number combining**
-  - Documentation says (lines 185-186): "Convert number words: [5, +, 3, 100, 20, 2]" then "Combine numbers: [5, +, 322]"
-  - Code actually produces: `5+3*100+22` which equals 327, not 322
-  - The step 4 shows `[5, +, 322]` implying the combination is `5 + 322 = 327`, but the intermediate shows `[5, +, 3, 100, 20, 2]` which should combine to `5 + 3*100 + 22 = 327`
-  - The actual expression is `5+3*100+22`, so step 4 should show `[5, +, 3, *, 100, +, 22]` or explain the multiplication more clearly
-  - Impact: Documentation could mislead readers about how "three hundred twenty two" is parsed
+### MEDIUM — Incomplete `STRIPPED_PHRASES` documentation
+- **Documentation says:** Lines 117-128 show stripped phrases list
+- **Code actually does:** Lines 264-276 include additional phrases: `"tell me"`, `"give me"`, `"the "`
+- **Impact:** Users reading docs won't know these filler words are also stripped
 
-- [LOW] **Docstring at line 947 contains incorrect example**
-  - normalize.py line 947 docstring says: `"three hundred twenty two" -> 3+100+20+2 -> 125`
-  - This is mathematically incorrect: 3+100+20+2 = 125, but "three hundred twenty two" = 3*100 + 22 = 322
-  - The code actually produces `3*100+22` which is correct; only the docstring example is wrong
-  - Impact: Developer confusion about expected behavior
+### MEDIUM — `CONSTANT_WORDS` plural forms undocumented
+- **Documentation says:** Line 105 only shows `"avogadro"` and `"avogadro number"`
+- **Code actually does:** Line 280 includes `"avogadros"` (plural form)
+- **Impact:** Users might not know both singular and plural forms work
 
-- [LOW] **Documentation shows incomplete data structure entries**
-  - `NUMBER_WORDS` documentation (lines 87-98) shows entries like "10": ["teen", "ten"], but code (lines 219-261) has additional entries not shown: "1000000000": ["billion"], "1000000000000": ["trillion"], etc.
-  - `STRIPPED_PHRASES` documentation (lines 114-128) shows 10 items, but code (lines 263-276) has additional: "tell me", "give me", "the "
-  - `CONSTANT_WORDS` documentation (lines 101-112) shows 8 entries, code (lines 278-300) has 15 entries
-  - Impact: Documentation is incomplete but not misleading; it shows representative samples
+### MEDIUM — `FUNCTION_MAPPINGS` entries undocumented (partial)
+- **Documentation says:** Lines 68-82 show abbreviated function mappings
+- **Code actually does:** Lines 123-217 include many more functions (bitand, bitxor, isprime, primefactors, nextprime, prevprime, random, gauss, etc.)
+- **Impact:** Help text at lines 1270-1274 is incomplete compared to actual function set
+
+### LOW — `run()` return type documentation discrepancy
+- **Documentation says:** Line 148 shows `tuple[Any, int]`
+- **Code actually does:** Docstring at line 1162 says `tuple: (result, exit_code)` without annotation; actual type annotation present at line 1159
+- **Impact:** Minor - inline docs incomplete but type annotation correct
+
+### LOW — `normalize_expression()` `skip_validation` parameter undocumented
+- **Documentation says:** Lines 143-146 describe parameters but omit `skip_validation`
+- **Code actually does:** Line 1109 adds `skip_validation: bool = False` parameter
+- **Impact:** Users of custom evaluators won't know this option exists
+
+### LOW — `apply_math_functions()` docstring at line 589-635 is minimal vs docs
+- **Documentation says:** Mentions function name normalization but not the detailed rules (docs lines 129-141)
+- **Code actually does:** Full rules comment at lines 594-598: "sin40 + 2 -> math.sin(40) + 2", etc.
+- **Impact:** Implementation details not documented
 
 ## Potential Bugs
 
-**No bugs found.** The code is functioning correctly for the reviewed claims. The only issue is documentation inaccuracy, not code bugs.
+### MEDIUM — `_handle_negative_token` may crash on empty split
+- **Location:** `normalize.py:693`
+- **Issue:** `tokens[index].split("-")` assumes at least 2 parts. If `temp` has only 1 element, accessing `temp[1]` at line 696 raises `IndexError`.
+- **Suggested investigation:** Trace calls from `_should_handle_inline_negative` and `_should_handle_decimal_negative`. While these guard functions should prevent entering `_handle_negative_token` with invalid tokens, there's no explicit bounds check for the empty case after split.
+
+### MEDIUM — Float regex pattern may limit valid floats
+- **Location:** `normalize.py:368`
+- **Issue:** `"^[-|+]?[0-9]\d*\.\d+?$"` — The pattern `[0-9]\d*` means one digit followed by zero or more digits, but `\d+?` for the fractional part is non-greedy. This could fail to match `10.5` correctly in edge cases. The original intent appears to be matching floats like `3.14`, `.5`, etc.
+- **Suggested investigation:** Verify all expected float formats pass (simple floats like `3.14`, large floats like `123456.789`, floats without integer part like `.5`)
+
+### LOW — `_should_handle_inline_negative` returns True but caller ignores return value
+- **Location:** `normalize.py:747`
+- **Issue:** `_should_handle_inline_negative()` is called but its boolean return is never checked - the function determines if inline negative handling should occur but the result is discarded.
+- **Suggested investigation:** This appears to be dead code flow - the function is called but its result is not used to gate the `_handle_negative_token` call.
+
+### LOW — `_should_handle_decimal_negative` has same issue
+- **Location:** `normalize.py:750`
+- **Issue:** Same pattern - function computes a boolean but result is discarded.
 
 ## Improvement Suggestions
 
 ### HIGH Priority
-
-1. **Fix pipeline example in architecture/normalize.md (lines 176-192)**
-   - Step 4 shows `[5, +, 322]` but should clarify that "three hundred twenty two" becomes `3*100+22` (322)
-   - Suggest showing the multiplication explicitly: `[5, +, 3, '*', 100, '+', 22]` or a cleaner representation
-   - The key issue is that "three hundred" means 3*100, not 3+100
+- **Fix float regex pattern at line 368:** The pattern `^[-|+]?[0-9]\d*\.\d+?$` has issues with `\d*` (zero or more) after first digit. Consider `^[-|+]?[0-9]+\.\d+?$` or clarify intent.
 
 ### MEDIUM Priority
+- **Add `skip_validation` parameter to docs:** This useful parameter for custom evaluators is documented in code but not in architecture docs.
 
-2. **Fix docstring at normalize.py:947**
-   - Change `"3+100+20+2 -> 125"` to `"3*100+20+2 -> 322"` or similar
-   - This docstring is in `_join_number_parts()` and explains the purpose of joining number parts
+- **Document plural constant forms:** Add `avogadros` and other plural forms to architecture docs for completeness.
+
+- **Complete `STRIPPED_PHRASES` documentation:** Add `"tell me"`, `"give me"`, `"the "` to the docs list.
+
+- **Investigate inline negative handling flow:** The functions `_should_handle_inline_negative` and `_should_handle_decimal_negative` compute booleans that appear to be unused. Verify this is intentional or if there is missing logic.
 
 ### LOW Priority
+- **Add `_handle_negative_token` bounds check:** Add explicit check after `split("-")` to handle edge case of single-element result gracefully.
 
-3. **Consider adding more complete data structure documentation**
-   - For `NUMBER_WORDS`, `STRIPPED_PHRASES`, `CONSTANT_WORDS`, the docs show representative samples
-   - Could add a note like "additional entries exist - see source" or show "..." to indicate incompleteness
+- **Document `apply_math_functions` rules:** The detailed rules for function call handling (lines 594-598) would be valuable in architecture docs.
 
-4. **Consider adding `evaluate_raw` to normalize.md exports section**
-   - While `evaluate_raw` is in `evaluator.__all__`, normalize.py re-exports `evaluate` but not `evaluate_raw`
-   - If users are expected to import from normalize.py, consider whether `evaluate_raw` should also be re-exported
+- **Update help text coverage:** `print_help()` at lines 1270-1274 lists functions, but many actual functions (bit operations, memory functions, etc.) are not shown.
+
+- **Consider documenting internal functions:** `_combine_consecutive_numbers`, `_join_number_parts`, `_preprocess_units`, `_handle_unit_conversion_from_tokens` are significant internal functions that process NL input but are not documented in the architecture.
 
 ## Summary
-
-The normalize.py module documentation is largely accurate. All function signatures, data structures, and security claims verify correctly against the source code. The only issues are:
-
-1. A pipeline example showing an intermediate step that could mislead readers about how compound numbers like "three hundred twenty two" are parsed
-2. A docstring containing a mathematically incorrect example (125 instead of 322)
-
-These are documentation-only issues; the actual code implementation is correct and well-designed.
+The normalize module architecture documentation is generally accurate and well-organized, with all major data structures (`OPERATOR_CONVERSIONS`, `NUMBER_WORDS`, `CONSTANT_WORDS`, `FUNCTION_MAPPINGS`) correctly documented. The main discrepancies are incomplete documentation in supportive areas: `STRIPPED_PHRASES` omits 3 entries, `CONSTANT_WORDS` omits plural forms, and `FUNCTION_MAPPINGS` is abbreviated. The potential bugs found are low-to-medium severity, mostly around edge case handling in negative number parsing and a potentially incorrect float regex pattern. All 350 tests pass, indicating the codebase is functionally sound.

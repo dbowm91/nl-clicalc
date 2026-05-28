@@ -5,175 +5,102 @@
 
 ## Verified Claims (with line references)
 
-### Key Exports (lines 15-26)
-- `UnitValue` - **Verified** at units.py:24
-- `normalize_unit` - **Verified** at units.py:1056
-- `get_conversion_factor` - **Verified** at units.py:1100
-- `get_all_units` - **Verified** at units.py:1293
-- `is_unit` - **Verified** at units.py:1115
-- `are_units_compatible` - **Verified** at units.py:1269
-- `convert_temperature` - **Verified** at units.py:1079
-- `FLOAT_EPSILON` - **Verified** at units.py:20
-
-### UnitValue Class
-- Constructor `UnitValue(value: float, unit: str | None = None)` - **Verified** at units.py:31
-- Properties (value, unit) - **Verified** at units.py:32-33
-- Methods: `convert_to(target_unit)` - **Verified** at units.py:134
-- Arithmetic: `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__pow__` - **Verified** at units.py:58-111
-
-### Temperature Conversions
-All formulas in TEMPERATURE_CONVERSIONS verified correct:
-- `convert_temperature(0, "C", "F")` → 32.0 ✓ (units.py:1068)
-- `convert_temperature(100, "C", "F")` → 212.0 ✓
-- `convert_temperature(0, "K", "C")` → -273.15 ✓ (units.py:1064)
-
-### Unit Categories Table (lines 71-93)
-- Most categories match code: Length, Time, Mass, Data, Volume, Pressure, Energy, Power, Speed, Temperature, Frequency, Force, Voltage, Current, Area, Data Rate
-- Canonical forms: `kn` (not `knot`), `R` (not `Ra`)
-
-### Functions
-- `normalize_unit()` - **Verified** at units.py:1056
-- `get_conversion_factor("km", "m")` → 1000.0 ✓
-- `get_conversion_factor("ft", "m")` → 0.3048 ✓
-- `is_unit()`, `are_units_compatible()`, `get_unit_category()`, `get_all_units()` - **Verified**
-
-### Prefixed Units
-- kN (kilonewton), mV (millivolt), mA (milliampere) - **All verified working**
+- `UnitValue` class exported — VERIFIED at code line 24
+- `normalize_unit(unit: str) -> str` — VERIFIED at code line 1056
+- `get_conversion_factor(from_unit, to_unit) -> float` — VERIFIED at code line 1100
+- `get_all_units() -> list[str]` — VERIFIED at code line 1293
+- `is_unit(s: str) -> bool` — VERIFIED at code line 1115
+- `are_units_compatible(unit1, unit2) -> bool` — VERIFIED at code line 1269
+- `convert_temperature(value, from_unit, to_unit) -> float` — VERIFIED at code line 1079
+- `FLOAT_EPSILON = 1e-10` — VERIFIED at code line 20
+- `MAX_RESULT_VALUE = 1e308` — VERIFIED at code line 21
+- UnitValue `__init__(value: float, unit: str | None = None)` — VERIFIED at code line 31
+- UnitValue `convert_to(target_unit)` method — VERIFIED at code line 134
+- UnitValue `__repr__()` method — VERIFIED at code line 35
+- Arithmetic operations (+, -, *, /, **) — VERIFIED at lines 58-111
+- Incompatible unit addition/subtraction raises ValueError — VERIFIED at lines 61, 74
+- Temperature conversion formulas — VERIFIED at TEMPERATURE_CONVERSIONS lines 1061-1076
+- Module has no dependencies on other nl_calc modules — VERIFIED at code line 1-14
 
 ## Discrepancies Between Documentation and Code
 
-### HIGH Priority
+- [MEDIUM] **Documentation lists 18 unit categories but omits "angle" category**
+  - Documentation says: Table shows 18 categories (lines 71-92)
+  - Code actually does: 19 categories exist; "angle" (rad, deg) is present in UNIT_CATEGORIES at lines 1233-1234
+  - Impact: Documentation incomplete; angle units are functional but undocumented
 
-- [HIGH] **Bug: Same-unit multiplication produces wrong unit**
-  - Documentation says: `UnitValue * UnitValue` → "Compound (e.g., `m*m`)"
-  - Code actually does: When units are the same (e.g., `m * m`), returns just `m` instead of `m*m` (units.py:89-90)
-  - Impact: Mathematically incorrect - `2m * 2m` should equal `4 m²`, not `4 m`
-  - Example: `UnitValue(2, "m") * UnitValue(2, "m")` returns `4 m` instead of `4 m*m`
+- [MEDIUM] **Documentation missing several public methods**
+  - Documentation lists only `convert_to()` and `__repr__()` methods (lines 53-57)
+  - Code actually has: `__str__()` (line 40), `__format__()` (line 43), `__eq__()` (line 48), `__hash__()` (line 55), `__radd__()` (line 68), `__rsub__()` (line 81), `__rmul__()` (line 95), `__rtruediv__()` (line 107), `__neg__()`, `__pos__()`, `__abs__()`, `__round__()`, `__complex__()`, `__int__()`, `__float__()` (lines 113-132)
+  - Impact: Public API undocumented
 
-- [HIGH] **Bug: Dead code in `convert_to()` - negative Kelvin warning unreachable**
-  - Code location: units.py:146-162
-  - The `elif self.value < 0 and self.unit in ("K", "kelvin", "kelvins") and self.value < 0:` branch (line 157) can never execute
-  - Reason: When converting temperature to temperature (e.g., K to F), the function returns early at line 148 before reaching line 157
-  - Impact: Code for negative Kelvin warning is dead code
-  - Additionally: `self.value < 0` is checked twice (redundant)
+- [LOW] **Documentation lists function signatures with simplified types**
+  - Documentation shows `is_unit(s: str) -> bool` (line 183)
+  - Code uses `is_unit(text: str) -> bool` (line 1115)
+  - Impact: Parameter name mismatch (s vs text); cosmetic only
 
-### MEDIUM Priority
-
-- [MEDIUM] **Conversion factor documentation has wrong value and direction**
-  - Documentation says: `get_conversion_factor("kg", "lb") → 0.453592`
-  - Code actually returns: `2.2046226218487757`
-  - Reason: Docs show lb→kg factor but label it as kg→lb
-  - Impact: User calling `get_conversion_factor("kg", "lb")` gets wrong value
-  - Fix: Change to `get_conversion_factor("lb", "kg") → 0.453592` OR `get_conversion_factor("kg", "lb") → 2.20462`
-
-- [MEDIUM] **Temperature-to-non-temperature warning is misleading**
-  - Code location: units.py:149-156
-  - Warning says "This may give physically meaningless results"
-  - Code then calls `get_conversion_factor()` which raises `ValueError`
-  - Impact: Warning suggests a bad result will be returned, but actually an exception is raised
-
-- [MEDIUM] **Unit Categories table (lines 71-93) is incomplete**
-  - Missing from Force: `dyne`, `lbf` (code has them at units.py:485-487)
-  - Missing from Voltage: `μV`, `uV` variants (code has them at units.py:498-500)
-  - Missing from Current: `μA`, `uA` variants (code has them at units.py:509-513)
-  - Missing from Frequency: `THz` (code has at units.py:597)
-  - Missing area variants: `m^2`, `km^2`, `sqft`, `sqin`, `sqmi`, `sqyd`, `sqm`
-  - Missing data units: `EB`, `ZB`, `YB`, `bit`
-  - Missing volume: `uL`, `μL`, `floz`, `fl oz`, `tbsp`, `tsp`
-  - Missing time: `ps`, `fortnight`, `decade`, `century`, `millennium`
-
-- [MEDIUM] **Key Exports missing `MAX_RESULT_VALUE`**
-  - Documentation (lines 236-239) documents `MAX_RESULT_VALUE = 1e308`
-  - But it's not listed in Key Exports section (lines 15-26)
-  - Impact: Users don't know this constant is available
-
-### LOW Priority
-
-- [LOW] **Prefixed Units table (lines 219-232) is incomplete**
-  - Only lists: milli, centi, deci, kilo, mega, giga, tera
-  - Missing: micro (μ), nano (n), pico (p)
-  - Example uses kN, mV, mA which are correct but not comprehensive
-
-- [LOW] **Case sensitivity in normalize_unit**
-  - `normalize_unit("kelvin")` → `"K"` (works)
-  - `normalize_unit("Kelvin")` → `"Kelvin"` (case-sensitive, doesn't normalize)
-  - `normalize_unit("KELVIN")` → `"KELVIN"` (case-sensitive)
-  - Impact: Users must use exact case for proper normalization
-
-- [LOW] **Rankine shown as "R" in docs but "Ra" alias not explained**
-  - Code has `"Ra": "R"` in UNIT_ALIASES (line 980)
-  - Docs only show "R" in table (line 86)
-  - Impact: Minor confusion about canonical form
+- [LOW] **Documentation mentions "Prefix" section but code handles prefixes differently**
+  - Documentation says "The system handles SI prefixes" with a table showing deci (d), centi (c) (lines 220-232)
+  - Code does not appear to dynamically apply prefixes; prefixed units like kN, mV, mA are explicitly listed in UNIT_ALIASES
+  - Impact: Documentation may mislead readers about prefix handling mechanism
 
 ## Potential Bugs
 
-### BUG 1: Same-unit multiplication produces mathematically incorrect result
-- **Location**: units.py:89-90
-- **Code**: `if self.unit == other.unit: return UnitValue(self.value * other.value, self.unit)`
-- **Problem**: When multiplying `m * m`, should return `m*m` (or `m²`), not `m`
-- **Fix**: Change to `return UnitValue(self.value * other.value, f"{self.unit}*{other.unit}")` when same unit
+- [HIGH] **Temperature to non-temperature conversion crashes after warning**
+  - Location: `units.py:146-164`
+  - Issue: When converting temperature to non-temperature (e.g., `UnitValue(100, 'K').convert_to('m')`), the code:
+    1. Correctly warns that results may be physically meaningless (line 151-156)
+    2. Then crashes with "Cannot convert from K to m" because K is not in UNIT_BASE
+  - The warning implies the conversion will proceed, but it actually fails
+  - Suggested investigation: Either remove the warning and let the error surface naturally, or implement a fallback that actually performs a meaningless multiplicative conversion
 
-### BUG 2: Dead code - unreachable elif branch
-- **Location**: units.py:157
-- **Problem**: `elif self.value < 0 and self.unit in ("K", "kelvin", "kelvins") and self.value < 0:` is unreachable
-- **Reason**: Early return at line 148 for temperature-to-temperature conversion
-- **Fix**: Remove dead code, or restructure to handle this case
+- [MEDIUM] **Unreachable negative Kelvin warning code**
+  - Location: `units.py:157-162`
+  - Issue: The warning about negative Kelvin values is never triggered because:
+    1. Temperature-to-temperature conversions return early at line 146-148 before reaching line 157
+    2. When target is non-temperature, line 150's `if` is True so the `elif` on line 157 never fires
+  - Additionally, condition `self.value < 0 and ... and self.value < 0` has redundant check
+  - Suggested investigation: Remove dead code or restructure to actually warn when appropriate
 
-### BUG 3: Redundant condition
-- **Location**: units.py:157
-- **Problem**: `self.value < 0` checked twice in the same condition
-- **Fix**: Remove duplicate check
+- [LOW] **Redundant condition in negative Kelvin check**
+  - Location: `units.py:157`
+  - Issue: `self.value < 0` appears twice in the condition
+  - Suggested investigation: Clean up redundant condition
 
 ## Improvement Suggestions
 
 ### HIGH Priority
 
-1. **Fix same-unit multiplication bug** (units.py:89-90)
-   - Change: `if self.unit == other.unit: return UnitValue(self.value * other.value, self.unit)`
-   - To: `if self.unit == other.unit: return UnitValue(self.value * other.value, f"{self.unit}*{other.unit}")`
-   - This ensures `m * m = m*m` (m squared) instead of just `m`
+- **Fix temperature-to-non-temperature conversion behavior**
+  - The warning on line 151-156 promises a conversion but then the code crashes
+  - Options: (1) Remove the warning and let errors fail naturally, (2) Actually implement the multiplicative conversion with a warning, or (3) Raise a proper error about impossible conversion
+  - This creates a poor user experience: warning followed by exception
 
-2. **Remove dead code in convert_to()** (units.py:157)
-   - The negative Kelvin warning code is unreachable due to early return at line 148
-   - Either remove it or restructure the logic to handle K→non-K temperature conversions with the warning
-
-3. **Fix documentation for kg/lb conversion** (architecture/units.md:124)
-   - Change: `get_conversion_factor("kg", "lb") → 0.453592`
-   - To: `get_conversion_factor("kg", "lb") → 2.20462` OR `get_conversion_factor("lb", "kg") → 0.453592`
+- **Make unreachable code reachable or remove it**
+  - The negative Kelvin warning (lines 157-162) can never trigger under current flow
+  - Either remove it or restructure so it actually fires for the appropriate case (if there is one)
 
 ### MEDIUM Priority
 
-4. **Update Unit Categories table with complete unit list**
-   - Add missing Force units: dyne, lbf
-   - Add missing Voltage units: μV, uV
-   - Add missing Current units: μA, uA
-   - Add THz to Frequency
-   - Add area variants, data variants, volume variants, time variants
+- **Document the "angle" unit category**
+  - Add "angle" to the Unit Categories table in documentation
+  - Units: rad, deg
 
-5. **Add `MAX_RESULT_VALUE` to Key Exports** (architecture/units.md:16-26)
-   - Add `MAX_RESULT_VALUE` to the list of exported names
+- **Document all public UnitValue methods**
+  - Add documentation for `__str__`, `__format__`, `__eq__`, `__hash__`, `__radd__`, `__rsub__`, `__rmul__`, `__rtruediv__`, `__neg__`, `__pos__`, `__abs__`, `__round__`, `__complex__`, `__int__`, `__float__`
 
-6. **Clarify temperature-to-non-temperature behavior** (units.py:149-156)
-   - Either: Issue warning AND return a meaningless result (continue with factor-based conversion)
-   - Or: Remove the misleading warning since ValueError is raised anyway
+- **Add `get_unit_category` to the Key Exports section**
+  - Function exists at line 1263 and is documented in Functions section but not in Key Exports
 
 ### LOW Priority
 
-7. **Add micro, nano, pico to Prefixed Units table** (architecture/units.md:219-232)
+- **Fix parameter name in `is_unit` documentation**
+  - Docs show `is_unit(s: str)` but code uses `is_unit(text: str)`
 
-8. **Consider case-insensitive normalization** (units.py:1056-1058)
-   - Or document the case sensitivity behavior
-
-9. **Update Prefixed Units examples** to include more prefix+unit combinations
+- **Clarify prefix handling in documentation**
+  - The documentation's "Prefixed Units" section suggests dynamic prefix parsing
+  - Clarify that prefixed units (kN, mV, mA) are pre-defined aliases, not dynamically generated
 
 ## Summary
 
-The units module is well-implemented with accurate temperature conversions and comprehensive unit coverage. Key issues found:
-
-1. **Critical bug**: Same-unit multiplication (`m * m`) returns `m` instead of `m*m` (m squared)
-2. **Critical bug**: Dead code in `convert_to()` - negative Kelvin warning unreachable
-3. **Documentation error**: kg→lb conversion factor is wrong direction (shows 0.453592 which is lb→kg)
-4. **Documentation gaps**: Many unit variants not listed in Unit Categories table
-5. **Minor issues**: Case sensitivity, dead code, incomplete exports list
-
-All temperature conversion formulas verified correct against code. The module is production-ready aside from the multiplication bug which should be fixed for mathematical correctness.
+The units.md documentation is largely accurate but has three significant issues: (1) A HIGH priority bug where temperature-to-non-temperature conversions issue a warning then crash instead of completing the conversion, (2) Dead code for a negative Kelvin warning that can never be reached due to early returns, and (3) Several public methods and one unit category (angle) are undocumented. The module's core functionality is sound, but these documentation gaps and the temperature conversion bug should be addressed.
