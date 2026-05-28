@@ -9,35 +9,47 @@ This plan consolidates all improvement items identified across the review proces
 ## Wave 1: Critical Bugs (Fix First)
 
 ### 1.1 Temperature-to-non-temperature conversion crashes
-- **Location:** `units.py:146-164`
-- **Issue:** Warning issued then crashes because K not in UNIT_BASE
-- **Fix options:**
-  1. Remove warning and let conversion proceed
-  2. Implement multiplicative conversion with warning
-  3. Raise proper error instead of crashing
+- **Location:** `units.py:146-164` in `UnitValue.convert_to()`
+- **Issue:** When converting temperature to non-temperature unit (e.g., `UnitValue(100, 'K').convert_to('m')`):
+  1. Line 151-156: Warning is issued: "Converting temperature (C=100) to non-temperature unit (m)..."
+  2. Line 157-162: Negative Kelvin check is unreachable (K not in UNIT_BASE, crashes first)
+  3. Line 163: Calls `get_conversion_factor(self.unit, target_unit)` which crashes
+  - Root cause: Temperature units (K, C, F, R) are NOT in UNIT_BASE - they use offset math in `convert_temperature()`, not multiplicative factors
+- **Implementation steps:**
+  1. Read the current code and understand the two conversion paths (temperature-to-temperature vs temperature-to-non-temperature)
+  2. Choose a fix approach:
+     - Option A: Remove warning and let natural error surface
+     - Option B: Catch the ValueError and raise a descriptive error explaining physical meaningless-ness
+     - Option C: Implement actual multiplicative conversion (would be physically wrong, not recommended)
+  3. Also address dead code in lines 157-162 (negative Kelvin check that can never run)
+- **Testing:** Verify `UnitValue(100, 'K').convert_to('m')` behavior before and after fix
 - **Status:** PENDING
 
-### 1.2 Dead code branch in `_classify_difference()`
-- **Location:** `synthesis.py:337-338`
-- **Issue:** `"accent_or_diacritic_difference"` branch unreachable when `nfc_equal=True` because casefold equality implies NFC equality
-- **Fix:** Remove unreachable branch or restructure logic
+### 1.2 Dead code in `list_compare()` near_matches
+- **Location:** `synthesis.py:704-714` in `list_compare()`
+- **Issue:** The `"unicode_normalization_only"` classification in near_matches cannot be triggered:
+  - After NFC normalization, all items in `a_transformed` and `b_transformed` are NFC-normalized
+  - Casefold matching (lines 692-702) fires first and marks positions as seen
+  - When norm_groups matching runs (704-714), all items with same NFC are already matched
+  - The `unicode_normalization_only` classification would require NFC-equal but casefold-different items - impossible after NFC transformation because casefold preserves the NFC form
+- **Implementation steps:**
+  1. Read the `list_compare()` function to understand the three matching phases
+  2. Trace through with example `['café']` vs `['cafe\u0301']` to see the flow
+  3. Remove or refactor the unreachable code path
 - **Status:** PENDING
 
-### 1.3 Dead code in `list_compare()` near_matches
-- **Location:** `synthesis.py:704-714`
-- **Issue:** `"unicode_normalization_only"` classification cannot be triggered through normal usage
-- **Fix:** Remove classification or clarify when it triggers
-- **Status:** PENDING
-
-### 1.4 Float regex pattern has issues
+### 1.3 Float regex pattern has bug with literal pipe in character class
 - **Location:** `normalize.py:368`
-- **Issue:** Pattern `^[-|+]?[0-9]\d*\.\d+?$` is unusual - `[0-9]\d*` is redundant (digit followed by zero or more digits)
-- **Status:** PENDING INVESTIGATION - Needs edge case testing to determine if pattern causes actual bugs
-
-### 1.5 Investigate `_handle_negative_token` crash potential
-- **Location:** `normalize.py:693`
-- **Issue:** `split("-")` may produce single element, causing IndexError at line 696
-- **Status:** PENDING INVESTIGATION
+- **Current pattern:** `"^[-|+]?[0-9]\d*\.\d+?$"`
+- **Issue:** The `[-|+]` character class matches literal pipe character, not "or"
+  - Should be `[-+]` or `[+-]` to match only minus and plus
+  - Bug allows invalid floats like `"3.14|"` to be accepted
+- **Implementation steps:**
+  1. Change `[-|+]?` to `[-+]?` or `[+-]?`
+  2. Verify pattern still matches valid floats: `"3.14"`, `"10.5"`, `"-2.5"`, `".5"` (if intended)
+  3. Verify pattern rejects invalid floats: `"3.14|"`, `"3.14 "`, etc.
+  4. Consider if `.5` without leading zero should be valid (current pattern requires digit before decimal)
+- **Status:** PENDING
 
 ---
 
@@ -98,6 +110,13 @@ This plan consolidates all improvement items identified across the review proces
 - **Location:** `api.md:174` vs `units.py:35-38`
 - **Issue:** Docs show `"5 m"` but actual output is `"5.0 m"`
 - **Fix:** Update example to show `"5.0 m"` or demonstrate `.value` access
+- **Status:** PENDING
+
+### 2.10 Constants `g`/`standardgravity` and `wien`/`wienconstant` are documented but not documented in constants table
+- **Location:** `evaluator.py:875-876, 900-901` vs `architecture/evaluator.md`
+- **Issue:** These constants EXIST in code but are not in the constants table documentation
+- **Note:** Previous plan incorrectly claimed these were missing from code - they ARE present
+- **Fix:** Add these constants to the documentation constants table
 - **Status:** PENDING
 
 ---
@@ -174,73 +193,65 @@ This plan consolidates all improvement items identified across the review proces
 - **Fix:** Add to units.py Key exports list
 - **Status:** PENDING
 
-### 4.4 Investigate `_is_extended_pictographic()` range
-- **Location:** `primitives.py:372-388`
-- **Issue:** Line 378 checks range and returns True immediately; subsequent category/name checks only run if NOT in range. This may over-match characters like ☀ (U+2600)
-- **Fix:** Investigate and narrow range if needed
-- **Status:** PENDING INVESTIGATION
+### 4.4 `_is_extended_pictographic()` 'SIGN' keyword over-matches
+- **Location:** `primitives.py:384-387`
+- **Issue:** The `'SIGN' in name` fallback check is too broad and matches non-pictographic symbols:
+  - U+00A9 (©) COPYRIGHT SIGN - matches 'SIGN'
+  - U+00AE (®) REGISTERED SIGN - matches 'SIGN'
+  - U+2122 (™) TRADE MARK SIGN - matches 'SIGN'
+- **Note:** The main emoji range check (0x1F300-0x1F9FF) is correct; ☀ (U+2600) returns True via a separate range check at line 379, not due to over-matching
+- **Fix:** Consider narrowing the name-based fallback to only match actual emoji-like names, or accept the false positives if the function is only used for detection purposes
+- **Status:** PENDING INVESTIGATION - determine if this causes actual issues in practice
 
-### 4.5 Fix `_handle_negative_token` potential crash
-- **Location:** `normalize.py:693`
-- **Issue:** `split("-")` may produce single element, causing IndexError at line 696
-- **Fix:** Add bounds check after split
-- **Status:** PENDING
-
-### 4.6 Fix `load_user_config_extended` documentation
+### 4.5 Fix `load_user_config_extended` documentation
 - **Location:** `evaluator.py:168-187` vs docs
 - **Issue:** Function exists but not documented (intentionally not exported)
 - **Fix:** Add note about existence but intentional non-export
 - **Status:** PENDING
 
-### 4.7 Add `enable_cache` parameter to PyCalcApp docs
+### 4.6 Add `enable_cache` parameter to PyCalcApp docs
 - **Location:** `api.md` vs `evaluator.py:1414`
 - **Issue:** Constructor missing `enable_cache` parameter in documentation
 - **Fix:** Add parameter to docs
 - **Status:** PENDING
 
-### 4.8 Fix `visible_repr()` display order incomplete
-- **Location:** `primitives.md:253-260` vs code:277-284
-- **Issue:** Docs missing BIDI handling step
-- **Fix:** Add missing step documentation
-- **Status:** PENDING
-
-### 4.9 Add `normalize_expression` `skip_validation` param to docs
+### 4.7 Add `normalize_expression` `skip_validation` param to docs
 - **Location:** `normalize.md:143-146` vs code:1109
 - **Issue:** Useful parameter for custom evaluators not documented
 - **Fix:** Add parameter documentation
 - **Status:** PENDING
 
-### 4.10 Complete `STRIPPED_PHRASES` documentation
+### 4.8 Complete `STRIPPED_PHRASES` documentation
 - **Location:** `normalize.md:117-128` vs code:264-276
 - **Issue:** Missing `"tell me"`, `"give me"`, `"the "`
 - **Fix:** Add missing phrases
 - **Status:** PENDING
 
-### 4.11 Fix newline detection algorithm documentation
+### 4.9 Fix newline detection algorithm documentation
 - **Location:** `architecture/measure.md:98-102`
 - **Issue:** Documentation doesn't show "mixed" detection complexity
 - **Fix:** Add explicit "mixed" detection step
 - **Status:** PENDING
 
-### 4.12 Document `top_level_keys` behavior for non-object JSON
+### 4.10 Document `top_level_keys` behavior for non-object JSON
 - **Location:** `validate.md`
 - **Issue:** Not clear that `top_level_keys` returns `None` for arrays/primitives
 - **Fix:** Add note about behavior for non-objects
 - **Status:** PENDING
 
-### 4.13 Add type validation for None input
+### 4.11 Add type validation for None input
 - **Location:** `measure.py:66,128,200`
 - **Issue:** Functions don't validate `s is not None`
 - **Fix:** Consider raising TypeError for None input
 - **Status:** PENDING
 
-### 4.14 Add `Evaluator` class to Key Exports
+### 4.12 Add `Evaluator` class to Key Exports
 - **Location:** `api.md:15-35`
 - **Issue:** Class is public but undocumented
 - **Fix:** Add to Key Exports
 - **Status:** PENDING
 
-### 4.15 Document `evaluate_raw` complete signature
+### 4.13 Document `evaluate_raw` complete signature
 - **Location:** `api.md:19` vs evaluator.py:1314
 - **Issue:** Doesn't mention it calls `normalize_expression` internally
 - **Fix:** Add note about internal normalization
@@ -408,23 +419,22 @@ Items resolved in prior planning session:
 | File:Line | Priority | Issue |
 |-----------|----------|-------|
 | `units.py:146-164` | HIGH | Temperature-to-non-temperature crash |
-| `synthesis.py:337-338` | HIGH | Dead code branch in `_classify_difference` |
 | `synthesis.py:704-714` | HIGH | Dead code in `list_compare` near_matches |
-| `evaluator.py:836-902` | MEDIUM | Constants documented (g, wien exist) - verify doc coverage |
-| `normalize.py:368` | HIGH | Float regex pattern has issues |
+| `normalize.py:368` | HIGH | Float regex pattern bug (`[-|+]?` literal pipe) |
 | `api.md:130` | HIGH | `normalize_expression` return type wrong |
-| `diff.md:88-92` | HIGH | `FirstDiff` TypedDict wrong |
+| `diff.md:88-92` | HIGH | `FirstDiff` TypedDict wrong (3 fields vs 6) |
 | `diff.md:53-59` | HIGH | `common_prefix_suffix` examples wrong |
-| `cli.md:13,16` | HIGH | `normalize_main` alias missing |
+| `cli.md:13,16` | HIGH | `normalize_main` alias missing (only exists in built file) |
 | `cli.md:32` | HIGH | `--verbose` behavior mismatch |
 | `unicode_tools.md` | HIGH | `reverse_confusables()` undocumented |
 | `normalize.md:156-166` | HIGH | `check_if_number` return type wrong |
-| `evaluator.py:1368` | HIGH | Generator expression in docstring |
+| `evaluator.py:1368` | HIGH | Generator expression in docstring (forbidden syntax) |
 | `api.md:174` | HIGH | `UnitValue` example wrong |
+| `evaluator.py:875-876, 900-901` | MEDIUM | g/wien constants not in docs table |
 | `synthesis.py:238` | MEDIUM | `text_equal()` missing return type annotation |
 | `primitives.py:391` | MEDIUM | `truncate_to_grapheme` parameter name |
 | `architecture/exact.md lines 24-47` | MEDIUM | Missing exports in docs |
-| `architecture/exact.md lines 75-89` | MEDIUM | Invisible characters list incomplete |
+| `architecture/exact.md lines 75-89` | MEDIUM | Invisible characters list incomplete (12 docs vs 22 code) |
 | `primitives.md:253-260` | MEDIUM | `visible_repr()` display order incomplete |
 | `mcp.md:240-246` | MEDIUM | Error code -32700 undocumented |
 | `units.md` | MEDIUM | UnitValue methods undocumented |
@@ -449,9 +459,9 @@ All 350 tests must pass.
 
 | Wave | Items | Priority |
 |------|-------|----------|
-| 1 | 5 (3 bugs + 2 investigations) | Critical Bugs |
-| 2 | 9 | Documentation Corrections |
+| 1 | 3 | Critical Bugs |
+| 2 | 10 | Documentation Corrections |
 | 3 | 8 | Missing Documentation |
-| 4 | 15 | Code Quality |
+| 4 | 13 | Code Quality |
 | 5 | 22 | Low Priority |
-| **Total** | **59** | |
+| **Total** | **56** | |

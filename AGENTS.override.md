@@ -18,28 +18,37 @@ The codebase must work when assembled by `build_single.py` into a single file. A
 Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`. Word forms like `kilonewton` alias to the prefixed form (e.g., `"kilonewton": "kN"`). This is correct behavior - the word form converts to the symbol form which then properly converts.
 
 **exact/ Module File Organization:**
-- `confusables.py` is an auto-generated data file (~180KB, 6581 lines) containing only the CONFUSABLES dict
+- `confusables.py` is an auto-generated data file (~176KB, 6580 lines) containing only the CONFUSABLES dict
 - TypedDict classes are in their logical modules (validate.py, measure.py, unicode_tools.py, etc.), NOT in confusables.py
 - Helper functions like `confusables_count()` should go in `unicode_tools.py`, not `confusables.py`
+- `reverse_confusables()` is implemented and exported but undocumented in architecture docs
 
 **visible_repr() Check Order is Correct:**
 The variation selector check (0xfe00-0xfe0f) comes BEFORE the combining mark check in `visible_repr()`. This is the correct order per AGENTS.md conventions. The code at primitives.py:273-276 is correct.
+
+**Verified NOT Bugs:**
+- `synthesis.py:337-338` - `accent_or_diacritic_difference` IS reachable (NFC-equal strings can be byte-different after casefocus when precomposed vs decomposed)
+- `normalize.py:693` - `_handle_negative_token` has bounds checking + regex guard, no IndexError possible
+
+**build_single.py Convention:**
+- `normalize_main` alias is created by `build_single.py:236` during assembly, does not exist in source `normalize.py`
 
 ### Known Limitations
 
 These are documented limitations that agents should be aware of:
 - `notifications/cancel` and `notifications/progress` not implemented in MCP server
 - `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
-- `_is_extended_pictographic` range (0x1F300-0x10FFFF) is broad and includes private use areas
+- `_is_extended_pictographic` name-based fallback includes 'SIGN' keyword which over-matches non-pictographic symbols like © ® ™
 - Script detection uses heuristic range-based approach, not `unicodedata.script()`
 - Temperature-to-non-temperature conversion (`units.py:146-164`) crashes after issuing warning
+- `_INVISIBLE_CHARS` contains 22 characters but documentation only shows 12
 
 ### Critical Bugs to Avoid
 
 The following bugs exist in the codebase and should NOT be introduced in new code:
-1. **synthesis.py:337-338** - Dead code branch in `_classify_difference()`: `"accent_or_diacritic_difference"` case is unreachable when `nfc_equal=True`
-2. **synthesis.py:704-714** - Dead code in `list_compare()`: `"unicode_normalization_only"` near_match classification is unreachable through normal usage
-3. **units.py:146-164** - Temperature-to-non-temperature conversion crashes after warning
+1. **synthesis.py:704-714** - Dead code in `list_compare()`: `"unicode_normalization_only"` near_match classification is unreachable through normal usage
+2. **units.py:146-164** - Temperature-to-non-temperature conversion crashes after issuing warning
+3. **normalize.py:368** - Float regex `[-|+]?` bug: matches literal pipe character instead of just minus and plus
 
 ### Architecture Conventions
 

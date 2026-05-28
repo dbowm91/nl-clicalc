@@ -218,14 +218,15 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - **Newline detection `mixed` value** - The `mixed` newline style can be returned but was not properly detected in original implementation
 - **`_get_script_heuristic()` benefits from caching** - Now has `@functools.lru_cache` decorator
 - **Cf (format) characters intentionally excluded** - `control_chars` in `measure.py` excludes `Cf` category; format characters are silently ignored per UTS #55
-- **confusables.py is a data file** - The file `nl_calc/exact/confusables.py` is auto-generated data only (~180KB, 6581 lines). TypedDict classes are in their logical modules, NOT in confusables.py
+- **confusables.py is a data file** - The file `nl_calc/exact/confusables.py` is auto-generated data only (~176KB, 6580 lines). TypedDict classes are in their logical modules, NOT in confusables.py
 - **`confusables_count()` helper** - Fast function to count confusables without building full list (unicode_tools.py)
 - **`reverse_confusables()` helper** - Given a character, returns all characters that confusable-map TO it using a cached inverted index (unicode_tools.py)
 - **`unicode_scripts()` batch function** - Returns script list for all chars in string (unicode_tools.py)
 - **`longest_common_subsequence()`** - Implemented in diff.py using dynamic programming
-- **`accent_or_diacritic_difference` classification** - Returned when NFC equal but casefold differs (e.g., "café" vs "cafe\u0301")
+- **`accent_or_diacritic_difference` classification** - Returned when NFC equal but casefold differs (e.g., "café" vs "cafe\u0301"). This IS reachable - verified with precomposed vs decomposed forms.
 - **`common_prefix_suffix()` examples fixed** - Docstring now has working examples showing overlap prevention behavior
 - **validate.py input limits** - `MAX_INPUT_LENGTH = 100_000` enforced in `check_brackets()` and `validate_json()`, raises `ValueError`
+- **`_INVISIBLE_CHARS` contains 22 characters** - Documentation only shows 12; missing: U+180e, U+034f, U+202b-202e, U+2066-2069
 
 ### TypedDict vs NamedTuple
 - Architecture docs may show `@dataclass class Xxx(NamedTuple)` but code uses `class Xxx(TypedDict)`
@@ -250,23 +251,44 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 
 **Wave 1 - Critical Bugs:**
 1. `units.py:146-164` - Temperature-to-non-temperature conversion crashes after warning
-2. `synthesis.py:337-338` - Dead code branch in `_classify_difference()` - `"accent_or_diacritic_difference"` unreachable when `nfc_equal=True`
-3. `synthesis.py:704-714` - Dead code in `list_compare()` - `"unicode_normalization_only"` near_match classification unreachable
+2. `synthesis.py:704-714` - Dead code in `list_compare()` - `"unicode_normalization_only"` near_match classification unreachable
+
+**Verified as NOT bugs (do not list in plan):**
+- `_classify_difference()` lines 337-338 - Branch IS reachable when NFC-equal strings have different byte representations after casefold (precomposed vs decomposed forms)
+- `_handle_negative_token()` - Bounds checking and regex guard prevent IndexError
 
 **Investigations needed:**
-- `normalize.py:368` - Float regex pattern unusual, needs edge case testing
-- `normalize.py:693` - `_handle_negative_token` potential IndexError
+- `normalize.py:368` - Float regex pattern bug: `[-|+]?` matches literal pipe (should be `[-+]?`)
 
-See `plans/plan.md` for full implementation plan with 59 items across 5 waves.
+See `plans/plan.md` for full implementation plan with 56 items across 5 waves.
 
 ## Implementation Plan
 
 The `plans/plan.md` contains the active implementation plan with items organized into waves:
 
-- **Wave 1**: Critical bugs (temperature crash, dead code in synthesis)
+- **Wave 1**: Critical bugs (temperature crash, list_compare dead code, float regex bug)
 - **Wave 2**: Documentation corrections (normalize_expression return type, FirstDiff, common_prefix_suffix examples)
 - **Wave 3**: Missing documentation (reverse_confusables, first_diff, CommonPrefixSuffix)
 - **Wave 4**: Code quality improvements
 - **Wave 5**: Low priority improvements
 
 All 350 tests must continue to pass as items are addressed.
+
+## Verification Notes (from planning session)
+
+### Confirmed Issues
+- `units.py:146-164` - Temperature-to-non-temperature conversion crashes: Warning followed by ValueError because K/C/F/R not in UNIT_BASE
+- `synthesis.py:704-714` - `list_compare()` near_matches `"unicode_normalization_only"` is unreachable dead code
+- `normalize.py:368` - Float regex `[-|+]?` bug: literal pipe accepted (should be `[-+]?`)
+
+### Confirmed NOT Bugs
+- `synthesis.py:337-338` - `accent_or_diacritic_difference` IS reachable when NFC-equal but byte-different after casefold
+- `normalize.py:693` - `_handle_negative_token` has bounds checking + regex guard, no IndexError
+
+### Constants Missing from Docs (but exist in code)
+- `g` / `standardgravity` = 9.80665 at evaluator.py:875-876
+- `wien` / `wienconstant` = 2.897771955e-3 at evaluator.py:900-901
+
+### build_single.py Convention
+- `normalize_main` alias is created by `build_single.py:236` during assembly, does not exist in source `normalize.py`
+- Source only has `main()`, not `normalize_main()`
