@@ -50,6 +50,8 @@ WordMetrics(words=3, unique_words_casefolded=2,
             average_word_length=5.0)
 ```
 
+Note: `average_word_length` is rounded to 2 decimal places.
+
 ### `char_category_metrics(text: str) -> CharCategoryMetrics`
 
 Break down characters by Unicode category.
@@ -98,8 +100,6 @@ Detection algorithm:
 2. If text contains \r (not followed by \n) → "CR"
 3. If text contains \n → "LF"
 4. Otherwise → "none"
-
-Note: `average_word_length` is rounded to 2 decimal places.
 
 ## Index
 
