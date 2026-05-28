@@ -91,7 +91,7 @@ Converts natural language expressions to Python syntax.
 | Stripping of filler phrases | `"what's"`, `"calculate"`, etc. |
 | Unit suffix parsing | `"30m"` → number with unit `m` |
 
-**Key exports:** `run()`, `normalize()`, `normalize_expression()`, `main()`
+**Key exports:** `run()`, `normalize()`, `normalize_expression()`, `main()`, `print_help()`, `NORMALIZE`, `PATTERNS`
 
 **Detailed documentation:** [normalize.md](normalize.md)
 
@@ -114,7 +114,7 @@ Safely evaluates mathematical expressions using Python's AST module (NOT `eval()
 | Physical constants | `pi`, `e`, `c`, `h`, `avogadro`, etc. |
 | Caching and async | `evaluate_cached()`, `evaluate_async()` |
 
-**Key exports:** `evaluate()`, `evaluate_raw()`, `evaluate_cached()`, `PyCalcApp`
+**Key exports:** `evaluate()`, `evaluate_raw()`, `evaluate_cached()`, `evaluate_async()`, `evaluate_with_timeout()`, `PyCalcApp`, `Evaluator`, `EvaluationError`, `TimeoutError`
 
 **Detailed documentation:** [evaluator.md](evaluator.md)
 
@@ -149,7 +149,7 @@ Provides comprehensive unit conversion support.
 
 **File:** `nl_calc/__main__.py`
 
-Entry point for `python -m nl_calc`. Delegates to `normalize.main()`.
+Entry point for `python -m nl_calc`. Sets up `sys.path` and delegates to `normalize.main()`, which handles CLI parsing, interactive REPL, and MCP server mode.
 
 **CLI documentation:** [cli.md](cli.md)
 
@@ -292,7 +292,7 @@ Higher-level text analysis combining primitives.
 
 **File:** `nl_calc/exact/confusables.py`
 
-Auto-generated Unicode confusables table (~180KB, ~6500 lines) from UTS #39.
+Auto-generated Unicode confusables table (~180KB, ~6580 lines) from UTS #39.
 
 Maps confusable characters for homoglyph attack detection.
 
