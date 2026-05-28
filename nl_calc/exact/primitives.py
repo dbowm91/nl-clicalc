@@ -375,22 +375,14 @@ def _is_extended_pictographic(char: str) -> bool:
     Uses codepoint ranges for common emoji blocks.
     """
     cp = ord(char)
-    # Common emoji ranges:
-    # U+1F300 to U+1F9FF (Misc Symbols, Emoticons, Transport, etc.)
-    # U+2600 to U+26FF (Misc symbols)
-    # U+2700 to U+27BF (Dingbats)
-    # Also check category 'So' (Symbol other) which includes many emoji
-    if 0x1F300 <= cp <= 0x10FFFF:
-        return True
-    if 0x2600 <= cp <= 0x26FF:
-        return True
-    if 0x2700 <= cp <= 0x27BF:
+    if (0x1F300 <= cp <= 0x1F9FF or  # Emoticons, Transport, Symbols and Pictographs Extended-A
+        0x2600 <= cp <= 0x26FF or    # Misc symbols
+        0x2700 <= cp <= 0x27BF):     # Dingbats
         return True
     # Check if it's an emoji via category and name patterns
     cat = unicodedata.category(char)
     if cat == 'So':
         name = unicodedata.name(char, '')
-        # Most emoji names contain 'EMOJI' or 'FACE' or 'SYMBOL'
         if 'EMOJI' in name or 'FACE' in name or 'SYMBOL' in name or 'SIGN' in name:
             return True
     return False
