@@ -473,7 +473,13 @@ def _is_prime(n: int) -> bool:
 
 
 def _prime_factors(n: int) -> str:
-    """Return prime factorization as a string."""
+    """Return prime factorization as a formatted string.
+
+    Returns a string of the form "2^2 × 3 × 5" where each prime factor
+    is separated by " × ". Factors with exponent 1 appear as the prime
+    itself (e.g. "3"), while factors with higher exponents include the
+    exponent (e.g. "2^2"). For n < 2, returns the number as a string.
+    """
     n = int(n)
     if n < 2:
         return str(n)
