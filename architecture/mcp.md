@@ -35,14 +35,6 @@ class ErrorEnvelope(TypedDict):
     hints: list[str]           # Suggested fixes
 ```
 
-### Success Envelope
-
-```python
-class SuccessEnvelope(TypedDict):
-    ok: bool                    # Always True for success
-    result: dict               # Tool-specific result
-```
-
 ### TOOL_SCHEMAS
 
 Registry of all available tools:
@@ -226,6 +218,7 @@ def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
 | Code | Name | Description |
 |------|------|-------------|
 | -32600 | InvalidRequest | Invalid JSON-RPC request |
+| -32601 | MethodNotFound | Unknown method |
 | -32602 | InvalidParams | Invalid method parameters |
 | -32603 | InternalError | Internal error |
 | -32000 | ToolError | Tool execution error |
@@ -312,7 +305,7 @@ Then send JSON-RPC requests via stdio:
 
 1. **Unified Tool Registry** — `TOOL_SCHEMAS` in schemas.py is single source of truth
 2. **Case-insensitive matching** — Tool names matched case-insensitively with suggestions
-3. **Standardized Responses** — All tools use Success/Error envelopes
+3. **Standardized Responses** — All tools use error envelopes and JSON-RPC result wrapping
 4. **Error Sanitization** — Non-ASCII stripped from error messages
 5. **Input Validation** — Length limits enforced before processing
 

@@ -32,10 +32,12 @@ Routes MCP requests to appropriate handlers:
 
 | Method | Handler | Description |
 |--------|---------|-------------|
-| `initialize` | `_handle_initialize()` | Initialize connection |
+| `initialize` | `_handle_initialize()` (called inline) | Initialize connection |
 | `tools/list` | `_handle_list_tools()` | List available tools |
 | `tools/call` | `_handle_call_tool()` | Execute a tool |
 | `notifications/initialized` | None | Acknowledgment |
+
+Note: `_handle_initialize` is defined as a separate function in `server.py` but is called directly from `handle_request`'s routing logic.
 
 ### `_handle_list_tools(request: dict) -> dict`
 
