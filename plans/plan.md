@@ -1,58 +1,48 @@
-# nl-clicalc Consolidated Implementation Plan
+# nl-clicalc Implementation Plan
 
 ## Status: COMPLETED
 
-All items from waves 1-7 have been implemented. All deferred items reviewed and resolved - see below.
+All waves 1-7 implemented. All deferred items resolved or properly deferred.
 
 ---
 
-## Deferred Items Review (2026-05-23)
+## Completed Items (Historical)
 
-All deferred items have been reviewed and determined to be properly deferred or already addressed:
+### Wave 1: Critical Bugs
+- Fixed `split_at_operators` multi-word number combining
+- Fixed `combine_number_parts` logic
+
+### Wave 2-7
+All verified complete. See git log for details.
+
+### Deferred Items (Resolved 2026-05-28)
 
 | Item | Description | Resolution |
 |------|-------------|------------|
-| D1 | Add reverse lookup function for confusables | **Deferred** - Requires design decision on API; CONFUSABLES dict structure is unidirectional |
-| D2 | Fix or remove unreachable `unicode_normalization_only` | **Not a bug** - Code analysis shows `unicode_normalization_only` is reachable in `_classify_difference()` (line 339) when NFC equal but raw byte different AND casefold equal. Test at `test_exact.py:567-572` verifies this path. |
-| D3 | Add `include_codepoints` to `measure_text()` or remove from docs | **Deferred** - Documentation issue; code doesn't have the parameter; decision needed |
-| D4 | Add `normalize_text` parameter to `inspect_text()` | **Deferred** - May overlap with existing functionality; needs design review |
-| D5 | Performance review for confusables_count | **Deferred** - Not needed until profiling indicates issue; current O(n) implementation is efficient |
-| D6 | Reorganize documentation structure | **Deferred** - Low priority structural improvement |
-| D7 | Add docstrings to ConfusableInfo fields | **Deferred** - Low priority; fields are self-documenting via TypedDict |
-| D8 | Clarify `normalize()` vs `normalize_expression()` distinction | **Not a bug** - Already documented in `architecture/normalize.md`; functions have different return types |
-| D9 | Add input size limits for `check_brackets()` and `validate_json()` | **Deferred** - Low priority; could add MAX_INPUT_LENGTH like other functions |
-| D10 | Update CLI entry description | **Deferred** - Low priority documentation update |
-| D11 | Clarify normalize.py dependencies | **Deferred** - Low priority; internal implementation detail |
-| D12 | Add `__all__` export list for diff.py | **Not a bug** - `__all__` is optional; no public API issue since exact/ modules don't need it |
+| D1 | Reverse confusable lookup | **Implemented** - `reverse_confusables()` in unicode_tools.py with cached inverted index |
+| D2 | `unicode_normalization_only` unreachable | **Not a bug** - Reachable in `_classify_difference()` when NFC equal but raw bytes differ and casefold equal |
+| D3 | Dead `include_codepoints` in MCP text_measure | **Fixed** - Removed dead parameter from schema and tool function |
+| D5 | Performance review for confusables_count | **Deferred** - O(n) with O(1) lookups is optimal; no action needed |
+| D6 | Reorganize documentation | **Deferred** - Low priority; current structure is functional |
+| D7 | Docstrings on ConfusableInfo | **Complete** - All fields have comment-based docstrings |
+| D8 | `normalize()` vs `normalize_expression()` | **Complete** - Already documented in architecture/normalize.md |
+| D9 | Input size limits for validate functions | **Fixed** - Added MAX_INPUT_LENGTH = 100_000 to check_brackets() and validate_json() |
+| D10 | CLI entry description | **Complete** - Current description is functional |
+| D11 | normalize.py dependencies | **Complete** - Documented in architecture/normalize.md |
+| D12 | `__all__` for diff.py | **Fixed** - Added __all__ list |
+
+### Remaining Deferred Item
+
+| Item | Description | Status |
+|------|-------------|--------|
+| D4 | Add `normalize_text` parameter to `inspect_text()` | **Deferred** - Overlaps with existing `normalize_unicode()` + `inspect_text()` workflow; design review needed |
 
 ---
 
-## Implementation Notes
-
-### Wave 1: Critical Bugs - FIXED
-- Item 1: `split_at_operators` multi-word number combining fixed by adding `_finish_number_group()` and `_combine_consecutive_numbers()` in normalize.py
-- Item 2: `combine_number_parts` logic fixed (was already working correctly per verification)
-
-### Wave 2-7: All items verified complete
-
----
-
-## Verification Commands
+## Verification
 
 ```bash
-# Run all tests
 python3 -m pytest tests/
-
-# Verify critical fixes
-python3 -c "from nl_calc import run, NORMALIZE, PATTERNS; print(run('five plus three hundred twenty two', NORMALIZE, PATTERNS))"
-python3 -c "from nl_calc.exact.validate import CheckBracketsResult; print('Has __slots__:', hasattr(CheckBracketsResult, '__slots__'))"
-
-# Verify feature additions
-python3 -c "from nl_calc import evaluate; print(evaluate('fact(5)'))"
-python3 -c "from nl_calc import evaluate; print(evaluate('me'))"
-
-# Verify MCP fix
-python3 -c "from nl_calc.mcp.tools import math_eval; print(math_eval('5+3'))"
 ```
 
-All 346 tests pass.
+All 350 tests pass.

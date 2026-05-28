@@ -118,11 +118,14 @@ Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool acce
 ### Current Test Structure
 ```
 tests/
-├── conftest.py           # Shared fixtures
-├── test_clicalc.py       # Original functional tests (95 tests)
-├── test_security_fuzz.py # Security tests (22 tests)
-├── test_tokenization.py  # Tokenization edge cases (54 tests)
-├── test_math_identities.py # Mathematical laws verification (28 tests)
+├── conftest.py              # Shared fixtures
+├── test_clicalc.py          # Core functional tests
+├── test_security_fuzz.py    # Security/fuzz tests
+├── test_tokenization.py     # Tokenization edge cases
+├── test_math_identities.py  # Mathematical laws verification
+├── test_mcp_server.py       # MCP server integration tests
+├── test_exact.py            # Exact module tests
+├── test_cli_text.py         # CLI text tools tests
 ```
 
 ### API Usage Reminder
@@ -173,7 +176,7 @@ def val(expr):
 ## File Locations
 
 - **CLI entry**: `nl_calc/__main__.py`
-- **Normalize functions**: `nl_calc/normalize.py` (lines 500-650)
+- **Normalize functions**: `nl_calc/normalize.py` (1525 lines)
 - **Evaluator functions**: `nl_calc/evaluator.py`
 - **Unit definitions**: `nl_calc/units.py` (lines 145-600)
 - **Tests**: `tests/`
@@ -216,10 +219,12 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - **Cf (format) characters intentionally excluded** - `control_chars` in `measure.py` excludes `Cf` category; format characters are silently ignored per UTS #55
 - **confusables.py is a data file** - The file `nl_calc/exact/confusables.py` is auto-generated data only (~180KB, 6581 lines). TypedDict classes are in their logical modules, NOT in confusables.py
 - **`confusables_count()` helper** - Fast function to count confusables without building full list (unicode_tools.py)
+- **`reverse_confusables()` helper** - Given a character, returns all characters that confusable-map TO it using a cached inverted index (unicode_tools.py)
 - **`unicode_scripts()` batch function** - Returns script list for all chars in string (unicode_tools.py)
 - **`longest_common_subsequence()`** - Implemented in diff.py using dynamic programming
 - **`accent_or_diacritic_difference` classification** - Returned when NFC equal but casefold differs (e.g., "café" vs "cafe\u0301")
 - **`common_prefix_suffix()` examples fixed** - Docstring now has working examples showing overlap prevention behavior
+- **validate.py input limits** - `MAX_INPUT_LENGTH = 100_000` enforced in `check_brackets()` and `validate_json()`, raises `ValueError`
 
 ### TypedDict vs NamedTuple
 - Architecture docs may show `@dataclass class Xxx(NamedTuple)` but code uses `class Xxx(TypedDict)`
@@ -259,3 +264,4 @@ All waves of `plans/plan.md` have been completed (2026-05-28):
 - **Wave 4**: Improved script detection, fixed check_if_number return type, CLI show_expression, primefactors docs
 - **Wave 5**: 22 low-priority improvements (docstrings, aliases, MCP outputSchemas, etc.)
 - **Wave 6**: Consolidated 3 pairs of duplicate documentation files into single files
+- **Deferred items**: D1 (reverse confusables) implemented, D3 (dead MCP param) removed, D9 (input limits) added, D12 (__all__) added

@@ -49,8 +49,9 @@ For each module, examine:
 ### 5. Known Code Patterns
 - TypedDict classes don't support `__slots__` (ignored by Python)
 - `_get_script_heuristic()` is cached with `@lru_cache`
-- CONFUSABLES dict is unidirectional (Latin → confusable chars)
+- CONFUSABLES dict has `reverse_confusables()` for reverse lookups
 - `unicode_normalization_only` classification is valid and reachable
+- `MAX_INPUT_LENGTH = 100_000` enforced in validate.py and MCP tools
 
 ## Common Issues Found in This Codebase
 

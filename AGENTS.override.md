@@ -30,7 +30,6 @@ The variation selector check (0xfe00-0xfe0f) comes BEFORE the combining mark che
 These are documented limitations that agents should be aware of:
 - `notifications/cancel` and `notifications/progress` not implemented in MCP server
 - `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
-- Bidirectional confusable detection not implemented
 - `_is_extended_pictographic` range (0x1F300-0x10FFFF) is broad and includes private use areas
 - Script detection uses heuristic range-based approach, not `unicodedata.script()`
 
@@ -56,3 +55,8 @@ These are documented limitations that agents should be aware of:
 **visible_repr() Check Order:**
 - Variation selector check (0xfe00-0xfe0f) comes BEFORE combining mark check
 - This is correct per Unicode display recommendations
+
+**validate.py Input Limits:**
+- `MAX_INPUT_LENGTH = 100_000` enforced in `check_brackets()` and `validate_json()`
+- Functions raise `ValueError` when input exceeds the limit
+- Consistent with MCP layer's `MAX_TEXT_LENGTH` constant
