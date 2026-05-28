@@ -11,6 +11,7 @@ import re
 from typing import TypedDict
 
 
+MAX_INPUT_LENGTH = 100_000
 MAX_PATTERN_LENGTH = 1000
 MAX_PATTERN_NESTING = 5
 
@@ -103,7 +104,13 @@ def check_brackets(
     Returns:
         Dictionary with balanced (bool), unmatched_openers (list),
         and unmatched_closers (list).
+
+    Raises:
+        ValueError: If input exceeds MAX_INPUT_LENGTH.
     """
+    if len(s) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input length {len(s)} exceeds MAX_INPUT_LENGTH {MAX_INPUT_LENGTH}")
+
     if pairs is None:
         pairs = DEFAULT_BRACKET_PAIRS
 
@@ -169,7 +176,13 @@ def validate_json(s: str) -> ValidateJsonResult:
     Returns:
         Dictionary with valid (bool), error message (if invalid),
         line, column, position (if invalid), and type/top_level_keys (if valid).
+
+    Raises:
+        ValueError: If input exceeds MAX_INPUT_LENGTH.
     """
+    if len(s) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input length {len(s)} exceeds MAX_INPUT_LENGTH {MAX_INPUT_LENGTH}")
+
     try:
         parsed = json.loads(s)
 

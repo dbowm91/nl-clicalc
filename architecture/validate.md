@@ -102,6 +102,16 @@ RegexTestResult(
 
 **Supported flags**: `IGNORECASE`, `MULTILINE`, `DOTALL`, `UNICODE`, `DEBUG`, `VERBOSE`
 
+## Input Limits
+
+```python
+MAX_INPUT_LENGTH = 100_000  # Maximum input length for check_brackets/validate_json
+MAX_PATTERN_LENGTH = 1000   # Maximum regex pattern length
+MAX_PATTERN_NESTING = 5     # Maximum regex nesting depth
+```
+
+`check_brackets()` and `validate_json()` raise `ValueError` when input exceeds `MAX_INPUT_LENGTH`. This is consistent with the MCP layer's `MAX_TEXT_LENGTH` limit.
+
 ## Error Handling
 
 All functions return result dicts with error information rather than raising exceptions:
