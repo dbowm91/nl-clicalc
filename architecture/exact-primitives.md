@@ -68,9 +68,19 @@ _INVISIBLE_CHARS: dict[str, tuple[str, str]] = {
     "\u00a0": ("NO-BREAK SPACE", "NBSP"),
     "\u2028": ("LINE SEPARATOR", "LINE SEP"),
     "\u2029": ("PARAGRAPH SEPARATOR", "PARA SEP"),
-    # ... more
+    "\u202a": ("LEFT-TO-RIGHT EMBEDDING", "LRE"),
+    "\u202b": ("RIGHT-TO-LEFT EMBEDDING", "RLE"),
+    "\u202c": ("POP DIRECTIONAL FORMATTING", "PDF"),
+    "\u202d": ("LEFT-TO-RIGHT OVERRIDE", "LRO"),
+    "\u202e": ("RIGHT-TO-LEFT OVERRIDE", "RLO"),
+    "\u2066": ("LEFT-TO-RIGHT ISOLATE", "LRI"),
+    "\u2067": ("RIGHT-TO-LEFT ISOLATE", "RLI"),
+    "\u2068": ("FIRST STRONG ISOLATE", "FSI"),
+    "\u2069": ("POP DIRECTIONAL ISOLATE", "PDI"),
     "\u2060": ("WORD JOINER", "WORD JOINER"),
     "\u00ad": ("SOFT HYPHEN", "SHY"),
+    "\u180e": ("MONGOLIAN VOWEL SEPARATOR", "MVS"),
+    "\u034f": ("COMBINING GRAPHEME JOINER", "CGJ"),
 }
 ```
 
