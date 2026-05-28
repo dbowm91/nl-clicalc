@@ -182,6 +182,7 @@ def val(expr):
 - **Tests**: `tests/`
 - **Build script**: `build_single.py`
 - **Install script**: `install.py`
+- **Active plan**: `plans/plan.md`
 
 ## Debugging Tips
 
@@ -244,43 +245,28 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`
 - Temperature conversions use offset math, not multiplicative factors
 - `mps` (meters per second) is in `UNIT_CATEGORIES` as "speed"
-- Temperature-to-non-temperature conversions produce a warning then crash (BUG: should not crash)
 
-### Architecture Review Findings (2026-05-28)
+### Known Bugs (from architecture review)
 
-The architecture review identified these issues requiring attention:
+**Wave 1 - Critical Bugs:**
+1. `units.py:146-164` - Temperature-to-non-temperature conversion crashes after warning
+2. `synthesis.py:337-338` - Dead code branch in `_classify_difference()` - `"accent_or_diacritic_difference"` unreachable when `nfc_equal=True`
+3. `synthesis.py:704-714` - Dead code in `list_compare()` - `"unicode_normalization_only"` near_match classification unreachable
 
-**HIGH Priority Bugs:**
-- `units.py:146-164` - Temperature-to-non-temperature conversion crashes after warning
-- `synthesis.py:337-338` - Dead code: `accent_or_diacritic_difference` branch unreachable when nfc_equal=True
-- `synthesis.py:704-714` - Dead code: `unicode_normalization_only` near_match unreachable
+**Investigations needed:**
+- `normalize.py:368` - Float regex pattern unusual, needs edge case testing
+- `normalize.py:693` - `_handle_negative_token` potential IndexError
 
-**HIGH Priority Documentation Issues:**
-- `normalize_expression()` returns `tuple[str, int]` not `str` (api.md, normalize.md)
-- Missing constants `g`/`standardgravity` and `wien`/`wienconstant` in evaluator.py
-- All `common_prefix_suffix` examples in diff.md return wrong values
-- `FirstDiff` TypedDict shows 3 fields but code has 6
-- `normalize_main` alias documented but doesn't exist in source
-- `reverse_confusables()` undocumented public function
-
-See `plans/review_stale_items.md` for full list of 28 identified issues.
-
-### API Usage Reminder
-For testing NL/unit features:
-- Use `run()` or CLI, NOT `evaluate()`
-- `evaluate()` only works with valid Python syntax
-
-For pure math:
-- Use `evaluate()`
-- Results may be `UnitValue` - extract with `.value`
+See `plans/plan.md` for full implementation plan with 59 items across 5 waves.
 
 ## Implementation Plan
 
-All waves of `plans/plan.md` have been completed (2026-05-28):
-- **Wave 1**: Fixed LCS backtracking bug, narrowed _is_extended_pictographic range
-- **Wave 2**: Fixed bitwise NOT accepting floats, fixed measure_text() docs
-- **Wave 3**: Fixed 10 documentation corrections across architecture/ files
-- **Wave 4**: Improved script detection, fixed check_if_number return type, CLI show_expression, primefactors docs
-- **Wave 5**: 22 low-priority improvements (docstrings, aliases, MCP outputSchemas, etc.)
-- **Wave 6**: Consolidated 3 pairs of duplicate documentation files into single files
-- **Deferred items**: D1 (reverse confusables) implemented, D3 (dead MCP param) removed, D9 (input limits) added, D12 (__all__) added
+The `plans/plan.md` contains the active implementation plan with items organized into waves:
+
+- **Wave 1**: Critical bugs (temperature crash, dead code in synthesis)
+- **Wave 2**: Documentation corrections (normalize_expression return type, FirstDiff, common_prefix_suffix examples)
+- **Wave 3**: Missing documentation (reverse_confusables, first_diff, CommonPrefixSuffix)
+- **Wave 4**: Code quality improvements
+- **Wave 5**: Low priority improvements
+
+All 350 tests must continue to pass as items are addressed.

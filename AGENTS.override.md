@@ -32,6 +32,14 @@ These are documented limitations that agents should be aware of:
 - `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
 - `_is_extended_pictographic` range (0x1F300-0x10FFFF) is broad and includes private use areas
 - Script detection uses heuristic range-based approach, not `unicodedata.script()`
+- Temperature-to-non-temperature conversion (`units.py:146-164`) crashes after issuing warning
+
+### Critical Bugs to Avoid
+
+The following bugs exist in the codebase and should NOT be introduced in new code:
+1. **synthesis.py:337-338** - Dead code branch in `_classify_difference()`: `"accent_or_diacritic_difference"` case is unreachable when `nfc_equal=True`
+2. **synthesis.py:704-714** - Dead code in `list_compare()`: `"unicode_normalization_only"` near_match classification is unreachable through normal usage
+3. **units.py:146-164** - Temperature-to-non-temperature conversion crashes after warning
 
 ### Architecture Conventions
 
