@@ -55,7 +55,7 @@ from .evaluator import (
     DEFAULT_CACHE_SIZE,
 )
 from .normalize import main, run, normalize, normalize_expression, print_help, NORMALIZE, PATTERNS, MAX_INPUT_LENGTH, MAX_NESTING_DEPTH
-from .units import UnitValue, normalize_unit, get_conversion_factor, get_all_units, is_unit, FLOAT_EPSILON
+from .units import UnitValue, normalize_unit, get_conversion_factor, get_all_units, is_unit, get_unit_category, are_units_compatible, FLOAT_EPSILON
 
 __version__ = "1.1.0"
 __author__ = "nl-calc Contributors"
@@ -93,6 +93,8 @@ __all__ = [
     "get_conversion_factor",
     "get_all_units",
     "is_unit",
+    "get_unit_category",
+    "are_units_compatible",
     "FLOAT_EPSILON",
     # Configuration
     "load_user_config",

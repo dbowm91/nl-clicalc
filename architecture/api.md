@@ -134,7 +134,7 @@ get_all_units()                        # ['A', 'B', 'BTU', ...]
 is_unit("m")                           # True
 get_unit_category("m")                 # "length"
 are_units_compatible("m", "ft")        # True
-FLOAT_EPSILON                          # 1e-15
+FLOAT_EPSILON                          # 1e-10
 ```
 
 ## Security Constants
@@ -176,16 +176,6 @@ Raised when `evaluate_with_timeout()` exceeds timeout.
 ### `Memory`
 
 Memory register class (returned by `memory_*` functions return floats, but `Memory` class available for type hints).
-
-## Security Constants
-
-```python
-MAX_EXPONENT = 10000
-MAX_FACTORIAL = 1000
-MAX_NESTING_DEPTH = 100
-MAX_RESULT_VALUE = 1e308
-DEFAULT_CACHE_SIZE = 1024
-```
 
 ## Performance Characteristics
 
