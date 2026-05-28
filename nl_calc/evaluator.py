@@ -956,6 +956,8 @@ class Evaluator(ast.NodeVisitor):
         "variance": _variance,
         "var": _variance,
         "variance_sample": _variance_sample,
+        "vars": _variance_sample,
+        "var_sample": _variance_sample,
         "sum": _sum,
         "max": _max,
         "min": _min,
