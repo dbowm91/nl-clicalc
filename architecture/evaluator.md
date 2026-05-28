@@ -142,26 +142,32 @@ Built-in physical and mathematical constants:
 |------|-------|-------------|
 | `pi` | 3.141592653589793 | π |
 | `e` | 2.718281828459045 | e |
-| `c` | 299792458 | Speed of light (m/s) |
-| `na` | 6.02214076e23 | Avogadro number |
-| `h` | 6.62607015e-34 | Planck constant |
-| `k` | 1.380649e-23 | Boltzmann constant |
-| `r` | 8.314462618 | Gas constant (J/mol·K) |
-| `g` | 9.80665 | Standard gravity (m/s²) |
-| `G` | 6.67430e-11 | Gravitational constant |
-| `elementarycharge` | 1.602176634e-19 | Elementary charge (C) |
-| `epsilon0` | 8.8541878128e-12 | Vacuum permittivity |
-| `mu0` | 1.25663706212e-6 | Vacuum permeability |
-| `me` | 9.1093837015e-31 | Electron mass (kg) |
-| `mp` | 1.67262192369e-27 | Proton mass (kg) |
-| `mn` | 1.67493e-27 | Neutron mass (kg) |
-| `re` | 2.817952326e-15 | Classical electron radius |
-| `alpha` | 7.2973525693e-3 | Fine structure constant |
-| `rydberg` | 10973731.6 | Rydberg constant (m⁻¹) |
-| `stefan` | 5.670374e-8 | Stefan-Boltzmann constant |
-| `wien` | 2.897771955e-3 | Wien displacement (m·K) |
-
-Additional from `math` module: `inf`, `nan`
+| `tau` | 6.283185307179586 | 2π |
+| `inf` | math.inf | Infinity |
+| `nan` | math.nan | Not a number |
+| `i` / `j` | 1j | Imaginary unit |
+| `c` / `c0` / `speedoflight` / `speedoflightvacuum` | 299792458 | Speed of light (m/s) |
+| `na` / `avogadro` / `avogadros` | 6.02214076e23 | Avogadro number |
+| `h` / `planck` / `planckconstant` | 6.62607015e-34 | Planck constant (J·s) |
+| `k` / `boltzmann` / `boltzmannconstant` | 1.380649e-23 | Boltzmann constant (J/K) |
+| `r` / `gasconstant` / `idealgasconstant` | 8.314462618 | Gas constant (J/mol·K) |
+| `g` / `standardgravity` | 9.80665 | Standard gravity (m/s²) |
+| `G` / `gravitationalconstant` | 6.67430e-11 | Gravitational constant |
+| `elementarycharge` / `echarge` | 1.602176634e-19 | Elementary charge (C) |
+| `f` / `faraday` / `faradayconstant` | 96485.33212 | Faraday constant (C/mol) |
+| `u` / `amu` / `atomicmassunit` | 1.66053906660e-27 | Atomic mass unit (kg) |
+| `epsilon0` / `vacuumpermittivity` | 8.8541878128e-12 | Vacuum permittivity (F/m) |
+| `mu0` / `vacuumpermeability` | 1.25663706212e-6 | Vacuum permeability (H/m) |
+| `G` / `gravitationalconstant` | 6.67430e-11 | Gravitational constant (N·m²/kg²) |
+| `me` / `electronmass` | 9.1093837015e-31 | Electron mass (kg) |
+| `mp` / `protonmass` | 1.67262192369e-27 | Proton mass (kg) |
+| `mn` / `neutronmass` | 1.67493e-27 | Neutron mass (kg) |
+| `re` / `electronradius` | 2.817952326e-15 | Classical electron radius (m) |
+| `alpha` / `finestructure` | 7.2973525693e-3 | Fine structure constant |
+| `rydberg` / `rydbergconstant` | 10973731.568160 | Rydberg constant (m⁻¹) |
+| `stefan` / `stefanboltzmann` | 5.670374419e-8 | Stefan-Boltzmann constant (W/m²·K⁴) |
+| `wien` / `wienconstant` | 2.897771955e-3 | Wien displacement constant (m·K) |
+| `planckbar` / `hbar` / `reducedplanck` | 1.054571817e-34 | Reduced Planck constant (J·s) |
 
 ## Memory System
 
