@@ -2,28 +2,30 @@
 
 A natural language math expression calculator that parses expressions in English (like "five plus three") and converts them to numeric results, with support for unit conversions.
 
+**All 350 tests pass.**
+
 ---
 
 ## Table of Contents
 
 - [System Architecture](#system-architecture)
 - [Core Modules](#core-modules)
-  - [normalize.py](#normalizepy--natural-language-processing)
-  - [evaluator.py](#evaluatorpy--ast-based-expression-evaluation)
-  - [units.py](#unitspy--unit-definitions-and-conversions)
-  - [CLI Entry Point](#cli-entry-point)
-- [exact/ — Unicode Text Primitives](#exact--unicode-text-primitives)
-  - [primitives.py](#primitivespy)
-  - [unicode_tools.py](#unicode_toolspy)
-  - [measure.py](#measurepy)
-  - [diff.py](#diffpy)
-  - [validate.py](#validatepy)
-  - [synthesis.py](#synthesispy)
-  - [confusables.py](#confusablespy)
-- [mcp/ — Model Context Protocol Server](#mcp--model-context-protocol-server)
-  - [schemas.py](#schemspy)
-  - [tools.py](#toolspy)
-  - [server.py](#serverpy)
+  - [normalize.py](normalize.md) — Natural Language Processing
+  - [evaluator.py](evaluator.md) — AST-Based Expression Evaluation
+  - [units.py](units.md) — Unit Definitions and Conversions
+  - [CLI Entry Point](cli.md)
+- [exact/ — Unicode Text Primitives](exact.md)
+  - [primitives.py](primitives.md)
+  - [unicode_tools.py](unicode_tools.md)
+  - [measure.py](measure.md)
+  - [diff.py](diff.md)
+  - [validate.py](validate.md)
+  - [synthesis.py](synthesis.md)
+  - [confusables.py](confusables.md)
+- [mcp/ — Model Context Protocol Server](mcp.md)
+  - [schemas.py](mcp.md#schemaspy)
+  - [tools.py](mcp.md#toolspy)
+  - [server.py](mcp.md#serverpy)
 - [Build System](#build-system)
 - [Data Flow](#data-flow)
 - [Key Data Structures](#key-data-structures)
@@ -35,41 +37,41 @@ A natural language math expression calculator that parses expressions in English
 ## System Architecture
 
 ```
-                     ┌─────────────────────────────────────────────────────────┐
-                     │                        CLI / API                         │
-                     │                   (nl_calc/__main__.py)                  │
-                     └──────────────────────────┬──────────────────────────────┘
-                                                │
-                     ┌──────────────────────────▼──────────────────────────────┐
-                     │                    normalize.py                         │
-                     │         (Natural Language → Python Expression)          │
-                     │                                                              │
-                     │  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐ │
-                     │  │ Number Words │  │   Operators   │  │ Function Names │ │
-                     │  │    "five"   │  │    "plus"    │  │  "square root" │ │
-                     │  │     → 5     │  │     → +      │  │     → sqrt     │ │
-                     │  └──────────────┘  └──────────────┘  └────────────────┘ │
-                     └──────────────────────────┬──────────────────────────────┘
-                                                │
-                     ┌──────────────────────────▼──────────────────────────────┐
-                     │                     evaluator.py                         │
-                     │               (Python AST → Result)                     │
-                     │                                                              │
-                     │  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐ │
-                     │  │    Math      │  │  Constants   │  │    Memory     │ │
-                     │  │  Functions   │  │   (π, c, e)   │  │   (M, M+, MR) │ │
-                     │  └──────────────┘  └──────────────┘  └────────────────┘ │
-                     └──────────────────────────┬──────────────────────────────┘
-                                                │
-                     ┌──────────────────────────▼──────────────────────────────┐
-                     │                       units.py                          │
-                     │              (Unit Definitions & Conversions)           │
-                     │                                                              │
-                     │  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐ │
-                     │  │  Length (m) │  │   Time (s)   │  │   Energy (J)  │ │
-                     │  │  Mass (kg)  │  │    Data (B)  │  │  Temperature  │ │
-                     │  └──────────────┘  └──────────────┘  └────────────────┘ │
-                     └─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        CLI / API                                │
+│                   (nl_calc/__main__.py)                         │
+└────────────────────────────────────┬────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼────────────────────────────┐
+│                      normalize.py                               │
+│           (Natural Language → Python Expression)                │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐  │
+│  │ Number Words │  │   Operators   │  │  Function Names  │  │
+│  │    "five"    │  │    "plus"     │  │  "square root"    │  │
+│  │      → 5     │  │      → +      │  │      → sqrt       │  │
+│  └──────────────┘  └──────────────┘  └────────────────────┘  │
+└────────────────────────────────────┬────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼────────────────────────────┐
+│                      evaluator.py                               │
+│                (Python AST → Result)                            │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐  │
+│  │     Math     │  │  Constants   │  │       Memory       │  │
+│  │  Functions   │  │   (π, c, e)   │  │      (M, M+, MR)   │  │
+│  └──────────────┘  └──────────────┘  └────────────────────┘  │
+└────────────────────────────────────┬────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼────────────────────────────┐
+│                        units.py                                 │
+│               (Unit Definitions & Conversions)                   │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐  │
+│  │  Length (m)  │  │   Time (s)   │  │    Energy (J)     │  │
+│  │  Mass (kg)   │  │   Data (B)    │  │   Temperature (K)  │  │
+│  └──────────────┘  └──────────────┘  └────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -145,7 +147,7 @@ Provides comprehensive unit conversion support.
 
 ---
 
-### CLI Entry Point
+### [CLI Entry Point](cli.md)
 
 **File:** `nl_calc/__main__.py`
 
@@ -175,7 +177,7 @@ nl_calc/exact/
 
 ---
 
-### primitives.py
+### [primitives.py](primitives.md)
 
 **File:** `nl_calc/exact/primitives.py`
 
@@ -199,7 +201,7 @@ Core text primitives built on Python's `unicodedata` module.
 
 ---
 
-### unicode_tools.py
+### [unicode_tools.py](unicode_tools.md)
 
 **File:** `nl_calc/exact/unicode_tools.py`
 
@@ -219,7 +221,7 @@ Unicode script detection and confusable character identification.
 
 ---
 
-### measure.py
+### [measure.py](measure.md)
 
 **File:** `nl_calc/exact/measure.py`
 
@@ -235,7 +237,7 @@ Text metrics by line, word, and character category.
 
 ---
 
-### diff.py
+### [diff.py](diff.md)
 
 **File:** `nl_calc/exact/diff.py`
 
@@ -253,7 +255,7 @@ String comparison algorithms.
 
 ---
 
-### validate.py
+### [validate.py](validate.md)
 
 **File:** `nl_calc/exact/validate.py`
 
@@ -269,7 +271,7 @@ Format validation for JSON, brackets, and regex.
 
 ---
 
-### synthesis.py
+### [synthesis.py](synthesis.md)
 
 **File:** `nl_calc/exact/synthesis.py`
 
@@ -288,7 +290,7 @@ Higher-level text analysis combining primitives.
 
 ---
 
-### confusables.py
+### [confusables.py](confusables.md)
 
 **File:** `nl_calc/exact/confusables.py`
 
@@ -308,7 +310,7 @@ MCP server for AI agent tool access. Provides stdio-based interface to exact/ to
 nl_calc/mcp/
 ├── __init__.py   # Package exports
 ├── schemas.py    # Tool input/output schemas
-├── tools.py       # Tool implementations
+├── tools.py      # Tool implementations
 └── server.py     # MCP protocol handler
 ```
 
