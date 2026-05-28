@@ -77,7 +77,7 @@ Commands in REPL:
 - `help` - Show available operators and functions
 - `history` - Show evaluation history
 - `clear` - Clear history
-- `quit` / `exit` - Exit REPL
+- `quit` / `exit` / `exit()` - Exit REPL
 
 ## Shell Glob Detection
 
@@ -123,4 +123,4 @@ Errors are printed to stderr with user-friendly messages:
 - `Evaluation error: ...`
 - `Error: ...`
 
-Verbose mode (`-v`) shows full traceback.
+Verbose mode (`--verbose`) shows full traceback.
