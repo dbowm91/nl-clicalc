@@ -8,9 +8,11 @@ including confusables, normalization issues, and casefold collisions.
 from __future__ import annotations
 
 import keyword
+import re
 import unicodedata
 from typing import TypedDict
 
+from .diff import levenshtein_distance
 from .unicode_tools import detect_confusables
 
 
@@ -318,4 +320,289 @@ def identifier_inspect(
     return IdentifierInspectResult(
         identifiers=id_infos,
         collisions=collisions,
+    )
+
+
+class TableIdentifierEntry(TypedDict, total=False):
+    """An identifier entry in the table passed to identifier_table_inspect."""
+    name: str
+    kind: str
+    file: str
+    line: int
+
+
+class TableCollisionInfo(TypedDict):
+    """Information about a collision between identifiers in a table."""
+    kind: str
+    names: list[str]
+    detail: str
+
+
+class ReservedKeywordHit(TypedDict):
+    """An identifier that is a reserved keyword in the target language."""
+    name: str
+    language: str
+    file: str
+    line: int
+
+
+class MixedStyleGroup(TypedDict):
+    """A group of identifiers with the same stripped form but different styles."""
+    stripped: str
+    names: list[str]
+    styles: list[str]
+
+
+class IdentifierTableInspectResult(TypedDict):
+    """Result of identifier table inspection."""
+    count: int
+    collisions: list[TableCollisionInfo]
+    reserved_keyword_hits: list[ReservedKeywordHit]
+    mixed_style_groups: list[MixedStyleGroup]
+    findings: list[str]
+
+
+_RUST_KEYWORDS: frozenset[str] = frozenset({
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn",
+    "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in",
+    "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+    "self", "Self", "static", "struct", "super", "trait", "true", "type",
+    "unsafe", "use", "where", "while",
+})
+
+_JS_KEYWORDS: frozenset[str] = frozenset({
+    "break", "case", "catch", "const", "continue", "debugger", "default",
+    "delete", "do", "else", "enum", "export", "extends", "false", "finally",
+    "for", "function", "if", "import", "in", "instanceof", "let", "new",
+    "null", "return", "static", "super", "switch", "this", "throw", "true",
+    "try", "typeof", "var", "void", "while", "with", "yield",
+})
+
+_TS_KEYWORDS: frozenset[str] = _JS_KEYWORDS | frozenset({
+    "any", "boolean", "constructor", "declare", "get", "module",
+    "require", "number", "set", "string", "symbol", "type",
+    "from", "of", "readonly", "abstract", "as", "async", "await",
+    "enum", "export", "implements", "interface", "is", "keyof",
+    "namespace", "package", "private", "protected", "public",
+    "static", "override",
+})
+
+_LANG_KEYWORDS: dict[str, frozenset[str]] = {
+    "python": frozenset(keyword.kwlist),
+    "rust": _RUST_KEYWORDS,
+    "javascript": _JS_KEYWORDS,
+    "typescript": _TS_KEYWORDS,
+}
+
+
+def _classify_style(name: str) -> str:
+    """Classify the naming style of an identifier."""
+    if not name:
+        return "invalid"
+    if name[0].isupper():
+        if "_" not in name and "-" not in name and name.isidentifier() and any(c.isupper() for c in name):
+            return "PascalCase"
+    if "_" in name and "-" not in name:
+        parts = name.split("_")
+        if all(p.islower() or not p for p in parts):
+            return "snake_case"
+        if all(p.isupper() or not p for p in parts):
+            return "SCREAMING_SNAKE_CASE"
+    if "-" in name and "_" not in name:
+        parts = name.split("-")
+        if all(p.islower() or not p for p in parts):
+            return "kebab-case"
+    if name[0].islower() and "_" not in name and "-" not in name and name.isidentifier():
+        if any(c.isupper() for c in name):
+            return "camelCase"
+    if name.isidentifier():
+        return "mixed"
+    return "invalid"
+
+
+def _strip_style(name: str) -> str:
+    """Strip case and style separators to get a canonical comparison form."""
+    stripped = re.sub(r"[_\-]", "", name)
+    return stripped.lower()
+
+
+def identifier_table_inspect(
+    identifiers: list[dict],
+    language: str = "python",
+    checks: list[str] | None = None,
+) -> IdentifierTableInspectResult:
+    """Inspect a table of identifiers for collisions, reserved keywords, and mixed styles.
+
+    Args:
+        identifiers: List of dicts with required 'name' (str), optional 'kind' (str),
+                     'file' (str), 'line' (int).
+        language: Target language for keyword checking ('python', 'rust',
+                  'javascript', 'typescript', 'json_key', 'generic').
+        checks: Subset of checks to run. Defaults to all checks:
+                ['casefold', 'normalization', 'confusable', 'style', 'reserved', 'mixed_style'].
+
+    Returns:
+        IdentifierTableInspectResult with collisions, keyword hits, and mixed style groups.
+
+    Example:
+        >>> result = identifier_table_inspect([{'name': 'myVar'}, {'name': 'MyVar'}])
+        >>> result['collisions']
+        [{'kind': 'casefold', 'names': ['myVar', 'MyVar'], ...}]
+    """
+    if checks is None:
+        checks = ["casefold", "normalization", "confusable", "style", "reserved", "mixed_style"]
+
+    valid_checks = {"casefold", "normalization", "confusable", "style", "reserved", "mixed_style"}
+    active_checks = [c for c in checks if c in valid_checks]
+
+    count = len(identifiers)
+    collisions: list[TableCollisionInfo] = []
+    reserved_hits: list[ReservedKeywordHit] = []
+    mixed_style_groups: list[MixedStyleGroup] = []
+    findings: list[str] = []
+
+    names = [entry.get("name", "") for entry in identifiers]
+
+    if "casefold" in active_checks:
+        cf_map: dict[str, list[str]] = {}
+        for name in names:
+            cf_key = name.casefold()
+            cf_map.setdefault(cf_key, []).append(name)
+        for cf_key, group in cf_map.items():
+            if len(group) > 1:
+                collisions.append(TableCollisionInfo(
+                    kind="casefold",
+                    names=group,
+                    detail=f"Casefold collision: {', '.join(group)}",
+                ))
+        if cf_map and any(len(g) > 1 for g in cf_map.values()):
+            findings.append("Casefold collisions detected")
+
+    if "normalization" in active_checks:
+        nfc_map: dict[str, list[str]] = {}
+        for name in names:
+            nfc_key = unicodedata.normalize("NFC", name)
+            nfc_map.setdefault(nfc_key, []).append(name)
+        for nfc_key, group in nfc_map.items():
+            originals = list(set(group))
+            if len(originals) > 1:
+                collisions.append(TableCollisionInfo(
+                    kind="normalization",
+                    names=originals,
+                    detail=f"Normalization collision (NFC '{nfc_key}'): {', '.join(originals)}",
+                ))
+        if nfc_map and any(len(set(g)) > 1 for g in nfc_map.values()):
+            findings.append("Normalization collisions detected")
+
+    if "confusable" in active_checks:
+        checked_pairs: set[tuple[str, str]] = set()
+        for i, entry_a in enumerate(identifiers):
+            for j, entry_b in enumerate(identifiers):
+                if i >= j:
+                    continue
+                name_a = entry_a.get("name", "")
+                name_b = entry_b.get("name", "")
+                pair = (name_a, name_b) if name_a <= name_b else (name_b, name_a)
+                if pair in checked_pairs:
+                    continue
+
+                confusables_a = detect_confusables(name_a)
+                confusables_b = detect_confusables(name_b)
+
+                is_confusable = False
+                if confusables_a and confusables_b:
+                    a_targets = {c["confusable_with"] for c in confusables_a}
+                    b_targets = {c["confusable_with"] for c in confusables_b}
+                    if a_targets & b_targets:
+                        is_confusable = True
+
+                if not is_confusable:
+                    for c in confusables_a:
+                        if c["confusable_with"] in name_b:
+                            is_confusable = True
+                            break
+                if not is_confusable:
+                    for c in confusables_b:
+                        if c["confusable_with"] in name_a:
+                            is_confusable = True
+                            break
+
+                if not is_confusable:
+                    try:
+                        dist = levenshtein_distance(name_a, name_b, max_len=200)
+                        max_len_val = max(len(name_a), len(name_b))
+                        if max_len_val > 0 and dist <= 1 and name_a != name_b:
+                            is_confusable = True
+                    except ValueError:
+                        pass
+
+                if is_confusable:
+                    checked_pairs.add(pair)
+                    collisions.append(TableCollisionInfo(
+                        kind="confusable",
+                        names=[name_a, name_b],
+                        detail=f"Confusable/near-collision: '{name_a}' and '{name_b}'",
+                    ))
+        if checked_pairs:
+            findings.append("Confusable characters or near-collisions detected")
+
+    if "style" in active_checks:
+        style_map: dict[str, list[tuple[str, str]]] = {}
+        for name in names:
+            stripped = _strip_style(name)
+            if not stripped:
+                continue
+            style = _classify_style(name)
+            style_map.setdefault(stripped, []).append((name, style))
+        for stripped, entries in style_map.items():
+            styles_present = list(set(s for _, s in entries))
+            if len(styles_present) > 1:
+                group_names = [n for n, _ in entries]
+                collisions.append(TableCollisionInfo(
+                    kind="style_variant",
+                    names=group_names,
+                    detail=f"Style variants for '{stripped}': {', '.join(styles_present)}",
+                ))
+        if any(len(set(s for _, s in e)) > 1 for e in style_map.values()):
+            findings.append("Style variant collisions detected")
+
+    if "reserved" in active_checks:
+        kw_set = _LANG_KEYWORDS.get(language, frozenset())
+        for i, entry in enumerate(identifiers):
+            name = names[i]
+            if name in kw_set:
+                reserved_hits.append(ReservedKeywordHit(
+                    name=name,
+                    language=language,
+                    file=entry.get("file", ""),
+                    line=entry.get("line", 0),
+                ))
+        if reserved_hits:
+            findings.append(f"{len(reserved_hits)} reserved keyword hit(s) in {language}")
+
+    if "mixed_style" in active_checks:
+        style_map2: dict[str, list[tuple[str, str]]] = {}
+        for name in names:
+            stripped = _strip_style(name)
+            if not stripped:
+                continue
+            style = _classify_style(name)
+            style_map2.setdefault(stripped, []).append((name, style))
+        for stripped, entries in style_map2.items():
+            styles_present = list(set(s for _, s in entries))
+            if len(styles_present) > 1:
+                mixed_style_groups.append(MixedStyleGroup(
+                    stripped=stripped,
+                    names=[n for n, _ in entries],
+                    styles=styles_present,
+                ))
+        if mixed_style_groups:
+            findings.append(f"{len(mixed_style_groups)} mixed-style group(s) detected")
+
+    return IdentifierTableInspectResult(
+        count=count,
+        collisions=collisions,
+        reserved_keyword_hits=reserved_hits,
+        mixed_style_groups=mixed_style_groups,
+        findings=findings,
     )

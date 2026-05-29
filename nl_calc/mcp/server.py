@@ -14,6 +14,7 @@ from typing import Any
 from .schemas import TOOL_SCHEMAS
 from .tools import (
     canonicalize_text_mcp,
+    cargo_toml_inspect_mcp,
     code_fence_extract_mcp,
     constant_lookup,
     dotenv_validate_mcp,
@@ -21,6 +22,7 @@ from .tools import (
     glob_match_mcp,
     identifier_analyze,
     identifier_inspect_mcp,
+    identifier_table_inspect_mcp,
     ini_validate_mcp,
     json_canonicalize,
     json_compare,
@@ -40,6 +42,7 @@ from .tools import (
     path_compare_mcp,
     path_normalize,
     path_scope_check_mcp,
+    prompt_input_inspect_mcp,
     regex_finditer,
     regex_safety_check,
     shell_argv_compare,
@@ -68,9 +71,11 @@ from .tools import (
     validate_schema_light,
     validate_toml,
     version_compare_mcp,
+    version_constraint_check_mcp,
 )
 
 TOOL_HANDLERS: dict[str, Any] = {
+    "cargo_toml_inspect": cargo_toml_inspect_mcp,
     "code_fence_extract": code_fence_extract_mcp,
     "dotenv_validate": dotenv_validate_mcp,
     "ini_validate": ini_validate_mcp,
@@ -119,13 +124,16 @@ TOOL_HANDLERS: dict[str, Any] = {
     "validate_schema_light": validate_schema_light,
     "validate_toml": validate_toml,
     "version_compare": version_compare_mcp,
+    "version_constraint_check": version_constraint_check_mcp,
     "identifier_analyze": identifier_analyze,
     "glob_match": glob_match_mcp,
     "text_fingerprint": text_fingerprint_mcp,
     "identifier_inspect": identifier_inspect_mcp,
+    "identifier_table_inspect": identifier_table_inspect_mcp,
     "markdown_structure": markdown_structure_mcp,
     "unicode_policy_check": unicode_policy_check_mcp,
     "canonicalize_text": canonicalize_text_mcp,
+    "prompt_input_inspect": prompt_input_inspect_mcp,
 }
 
 MAX_REQUEST_BYTES = 1_000_000

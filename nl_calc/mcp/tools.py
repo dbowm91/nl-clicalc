@@ -19,7 +19,16 @@ from ..exact import (
     glob_match as _glob_match,
 )
 from ..exact import (
+    prompt_input_inspect as _prompt_input_inspect,
+)
+from ..exact import (
+    cargo_toml_inspect as _cargo_toml_inspect,
+)
+from ..exact import (
     identifier_inspect as _identifier_inspect,
+)
+from ..exact import (
+    identifier_table_inspect as _identifier_table_inspect,
 )
 from ..exact import (
     json_compare as _json_compare,
@@ -158,6 +167,12 @@ from ..exact.unicode_policy import (
 )
 from ..exact.unicode_policy import (
     unicode_policy_check as _unicode_policy_check,
+)
+from ..exact.cargo import (
+    cargo_toml_inspect as _cargo_toml_inspect,
+)
+from ..exact.version import (
+    check_version_constraint as _check_version_constraint,
 )
 from ..exact.validate import (
     json_canonicalize as _json_canonicalize,
@@ -3206,3 +3221,295 @@ def canonicalize_text_mcp(
         return _success_response(result, tool="canonicalize_text")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="canonicalize_text")
+
+
+def identifier_table_inspect_mcp(
+    identifiers: list[dict],
+    language: str = "python",
+    checks: list[str] | None = None,
+) -> dict:
+    """Inspect a table of identifiers for collisions, reserved keywords, and mixed styles.
+
+    Args:
+        identifiers: List of dicts with required 'name' (str), optional 'kind' (str),
+                     'file' (str), 'line' (int).
+        language: Target language for keyword checking.
+        checks: Subset of checks to run.
+
+    Returns:
+        Success envelope with inspection result, or error envelope.
+    """
+    if len(identifiers) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"Number of identifiers {len(identifiers)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} identifiers allowed"],
+            tool="identifier_table_inspect",
+        )
+
+    valid_languages = {"generic", "python", "rust", "javascript", "typescript", "json_key"}
+    if language not in valid_languages:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported language: {language}",
+            [f"Use one of: {', '.join(valid_languages)}"],
+            tool="identifier_table_inspect",
+        )
+
+    valid_checks = {"casefold", "normalization", "confusable", "style", "reserved", "mixed_style"}
+    if checks is not None:
+        invalid = [c for c in checks if c not in valid_checks]
+        if invalid:
+            return _error_response(
+                "invalid_arguments",
+                f"Unknown check(s): {', '.join(invalid)}",
+                [f"Valid checks: {', '.join(sorted(valid_checks))}"],
+                tool="identifier_table_inspect",
+            )
+
+    try:
+        result = _identifier_table_inspect(identifiers, language, checks)
+
+        findings: list[dict] = []
+        for collision in result.get("collisions", []):
+            findings.append({
+                "code": f"COLLISION_{collision['kind'].upper()}",
+                "severity": "warn",
+                "message": collision.get("detail", "Collision detected"),
+                "details": {"names": collision.get("names", [])},
+            })
+        for hit in result.get("reserved_keyword_hits", []):
+            findings.append({
+                "code": "RESERVED_KEYWORD",
+                "severity": "warn",
+                "message": f"'{hit['name']}' is a reserved keyword in {hit['language']}",
+                "details": {"file": hit.get("file"), "line": hit.get("line")},
+            })
+        for group in result.get("mixed_style_groups", []):
+            findings.append({
+                "code": "MIXED_STYLE",
+                "severity": "info",
+                "message": f"Mixed styles for '{group['stripped']}': {', '.join(group['styles'])}",
+                "details": {"names": group.get("names", [])},
+            })
+
+        machine_code: str | None = None
+        if result.get("reserved_keyword_hits"):
+            machine_code = "RESERVED_KEYWORDS"
+        elif result.get("collisions"):
+            machine_code = "IDENT_COLLISIONS"
+
+        return _success_response(result, tool="identifier_table_inspect", findings=findings or None, machine_code=machine_code)
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="identifier_table_inspect")
+
+
+def version_constraint_check_mcp(
+    version: str,
+    constraint: str,
+    scheme: str = "semver",
+) -> dict:
+    """Check whether a version satisfies a constraint under a given versioning scheme.
+
+    Args:
+        version: Version string to check (e.g., '1.2.3', '0.5.0-beta.1').
+        constraint: Version constraint (e.g., '>=1.0,<2.0', '^1.2.3', '~0.5', '1.*').
+        scheme: Versioning scheme ('semver' or 'cargo').
+
+    Returns:
+        Success envelope with constraint check result, or error envelope.
+    """
+    valid_schemes = {"semver", "cargo"}
+    if scheme not in valid_schemes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported scheme: {scheme}",
+            [f"Use one of: {', '.join(valid_schemes)}"],
+            tool="version_constraint_check",
+        )
+
+    if not version.strip():
+        return _error_response(
+            "invalid_arguments",
+            "Version string is empty",
+            ["Provide a valid version string like '1.2.3'"],
+            tool="version_constraint_check",
+        )
+
+    if not constraint.strip():
+        return _error_response(
+            "invalid_arguments",
+            "Constraint string is empty",
+            ["Provide a valid constraint like '>=1.0' or '^1.2.3'"],
+            tool="version_constraint_check",
+        )
+
+    try:
+        result = _check_version_constraint(version, constraint, scheme)
+
+        findings: list[dict] = []
+        for msg in result.get("findings", []):
+            findings.append({
+                "code": "CONSTRAINT_NOTE",
+                "severity": "info",
+                "message": msg,
+            })
+
+        machine_code: str | None = None
+        if result.get("findings"):
+            machine_code = "CONSTRAINT_NOTE"
+        elif not result.get("satisfies"):
+            machine_code = "CONSTRAINT_NOT_SATISFIED"
+
+        return _success_response(
+            result,
+            tool="version_constraint_check",
+            findings=findings or None,
+            machine_code=machine_code,
+        )
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="version_constraint_check")
+
+
+def cargo_toml_inspect_mcp(
+    text: str,
+    check_workspace: bool = True,
+    check_dependencies: bool = True,
+) -> dict:
+    """Inspect Cargo.toml text without network or filesystem access.
+
+    Args:
+        text: The Cargo.toml content.
+        check_workspace: Whether to analyze workspace section.
+        check_dependencies: Whether to analyze dependencies sections.
+
+    Returns:
+        Success envelope with Cargo.toml inspection result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="cargo_toml_inspect",
+        )
+
+    try:
+        result = _cargo_toml_inspect(text, check_workspace, check_dependencies)
+
+        findings: list[dict] = []
+        for msg in result.get("findings", []):
+            if "parse error" in msg.lower() or "not a table" in msg.lower():
+                severity = "error"
+                code = "CARGO_PARSE_ERROR"
+            elif "missing" in msg.lower():
+                severity = "warn"
+                code = "CARGO_MISSING_FIELD"
+            elif "confusable" in msg.lower():
+                severity = "warn"
+                code = "CARGO_CONFUSABLE_NAMES"
+            elif "suspicious" in msg.lower():
+                severity = "warn"
+                code = "CARGO_SUSPICIOUS_NAME"
+            elif "unrecognized" in msg.lower():
+                severity = "warn"
+                code = "CARGO_UNRECOGNIZED_VALUE"
+            else:
+                severity = "info"
+                code = "CARGO_NOTE"
+            findings.append({
+                "code": code,
+                "severity": severity,
+                "message": msg,
+            })
+
+        machine_code: str | None = None
+        if not result.get("parse_ok"):
+            machine_code = "CARGO_PARSE_FAILED"
+        elif result.get("findings"):
+            machine_code = "CARGO_HAS_FINDINGS"
+
+        return _success_response(
+            result,
+            tool="cargo_toml_inspect",
+            findings=findings or None,
+            machine_code=machine_code,
+        )
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="cargo_toml_inspect")
+
+
+def prompt_input_inspect_mcp(
+    text: str,
+    checks: list[str] | None = None,
+    phrase_patterns: list[str] | None = None,
+) -> dict:
+    """Inspect text for deterministic red flags.
+
+    Surfaces observable features that may influence agents or humans
+    unexpectedly. Does NOT infer intent or detect prompt injection
+    semantically.
+
+    Args:
+        text: The text to inspect.
+        checks: Subset of check names to run.
+        phrase_patterns: Optional literal strings or safe regexes to detect.
+
+    Returns:
+        Success envelope with inspection result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="prompt_input_inspect",
+        )
+
+    valid_checks = {
+        "unicode_hidden", "bidi", "html_comments", "markdown_links",
+        "ansi_escapes", "terminal_controls", "base64_like_blobs",
+        "instruction_phrases", "long_minified_lines",
+    }
+    if checks is not None:
+        invalid = [c for c in checks if c not in valid_checks]
+        if invalid:
+            return _error_response(
+                "invalid_arguments",
+                f"Unknown check(s): {', '.join(invalid)}",
+                [f"Valid checks: {', '.join(sorted(valid_checks))}"],
+                tool="prompt_input_inspect",
+            )
+
+    try:
+        result = _prompt_input_inspect(text, checks, phrase_patterns)
+
+        findings: list[dict] = []
+        for f in result.get("findings", []):
+            findings.append({
+                "code": f.get("code", "UNKNOWN"),
+                "severity": f.get("severity", "info"),
+                "message": f.get("message", ""),
+                "span": f.get("span"),
+                "details": f.get("details"),
+            })
+
+        machine_code: str | None = None
+        if findings:
+            codes = {f["code"] for f in findings}
+            if any(c in codes for c in ("HIDDEN_CHAR", "BIDI_CONTROL", "ANSI_ESCAPE")):
+                machine_code = "PROMPT_HIDDEN_CONTENT"
+            elif codes:
+                machine_code = "PROMPT_HAS_FLAGS"
+
+        return _success_response(
+            result,
+            tool="prompt_input_inspect",
+            findings=findings or None,
+            machine_code=machine_code,
+            recommended_next_tool=result.get("recommended_next_tool"),
+        )
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="prompt_input_inspect")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="prompt_input_inspect")

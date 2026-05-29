@@ -1,8 +1,8 @@
 # Eggsact / nl-clicalc MCP Expansion Plan
 
-## Status: PARTIALLY COMPLETED (2026-05-29)
+## Status: COMPLETED (2026-05-29)
 
-### Completed Phases (13 of 17)
+### All 17 Phases Completed
 
 | Phase | Description | Status |
 |-------|-------------|--------|
@@ -15,26 +15,21 @@
 | 7 | .env and INI Config Validation | ✅ Completed |
 | 8 | Path and Scope Checks | ✅ Completed |
 | 9 | Unicode Policy Presets and Canonicalization | ✅ Completed |
+| 10 | Identifier Table and Symbol Collision | ✅ Completed |
+| 11 | Version Constraint Checks | ✅ Completed |
+| 12 | Rust/Cargo-Specific Inspection | ✅ Completed |
+| 13 | Prompt/Input Inspection | ✅ Completed |
 | 14 | Tiering and MCP Exposure Cleanup | ✅ Completed |
 | 15 | Test Corpus and Golden Fixtures | ✅ Completed |
 | 16 | Human-Facing CLI Improvements | ✅ Completed |
 | 17 | Codegg Integration Guidance | ✅ Completed |
 
-### Deferred Phases (4 of 17)
-
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 10 | Identifier Table and Symbol Collision | ⏳ Deferred |
-| 11 | Version Constraint Checks | ⏳ Deferred |
-| 12 | Rust/Cargo-Specific Inspection | ⏳ Deferred |
-| 13 | Prompt/Input Inspection | ⏳ Deferred |
-
 ### Implementation Summary
 
-- **55 MCP tools** (up from 39 originally)
+- **60 MCP tools** (up from 39 originally)
 - **6 new CLI commands** (replace-check, lines, patch-check, shell-split, md-structure, dotenv-check)
-- **1016 tests passing** (up from 631 originally)
-- **17 fixture files** with 117 test cases
+- **1231 tests passing** (up from 631 originally)
+- **21 fixture files** with 150+ test cases
 - **Consistent documentation** across README, docs/mcp.md, and docs/tool_inventory.md
 - **Structured findings envelope** for machine-readable results
 - **Tiered tool exposure** with 5 named profiles
@@ -1328,9 +1323,10 @@ For a smaller model, implement in this order:
 9. Phase 9: `unicode_policy_check` and `canonicalize_text`. ✅
 10. Phase 14: tier cleanup. ✅
 11. Phase 17: `codegg` integration docs. ✅
-12. Later: `identifier_table_inspect`, `version_constraint_check`, and `cargo_toml_inspect`. ⏳ Deferred
-
-This order front-loads tools with the best ratio of implementation effort to agent usefulness.
+12. Phase 10: `identifier_table_inspect`. ✅
+13. Phase 11: `version_constraint_check`. ✅
+14. Phase 12: `cargo_toml_inspect`. ✅
+15. Phase 13: `prompt_input_inspect`. ✅
 
 ### Additional Completed Phases
 
@@ -1364,13 +1360,6 @@ The plan is complete when:
 - ✅ Tool tiering is documented and usable.
 - ✅ Human-facing CLI affordances exist for the highest-value checks or are explicitly deferred.
 - ✅ `docs/codegg_integration.md` explains how to use these tools as automatic middleware and as model-invoked MCP tools.
-
-### Remaining Items (Deferred)
-
-- `identifier_table_inspect` tool (Phase 10)
-- `version_constraint_check` tool (Phase 11)
-- `cargo_toml_inspect` tool (Phase 12)
-- `prompt_input_inspect` tool (Phase 13)
 
 ## Final Notes for the Implementing Model
 

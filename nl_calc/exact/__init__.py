@@ -47,7 +47,13 @@ from .identifier_inspect import (
     CollisionInfo,
     IdentifierInfo,
     IdentifierInspectResult,
+    IdentifierTableInspectResult,
+    MixedStyleGroup,
+    ReservedKeywordHit,
+    TableCollisionInfo,
+    TableIdentifierEntry,
     identifier_inspect,
+    identifier_table_inspect,
 )
 
 # Re-export markdown
@@ -190,6 +196,33 @@ from .unicode_tools import (
     reverse_confusables,
     unicode_script,
     unicode_scripts,
+)
+
+# Re-export inspect_prompt
+from .inspect_prompt import (
+    PromptInspectionFinding,
+    PromptInspectionResult,
+    prompt_input_inspect,
+)
+
+# Re-export cargo
+from .cargo import (
+    CargoDepSection,
+    CargoDependencyForm,
+    CargoInspectResult,
+    CargoPackageInfo,
+    CargoWorkspaceInfo,
+    cargo_toml_inspect,
+)
+
+# Re-export version
+from .version import (
+    ParsedConstraint,
+    ParsedConstraintComponent,
+    ParsedVersion,
+    VersionConstraintResult,
+    check_version_constraint,
+    parse_version,
 )
 
 # Re-export validate
@@ -347,6 +380,12 @@ __all__ = [
     "IdentifierInspectResult",
     "CollisionInfo",
     "IdentifierInfo",
+    "identifier_table_inspect",
+    "IdentifierTableInspectResult",
+    "TableCollisionInfo",
+    "ReservedKeywordHit",
+    "MixedStyleGroup",
+    "TableIdentifierEntry",
     # Markdown
     "markdown_structure",
     "code_fence_extract",
@@ -390,6 +429,24 @@ __all__ = [
     "PolicyFinding",
     "CanonicalizeResult",
     "CanonicalizeResultWithMapping",
+    # Version
+    "check_version_constraint",
+    "parse_version",
+    "ParsedVersion",
+    "ParsedConstraint",
+    "ParsedConstraintComponent",
+    "VersionConstraintResult",
+    # Cargo
+    "cargo_toml_inspect",
+    "CargoInspectResult",
+    "CargoPackageInfo",
+    "CargoWorkspaceInfo",
+    "CargoDependencyForm",
+    "CargoDepSection",
+    # Prompt inspection
+    "prompt_input_inspect",
+    "PromptInspectionFinding",
+    "PromptInspectionResult",
     # Validate (re-exported)
     "list_dedupe",
     "list_sort",

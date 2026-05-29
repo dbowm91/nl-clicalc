@@ -1609,4 +1609,248 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "identifier_table_inspect": {
+        "description": "Inspect a table of identifiers for casefold collisions, normalization collisions, confusable/near-collisions, style variants, reserved keyword hits, and mixed naming style groups. Accepts structured entries with name, kind, file, and line metadata.",
+        "tier": 3,
+        "tags": ["text", "identifier", "collision", "naming", "style", "reserved", "validation"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "identifiers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Identifier name (required)"},
+                            "kind": {"type": "string", "description": "Optional kind/category"},
+                            "file": {"type": "string", "description": "Source file path"},
+                            "line": {"type": "integer", "description": "Line number"},
+                        },
+                        "required": ["name"],
+                    },
+                    "description": "List of identifier entries to inspect",
+                },
+                "language": {
+                    "type": "string",
+                    "enum": ["generic", "python", "rust", "javascript", "typescript", "json_key"],
+                    "default": "python",
+                    "description": "Target language for reserved keyword checking",
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Subset of checks: casefold, normalization, confusable, style, reserved, mixed_style",
+                },
+            },
+            "required": ["identifiers"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "description": "Number of identifiers inspected"},
+                "collisions": {
+                    "type": "array",
+                    "description": "Detected collisions",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string"},
+                            "names": {"type": "array", "items": {"type": "string"}},
+                            "detail": {"type": "string"},
+                        },
+                    },
+                },
+                "reserved_keyword_hits": {
+                    "type": "array",
+                    "description": "Identifiers matching reserved keywords",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "language": {"type": "string"},
+                            "file": {"type": "string"},
+                            "line": {"type": "integer"},
+                        },
+                    },
+                },
+                "mixed_style_groups": {
+                    "type": "array",
+                    "description": "Groups with mixed naming styles",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "stripped": {"type": "string"},
+                            "names": {"type": "array", "items": {"type": "string"}},
+                            "styles": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                },
+                "findings": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    },
+    "version_constraint_check": {
+        "description": "Check whether a version satisfies a constraint under a declared versioning scheme (semver or cargo). Supports comparison operators, caret, tilde, wildcard, range, and comma-separated constraints.",
+        "tier": 3,
+        "tags": ["version", "semver", "cargo", "constraint", "satisfiability"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "type": "string",
+                    "description": "Version string to check (e.g., '1.2.3', '0.5.0-beta.1')",
+                },
+                "constraint": {
+                    "type": "string",
+                    "description": "Version constraint (e.g., '>=1.0,<2.0', '^1.2.3', '~0.5', '1.*')",
+                },
+                "scheme": {
+                    "type": "string",
+                    "enum": ["semver", "cargo"],
+                    "default": "semver",
+                    "description": "Versioning scheme to use for parsing and evaluation",
+                },
+            },
+            "required": ["version", "constraint"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "satisfies": {"type": "boolean", "description": "Whether the version satisfies the constraint"},
+                "parsed_version": {"type": "object", "description": "Parsed version components"},
+                "parsed_constraint": {"type": "object", "description": "Parsed constraint components"},
+                "scheme": {"type": "string", "description": "Versioning scheme used"},
+                "explanation": {"type": "string", "description": "Human-readable explanation"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes and warnings"},
+            },
+        },
+    },
+    "cargo_toml_inspect": {
+        "description": "Inspect Cargo.toml text without network or filesystem access. Reports package metadata, workspace configuration, dependency forms (version/path/git/workspace), path dependencies, suspicious or confusable dependency names, and structural findings.",
+        "tier": 3,
+        "tags": ["rust", "cargo", "toml", "dependencies", "workspace", "inspection"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The Cargo.toml content to inspect",
+                },
+                "check_workspace": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Whether to analyze [workspace] section",
+                },
+                "check_dependencies": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Whether to analyze dependency sections",
+                },
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "parse_ok": {"type": "boolean", "description": "Whether TOML parsed successfully"},
+                "package": {
+                    "type": "object",
+                    "description": "Package metadata from [package] section",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "version": {"type": "string"},
+                        "edition": {"type": "string"},
+                        "license": {"type": "string"},
+                        "repository": {"type": "string"},
+                        "readme": {"type": "string"},
+                    },
+                },
+                "workspace": {
+                    "type": "object",
+                    "description": "Workspace section information",
+                    "properties": {
+                        "present": {"type": "boolean"},
+                        "members": {"type": "array", "items": {"type": "string"}},
+                        "exclude": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+                "dependencies": {
+                    "type": "object",
+                    "description": "Dependencies by section",
+                },
+                "path_dependencies": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Extracted path dependency values",
+                },
+                "suspicious_dependency_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Dependency names with suspicious patterns",
+                },
+                "duplicate_or_confusable_dependency_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Dependency names that normalize to the same form",
+                },
+                "findings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Structural findings and warnings",
+                },
+            },
+        },
+    },
+    "prompt_input_inspect": {
+        "description": "Deterministically inspect text for red flags that may influence agents or humans unexpectedly. Detects hidden Unicode characters, bidirectional controls, HTML comments, Markdown link mismatches, ANSI escapes, terminal controls, base64-like blobs, instruction-like phrases, and very long minified lines. This is NOT a prompt-injection detector -- it reports observable features only, not intent.",
+        "tier": 2,
+        "tags": ["text", "security", "inspection", "prompt", "unicode", "hidden"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to inspect for red flags",
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Subset of checks to run: unicode_hidden, bidi, html_comments, markdown_links, ansi_escapes, terminal_controls, base64_like_blobs, instruction_phrases, long_minified_lines",
+                },
+                "phrase_patterns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional literal strings or safe regexes to detect as instruction-like phrases",
+                },
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "findings": {
+                    "type": "array",
+                    "description": "Structured findings with code, severity, message, span, and details",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string"},
+                            "severity": {"type": "string"},
+                            "message": {"type": "string"},
+                            "span": {"type": "object"},
+                            "details": {"type": "object"},
+                        },
+                    },
+                },
+                "summary": {"type": "string", "description": "Human-readable summary"},
+                "risk_score": {"type": "integer", "description": "Deterministic risk score"},
+                "recommended_next_tool": {
+                    "type": ["string", "array"],
+                    "description": "Recommended follow-up tool(s)",
+                },
+                "text_length": {"type": "integer", "description": "Input text length"},
+                "checks_run": {"type": "array", "items": {"type": "string"}, "description": "Checks that were executed"},
+            },
+        },
+    },
 }

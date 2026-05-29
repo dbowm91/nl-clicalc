@@ -1185,7 +1185,7 @@ Tools are categorized into tiers based on scope and context cost:
 - `text_position`, `text_hash`, `text_transform`, `unit_convert`, `unit_info`, `constant_lookup`, `path_analyze`, `path_compare`, `path_scope_check`, `list_compare`, `json_extract`, `version_compare`, `toml_shape`, `markdown_structure`, `code_fence_extract`, `dotenv_validate`, `ini_validate`, `patch_apply_check`, `patch_summary`, `shell_split`, `shell_quote_join`, `argv_compare`, `unicode_policy_check`, `canonicalize_text`, `line_range_compare`
 
 **Tier 3:** Domain-specific tools. Opt-in for specialized workflows.
-- `text_truncate`, `json_shape`, `identifier_analyze`, `validate_schema_light`
+- `text_truncate`, `json_shape`, `identifier_analyze`, `validate_schema_light`, `version_constraint_check`, `cargo_toml_inspect`
 
 ---
 
@@ -1230,7 +1230,7 @@ Tier 0 + Tier 1 + Tier 2 config/validation tools. For agents working with config
 
 `coding-agent-default` + Tier 2 + Tier 3 tools relevant to Rust projects.
 
-**Adds:** `toml_shape`, `version_compare`, `identifier_analyze`, `validate_schema_light`
+**Adds:** `toml_shape`, `version_compare`, `identifier_analyze`, `validate_schema_light`, `cargo_toml_inspect`, `version_constraint_check`
 
 **Use when:** Working on Rust projects with Cargo.toml, lockfiles, or package-manager-specific workflows.
 
@@ -1360,6 +1360,44 @@ Inspect identifiers for validity and collisions. Detects confusables, mixed scri
 
 ---
 
+### identifier_table_inspect
+
+Inspect a table of identifiers for casefold collisions, normalization collisions, confusable/near-collisions, style variants, reserved keyword hits, and mixed naming style groups. Accepts structured entries with name, kind, file, and line metadata.
+
+**Arguments:**
+- `identifiers` (array): List of identifier entries (objects with required `name`, optional `kind`, `file`, `line`)
+- `language` (string, optional): "python" (default), "rust", "javascript", "typescript", "generic", "json_key"
+- `checks` (array, optional): Subset of `["casefold", "normalization", "confusable", "style", "reserved", "mixed_style"]`
+
+**Tier:** 3
+**Tags:** `text`, `identifier`, `collision`, `naming`, `style`, `reserved`, `validation`
+
+**Checks:**
+| Check | What it detects |
+|-------|----------------|
+| `casefold` | Identifiers that collide when casefolded (e.g., `myVar` vs `myvar`) |
+| `normalization` | Identifiers that collide under NFC normalization (e.g., `cafe\u0301` vs `caf\u00e9`) |
+| `confusable` | Confusable characters or Levenshtein-distance-1 near-collisions |
+| `style` | Same stripped form but different naming styles (snake_case vs camelCase vs kebab-case) |
+| `reserved` | Identifiers that are reserved keywords in the target language |
+| `mixed_style` | Groups where identifiers share the same stripped form but use different styles |
+
+**Example:**
+```json
+{"name": "identifier_table_inspect", "arguments": {
+  "identifiers": [
+    {"name": "myVar", "file": "src/main.py", "line": 10},
+    {"name": "myvar", "file": "src/utils.py", "line": 25},
+    {"name": "my_var"},
+    {"name": "if"}
+  ],
+  "language": "python"
+}}
+// Returns: {"ok": true, "result": {"count": 4, "collisions": [...], "reserved_keyword_hits": [...], "mixed_style_groups": [...]}}
+```
+
+---
+
 ### path_normalize
 
 Normalize and analyze a path with explicit platform semantics.
@@ -1470,6 +1508,72 @@ Compare two version strings with explicit scheme.
 ```json
 {"name": "version_compare", "arguments": {"a": "1.2.3", "b": "1.2.10", "scheme": "semver"}}
 // Returns: {"ok": true, "result": {"comparison": -1, "valid": true, "scheme": "semver"}}
+```
+
+---
+
+### version_constraint_check
+
+Check whether a version satisfies a constraint under a declared versioning scheme.
+
+**Arguments:**
+- `version` (string): Version to check (e.g., "1.2.3", "0.5.0-beta.1")
+- `constraint` (string): Version constraint (e.g., ">=1.0,<2.0", "^1.2.3", "~0.5", "1.*")
+- `scheme` (string, optional): "semver" or "cargo" (default "semver")
+
+**Tier:** 3
+**Tags:** `version`, `semver`, `cargo`, `constraint`, `satisfiability`
+
+**Returns:**
+- `satisfies`: Boolean
+- `parsed_version`: Parsed version components
+- `parsed_constraint`: Parsed constraint components
+- `scheme`: The scheme used
+- `explanation`: Human-readable explanation
+- `findings`: Analysis notes and warnings
+
+**Supported constraint forms:**
+- Exact: `1.2.3`
+- Comparison: `>=1.2.3`, `<2.0`, `!=1.0`
+- Comma-separated ranges: `>=1.2,<2.0`
+- Cargo caret: `^1.2.3`
+- Cargo tilde: `~1.2.3`
+- Wildcard: `1.*`, `1.2.*`
+
+**Example:**
+```json
+{"name": "version_constraint_check", "arguments": {"version": "1.5.0", "constraint": ">=1.2,<2.0", "scheme": "semver"}}
+// Returns: {"ok": true, "result": {"satisfies": true, "parsed_version": {"major": 1, "minor": 5, "patch": 0, ...}, ...}}
+```
+
+---
+
+### cargo_toml_inspect
+
+Inspect `Cargo.toml` text without network or filesystem access.
+
+**Arguments:**
+- `text` (string): The Cargo.toml content
+- `check_workspace` (boolean, optional): Whether to analyze `[workspace]` section (default true)
+- `check_dependencies` (boolean, optional): Whether to analyze dependency sections (default true)
+
+**Tier:** 3
+**Tags:** `rust`, `cargo`, `toml`, `dependencies`, `workspace`, `inspection`
+
+**Returns:**
+- `parse_ok`: Boolean - whether TOML parsed successfully
+- `package`: Object with name, version, edition, license, repository, readme
+- `workspace`: Object with present, members, exclude
+- `dependencies`: Object by section: dependencies, dev-dependencies, build-dependencies, target-specific
+- `path_dependencies`: Array of extracted path values
+- `suspicious_dependency_names`: Array of names with suspicious patterns
+- `duplicate_or_confusable_dependency_names`: Array of names that normalize identically
+- `findings`: Array of structural findings
+
+**Example:**
+```json
+{"name": "cargo_toml_inspect", "arguments": {"text": "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nserde = \"1.0\"\nmy-lib = { path = \"../my-lib\" }\n"}}
+// Returns: {"ok": true, "result": {"parse_ok": true, "package": {"name": "my-crate", "version": "0.1.0", "edition": "2021"}, "path_dependencies": ["../my-lib"], ...}}
 ```
 
 ---
