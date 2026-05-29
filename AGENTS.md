@@ -106,7 +106,7 @@ Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool acce
 - New tests must use the correct API:
   - For NL/unit functionality → use `run()` or test through CLI
   - For pure math expressions → use `evaluate()`
-- 350 tests currently pass (as of last run)
+- 629 tests currently pass (as of last run)
 
 ### Code Style
 - Follow existing patterns in the codebase
@@ -262,16 +262,35 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `visible_repr()` combining mark check order - CORRECT, VS check precedes combining marks for proper display
 - Redundant temperature condition - NOT PRESENT in current code
 
+**New Bugs Identified (2026-05-29) - See plans/plan.md:**
+- `units.py:66` - `__add__` scalar + dimensional bug (e.g., `UnitValue(3, "m") + 5` returns `8 m` incorrectly)
+- `units.py:81-84` - `__rsub__` scalar + dimensional bug (e.g., `5 - UnitValue(3, "m")` returns `2 m` incorrectly)
+- `normalize.py:762-763` - Double minus concatenation bug ("5 minus -2" → "52" instead of 3)
+- `mcp/tools.py:324` - `unit_info()` imports non-existent `list_units` → NameError at runtime
+- `mcp/tools.py:839 and 1337` - Duplicate `_VALID_TRANSFORM_OPERATIONS` definition
+
 ## Implementation Plan
 
-The implementation plan has been **completed** (2026-05-28). All 56 items across 5 waves were implemented and verified.
+The implementation plan has been **updated** (2026-05-29). Previous plan (2026-05-28) completed 56 items. A new review has identified 40 additional actionable items across 5 waves.
+
+**Current plan:** `plans/plan.md`
+
+**Wave summary:**
+- Wave 1: 4 high priority bugs (units.py scalar bugs, normalize.py double-minus, mcp/tools.py list_units)
+- Wave 2: 5 medium priority bugs
+- Wave 3: 8 low priority bugs
+- Wave 4: 15 documentation updates
+- Wave 5: 8 improvements
 
 **Deferred items** (design review needed for future):
 - Add `normalize_text` to `inspect_text()` - overlaps with existing workflow
 - Performance review for confusables_count - already optimal O(n)
 - Reorganize documentation - low priority, current structure functional
+- Return type consistency for UnitValue wrapping
+- Confusables regeneration metadata
+- TypedDict documentation completeness
 
-Run `python3 -m pytest tests/` to verify all 352 tests pass.
+Run `python3 -m pytest tests/` to verify all 629 tests pass.
 
 ## Verification Notes (from planning session)
 

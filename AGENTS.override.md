@@ -42,6 +42,18 @@ These are documented limitations that agents should be aware of:
 - Script detection uses heuristic range-based approach, not `unicodedata.script()`
 - Temperature-to-non-temperature conversion now raises clear ValueError
 - `_INVISIBLE_CHARS` contains 22 characters - documentation updated to list all
+- Double-minus concatenation bug: "5 minus -2" → "52" instead of 3 (normalize.py:762-763)
+- `unit_info()` MCP tool fails with NameError - calls non-existent `list_units()` function
+- Scalar + dimensional arithmetic does not raise ValueError (e.g., `UnitValue(3,"m") + 5` returns `8 m`)
+
+### New Bugs Identified (2026-05-29)
+
+These bugs are documented in `plans/plan.md` and await implementation:
+1. `units.py:66` - `__add__` scalar + dimensional: `UnitValue(3,"m") + 5` → `8 m` (should raise ValueError)
+2. `units.py:81-84` - `__rsub__` scalar + dimensional: `5 - UnitValue(3,"m")` → `2 m` (should raise ValueError)
+3. `normalize.py:762-763` - Double minus: `"5 minus -2"` → `"52"` (should be `5-(-2)` → `7`)
+4. `mcp/tools.py:324` - `unit_info()` calls non-existent `list_units()` from units.py
+5. `mcp/tools.py:839 and 1337` - Duplicate `_VALID_TRANSFORM_OPERATIONS` constant
 
 ### Previously Reported Issues (Now Fixed)
 
@@ -49,6 +61,13 @@ The following bugs were fixed in the plan implementation:
 1. ~~Dead code in `list_compare()` near_matches~~ - FIXED
 2. ~~Temperature-to-non-temperature conversion crash~~ - FIXED
 3. ~~Float regex pipe bug~~ - FIXED
+
+### Additional Verified NOT Bugs (2026-05-29)
+
+These were investigated and confirmed not to be bugs:
+- `get_unit_category` IS correctly imported in evaluator.py (line 27) - not a bug
+- `__eq__` returning `NotImplemented` for different units is intentional for Python's comparison protocol
+- Int regex patterns `[-|+]?` at normalize.py:367,369 allow `|` and `*` but these don't appear in practice (low practical impact)
 
 ### Architecture Conventions
 
