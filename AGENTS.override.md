@@ -87,7 +87,8 @@ The following items were claimed as bugs but are actually working correctly:
 
 ### Plan Reference
 
-All 35 items in `plans/plan.md` have been verified as completed (2026-05-29). The plan file is being pruned to remove completed items.
+All items in `plans/plan.md` and `plans/improvements.md` have been verified as completed and pruned.
+The plan files now contain only design decisions (D3 - not exported by design) and summary information.
 
 ### Architecture Review Findings (review_plan.md - 2026-05-29)
 
