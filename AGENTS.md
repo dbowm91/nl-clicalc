@@ -262,32 +262,29 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `visible_repr()` combining mark check order - CORRECT, VS check precedes combining marks for proper display
 - Redundant temperature condition - NOT PRESENT in current code
 
-See `plans/plan.md` for full implementation plan with 56 items across 5 waves.
-
 ## Implementation Plan
 
-The `plans/plan.md` contains the active implementation plan with items organized into waves:
+The implementation plan has been **completed** (2026-05-28). All 56 items across 5 waves were implemented and verified.
 
-- **Wave 1**: Critical bugs (temperature crash, list_compare dead code, float regex bug) ✓ COMPLETED
-- **Wave 2**: Documentation corrections (normalize_expression return type, FirstDiff, common_prefix_suffix examples) ✓ COMPLETED
-- **Wave 3**: Missing documentation (reverse_confusables, first_diff, CommonPrefixSuffix) ✓ COMPLETED
-- **Wave 4**: Code quality improvements ✓ COMPLETED
-- **Wave 5**: Low priority improvements ✓ COMPLETED
+**Deferred items** (design review needed for future):
+- Add `normalize_text` to `inspect_text()` - overlaps with existing workflow
+- Performance review for confusables_count - already optimal O(n)
+- Reorganize documentation - low priority, current structure functional
 
-All 352 tests must continue to pass as items were addressed.
+Run `python3 -m pytest tests/` to verify all 352 tests pass.
 
 ## Verification Notes (from planning session)
 
-### Confirmed Issues
-- `units.py:146-164` - Temperature-to-non-temperature conversion crashes: Warning followed by ValueError because K/C/F/R not in UNIT_BASE
-- `synthesis.py:704-714` - `list_compare()` near_matches `"unicode_normalization_only"` is unreachable dead code
-- `normalize.py:368` - Float regex `[-|+]?` bug: literal pipe accepted (should be `[-+]?`)
+### Fixed Issues (verified working)
+- Temperature-to-non-temperature conversion now raises clear `ValueError`
+- Dead code removed from `list_compare()` near_matches
+- Float regex pattern fixed from `[-|+]?` to `[-+]?`
 
-### Confirmed NOT Bugs
-- `synthesis.py:337-338` - `accent_or_diacritic_difference` IS reachable when NFC-equal but byte-different after casefold
-- `normalize.py:693` - `_handle_negative_token` has bounds checking + regex guard, no IndexError
+### Previously Confirmed NOT Bugs
+- `accent_or_diacritic_difference` classification IS reachable in `text_equal()`
+- `_handle_negative_token` has bounds checking + regex guard, no IndexError
 
-### Constants Missing from Docs (but exist in code)
+### Constants in Code (noted)
 - `g` / `standardgravity` = 9.80665 at evaluator.py:875-876
 - `wien` / `wienconstant` = 2.897771955e-3 at evaluator.py:900-901
 

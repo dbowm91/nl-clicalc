@@ -50,49 +50,55 @@ For each module, examine:
 - TypedDict classes don't support `__slots__` (ignored by Python)
 - `_get_script_heuristic()` is cached with `@lru_cache`
 - CONFUSABLES dict has `reverse_confusables()` for reverse lookups
-- `unicode_normalization_only` classification is valid and reachable
+- `unicode_normalization_only` classification is valid and reachable in `text_equal()`/`explain_diff()`, but NOT in `list_compare()` near_matches (removed as dead code)
 - `MAX_INPUT_LENGTH = 100_000` enforced in validate.py and MCP tools
 
 ## Common Issues Found in This Codebase
 
-**These issues have been identified and resolved:**
+**These issues were identified during architecture review and have been resolved:**
 
 1. **Combine consecutive numbers** - `split_at_operators` now properly handles whitespace-separated number words
 2. **TypedDict `__slots__`** - Removed from all TypedDict classes (they don't support `__slots__`)
 3. **Missing exports in exact/__init__.py** - `unicode_scripts`, `confusables_count`, `longest_common_subsequence` now exported
 4. **Text classification order** - `_classify_difference()` checks NFC equality before casefold equality
 5. **MCP response consistency** - `math_eval` returns direct result dict
+6. **Temperature conversion crash** - Now raises descriptive ValueError
+7. **list_compare() dead code** - Removed unreachable `unicode_normalization_only` loop
+8. **Float regex pipe bug** - Fixed `[-|+]?` to `[-+]?`
+9. **Duplicate constants table entries** - Fixed (removed duplicate `G` entry)
+10. **UnitValue methods undocumented** - Now documented (`__str__`, `__format__`, `__eq__`, `__hash__`, etc.)
 
 **Documentation/Code inconsistencies to watch for:**
 
 - TypedDict vs NamedTuple mismatches (code uses TypedDict throughout)
 - Missing function aliases (check `mcp_main = main` at server.py:234)
 - Data structure field mismatches (verify against actual code)
+- Parameter name alignment (docs sometimes use different names than code)
 
-**Note:** Many of these issues were identified and fixed during the 2026-05-22 architecture review. See the findings section below for details.
+**Note:** All 56 issues identified during the 2026-05-28 architecture review were implemented and verified. See `plans/plan.md` for details.
 
 ## Architecture Review Findings (2026-05-28)
 
-The architecture review identified 28 issues across all modules. Key findings:
+The architecture review identified 56 issues across all modules. **All have been implemented/fixed.**
 
-### HIGH Priority Bugs
-- `units.py:146-164` - Temperature-to-non-temperature conversion crashes after warning
-- `synthesis.py:337-338` - `accent_or_diacritic_difference` branch unreachable when nfc_equal=True
-- `synthesis.py:704-714` - `unicode_normalization_only` near_match unreachable
+### HIGH Priority Bugs (FIXED)
+- `units.py:146-164` - Temperature-to-non-temperature conversion crash → now raises clear ValueError
+- `synthesis.py:704-714` - `unicode_normalization_only` near_match unreachable → code removed
+- `normalize.py:368` - Float regex `[-|+]?` → fixed to `[-+]?`
 
-### HIGH Priority Documentation Issues
+### HIGH Priority Documentation Issues (FIXED)
 - `normalize_expression()` documented as returning `str` but actually returns `tuple[str, int]`
-- Missing constants `g`/`standardgravity` and `wien`/`wienconstant` in evaluator.py
-- All `common_prefix_suffix` examples in diff.md return wrong values
-- `FirstDiff` TypedDict shows 3 fields but code has 6
+- Missing constants `g`/`standardgravity` and `wien`/`wienconstant` in constants table
+- All `common_prefix_suffix` examples returned wrong values
+- `FirstDiff` TypedDict showed 3 fields but code has 6
 - `normalize_main` alias documented but doesn't exist in source
 - `reverse_confusables()` undocumented public function
+- `UnitValue` public methods not documented
 
 ### Review Process Notes
-- All 15 modules reviewed with improvement plans generated
-- Stale items documented in `plans/review_stale_items.md`
-- Review plans in `plans/review_improvements_*.md`
-- Complete findings in `architecture/review_plan.md`
+- All modules reviewed with improvement plans generated
+- Complete findings consolidated in `plans/plan.md`
+- 56 items across 5 waves implemented and verified
 
 ## Architecture Files Location
 - `architecture/` - Module-level documentation

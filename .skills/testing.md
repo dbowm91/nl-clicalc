@@ -114,7 +114,7 @@ tests/
 ```
 
 ## Current Test Count
-- 350 tests pass (as of latest run)
+- 352 tests pass (as of latest run)
 - All must continue to pass
 
 ## Common Issues When Testing
