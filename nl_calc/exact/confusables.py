@@ -2,6 +2,12 @@
 Unicode confusables table.
 
 Auto-generated from confusables.txt (Unicode UTS #39).
+Source: https://www.unicode.org/Public/security/latest/confusables.txt
+Source-Version: 17.0.0
+Source-Date: 2025-07-22, 05:49:37 GMT
+Generated: 2026-05-29
+Entry-Count: 6565
+
 DO NOT EDIT - regenerate with scripts/generate_confusables.py
 """
 
@@ -477,6 +483,7 @@ CONFUSABLES: dict[str, str] = {
     "U+059D": "U+0301",
     "U+05A4": "U+059A",
     "U+05A8": "U+0599",
+    "U+05AD": "U+0596",
     "U+05AE": "U+0598",
     "U+05AF": "U+030A",
     "U+05B4": "U+0323",

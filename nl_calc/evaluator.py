@@ -1179,6 +1179,8 @@ class Evaluator(ast.NodeVisitor):
             raise EvaluationError(f"Unsupported binary operator: '{node.op.__class__.__name__}'")
 
         result = self.BINOPS[op_class](left_val, right_val)
+        if result_unit is None:
+            return result
         return UnitValue(result, result_unit)
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:

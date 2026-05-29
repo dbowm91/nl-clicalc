@@ -1,6 +1,6 @@
-# Contributing to clicalc
+# Contributing to nl-clicalc
 
-Thank you for your interest in contributing to clicalc! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to nl-clicalc! This document provides guidelines and instructions for contributing.
 
 ## Development Setup
 
@@ -13,8 +13,8 @@ Thank you for your interest in contributing to clicalc! This document provides g
 
 1. Fork and clone the repository:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/clicalc.git
-   cd clicalc
+   git clone https://github.com/YOUR_USERNAME/nl-clicalc.git
+   cd nl-clicalc
    ```
 
 2. Create a virtual environment:
@@ -41,7 +41,7 @@ Thank you for your interest in contributing to clicalc! This document provides g
 pytest tests/
 
 # Run with coverage
-pytest tests/ --cov=clicalc --cov-report=term-missing
+pytest tests/ --cov=nl_calc --cov-report=term-missing
 
 # Run specific test file
 pytest tests/test_clicalc.py -v
@@ -59,13 +59,13 @@ Run them before committing:
 
 ```bash
 # Format code
-black clicalc tests
+black nl_calc tests
 
 # Lint code
-ruff check clicalc tests --fix
+ruff check nl_calc tests --fix
 
 # Type check
-mypy clicalc --ignore-missing-imports
+mypy nl_calc --ignore-missing-imports
 ```
 
 ## Pull Request Process
@@ -73,8 +73,8 @@ mypy clicalc --ignore-missing-imports
 1. Create a feature branch from `main`
 2. Make your changes
 3. Ensure tests pass: `pytest tests/`
-4. Run linting: `ruff check clicalc tests`
-5. Run formatting: `black clicalc tests`
+4. Run linting: `ruff check nl_calc tests`
+5. Run formatting: `black nl_calc tests`
 6. Submit a pull request
 
 ### PR Checklist
@@ -88,17 +88,18 @@ mypy clicalc --ignore-missing-imports
 ## Project Structure
 
 ```
-clicalc/
-├── clicalc/           # Main package
+nl-clicalc/
+├── nl_calc/           # Main package
 │   ├── __init__.py    # Package exports
 │   ├── __main__.py    # CLI entry point
 │   ├── evaluator.py   # AST-based evaluator
 │   ├── normalize.py   # Expression normalization
 │   └── units.py       # Unit definitions
 ├── tests/             # Test suite
-├── calc/              # Rust implementation (WIP)
-├── pyproject.toml     # Project config
-└── README.md          # Documentation
+├── benchmarks/        # Performance benchmarks
+├── docs/              # User documentation
+├── architecture/      # Developer documentation
+└── pyproject.toml     # Project config
 ```
 
 ## Reporting Issues

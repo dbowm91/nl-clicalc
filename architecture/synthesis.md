@@ -38,6 +38,20 @@ class MeasureTextResult(TypedDict):
     ends_with_newline: bool
     normalization: NormalizationState
     unicode_risks: UnicodeRisks
+
+class NormalizationState(TypedDict):
+    """Unicode normalization state for a string."""
+    is_nfc: bool
+    is_nfd: bool
+    is_nfkc: bool
+    is_nfkd: bool
+
+class UnicodeRisks(TypedDict):
+    """Unicode risk signals detected in a string."""
+    contains_invisibles: bool
+    contains_bidi_controls: bool
+    mixed_scripts: bool
+    scripts: list[str]
 ```
 
 ### Text Comparison
@@ -94,7 +108,22 @@ class InspectTextResult(TypedDict):
     invisibles: list[dict]
     scripts: dict[str, Any]
     confusables: list[dict]
+    bidi_controls: list[dict]
+    normalization_findings: list[NormalizationFinding]
     warnings: list[dict]
+
+class InspectTextNormalized(TypedDict):
+    """Normalized text analysis result."""
+    form: str                    # NFC, NFD, NFKC, or NFKD
+    text: str                    # Normalized text
+    safe_repr: str               # Safe representation of normalized text
+    changed: bool                # Whether normalization changed the text
+    diff: list[dict]             # Differences found during normalization
+
+class NormalizationFinding(TypedDict):
+    """A finding from normalization analysis."""
+    kind: str                    # Type of finding (e.g., "unsafe_chars", "mixed_script")
+    message: str                # Human-readable description
 ```
 
 ### Character Counting
