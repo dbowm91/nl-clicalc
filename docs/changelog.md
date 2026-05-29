@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to nl-clicalc are documented here.
+All notable changes to eggcalc are documented here.
 
 ## [1.1.0] - 2025-02-21
 

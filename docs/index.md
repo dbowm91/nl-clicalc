@@ -1,17 +1,17 @@
-# Welcome to nl-clicalc
+# Welcome to eggcalc
 
 A natural language math expression calculator that converts spoken expressions into mathematical operations.
 
 ## Two Evaluation Paths
 
-Understanding the two evaluation functions is essential for using nl-clicalc effectively:
+Understanding the two evaluation functions is essential for using eggcalc effectively:
 
 ### `evaluate_raw()` - Natural Language & Units
 
 Use this for any user input, natural language, or expressions with units:
 
 ```python
-from nl_clicalc import evaluate_raw
+from egg_calc import evaluate_raw
 
 evaluate_raw("five plus three")      # 8
 evaluate_raw("30m + 100ft")          # 60.48 m (with units)
@@ -23,7 +23,7 @@ evaluate_raw("what is pi times two")  # 6.283...
 Use this when you control the input format and want maximum performance (~15x faster):
 
 ```python
-from nl_clicalc import evaluate
+from egg_calc import evaluate
 
 evaluate("5+3")      # 8 - no spaces allowed
 evaluate("sin(1)+2") # 2.8414...
@@ -131,7 +131,7 @@ See [MCP Server](mcp.md) for detailed tool documentation.
 
 ## Safe Evaluation
 
-nl-clicalc uses AST-based parsing instead of `eval()`, providing:
+eggcalc uses AST-based parsing instead of `eval()`, providing:
 
 - **No arbitrary code execution** - Users cannot execute Python code
 - **Controlled function access** - Only whitelisted functions can be called
@@ -167,14 +167,14 @@ echo "5 + 3" | calc -e  # 8
 ## Installation
 
 ```bash
-pip install nl-clicalc
+pip install eggcalc
 ```
 
 Or install CLI directly:
 
 ```bash
-git clone https://github.com/dbowman91/nl-clicalc.git
-cd nl-clicalc
+git clone https://github.com/dbowman91/eggcalc.git
+cd eggcalc
 python install.py --install
 ```
 
@@ -189,5 +189,5 @@ python install.py --install
 - [Exact Module](exact.md) - Text analysis and Unicode handling
 - [MCP Server](mcp.md) - AI agent integration
 - [Security](security.md) - Security best practices
-- [Web Applications](webapps.md) - Using nl-clicalc in web apps
-- [Configuration](configuration.md) - Customizing nl-clicalc
+- [Web Applications](webapps.md) - Using eggcalc in web apps
+- [Configuration](configuration.md) - Customizing eggcalc

@@ -1,6 +1,6 @@
 """Tests for line_range_extract and line_range_compare tools."""
 
-from nl_calc.exact.synthesis import line_range_compare, line_range_extract
+from egg_calc.exact.synthesis import line_range_compare, line_range_extract
 
 
 class TestLineRangeExtractBasic:

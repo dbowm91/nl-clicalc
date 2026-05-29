@@ -3,7 +3,7 @@
 
 ### AST-Based Evaluation
 
-nl-clicalc uses Abstract Syntax Tree (AST) parsing instead of Python's `eval()`. This means:
+eggcalc uses Abstract Syntax Tree (AST) parsing instead of Python's `eval()`. This means:
 
 - **No arbitrary code execution** - Users cannot execute Python code
 - **Controlled function access** - Only whitelisted functions can be called
@@ -75,7 +75,7 @@ If you discover a security vulnerability in clicalc, please report it responsibl
 When using clicalc in a web application:
 
 ```python
-from nl_clicalc import evaluate_with_timeout, TimeoutError, EvaluationError
+from egg_calc import evaluate_with_timeout, TimeoutError, EvaluationError
 
 try:
     result = evaluate_with_timeout(user_input, timeout=1.0)
@@ -98,7 +98,7 @@ except EvaluationError:
 When registering custom functions:
 
 ```python
-from nl_clicalc import register_function
+from egg_calc import register_function
 
 # Only register during initialization
 # Never register functions based on user input

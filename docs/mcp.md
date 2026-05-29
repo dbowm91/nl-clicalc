@@ -1,6 +1,6 @@
 # MCP Server
 
-nl-clicalc includes an MCP (Model Context Protocol) server that exposes text analysis and math evaluation tools to AI agents. This enables AI agents to perform deterministic text inspection and calculations via a standardized protocol.
+eggcalc includes an MCP (Model Context Protocol) server that exposes text analysis and math evaluation tools to AI agents. This enables AI agents to perform deterministic text inspection and calculations via a standardized protocol.
 
 ## What is MCP?
 

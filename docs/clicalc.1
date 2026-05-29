@@ -1,4 +1,4 @@
-.TH CALC 1 "2025-05-07" "1.1.0" "nl-clicalc Manual"
+.TH CALC 1 "2025-05-07" "1.1.0" "eggcalc Manual"
 .ad l
 .nh
 
@@ -658,7 +658,7 @@ For untrusted input, use \fBevaluate_with_timeout()\fR from the Python API to pr
 
 .PP
 .nf
-  from nl_clicalc import evaluate_raw, evaluate
+  from egg_calc import evaluate_raw, evaluate
 
   # Natural language and units (use this for user input)
   result = evaluate_raw("five plus three")    # 8
@@ -668,11 +668,11 @@ For untrusted input, use \fBevaluate_with_timeout()\fR from the Python API to pr
   result = evaluate("5+3")                   # 8
 
   # With caching for repeated queries
-  from nl_clicalc import evaluate_cached
+  from egg_calc import evaluate_cached
   result = evaluate_cached("five plus three")
 
   # Thread-safe webapp wrapper
-  from nl_clicalc import PyCalcApp
+  from egg_calc import PyCalcApp
   app = PyCalcApp(cache_size=1000)
   result = app.calculate("five plus three")
 .fi
@@ -681,7 +681,7 @@ For untrusted input, use \fBevaluate_with_timeout()\fR from the Python API to pr
 \fBpython\fR(1), \fBbc\fR(1), \fBexpr\fR(1)
 
 .SH BUGS
-Report bugs at https://github.com/dbowman91/nl-clicalc/issues
+Report bugs at https://github.com/dbowman91/eggcalc/issues
 
 .SH AUTHOR
 CliCalc Contributors

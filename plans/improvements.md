@@ -1,4 +1,4 @@
-# Eggsact / nl-clicalc MCP Expansion Plan
+# Eggsact / eggcalc MCP Expansion Plan
 
 ## Status: COMPLETED (2026-05-29)
 
@@ -36,7 +36,7 @@
 
 ## Purpose
 
-This plan converts the current `nl-clicalc` MCP server into a more complete reference implementation for `eggsact`, the deterministic exactness/sanity-check substrate intended for use by `codegg` and other coding agents.
+This plan converts the current `eggcalc` MCP server into a more complete reference implementation for `eggsact`, the deterministic exactness/sanity-check substrate intended for use by `codegg` and other coding agents.
 
 The main objective is not to expand the calculator feature set. The objective is to strengthen the MCP server around deterministic operations that LLMs frequently perform poorly: exact string comparison, Unicode inspection, text replacement, line/offset accounting, patch applicability, structured config validation, shell quoting, path normalization, identifier analysis, and small structured diffs.
 
@@ -44,7 +44,7 @@ This plan is written for a smaller implementation model. Prefer conservative, in
 
 ## Working Assumptions
 
-The current repository is `dbowm91/nl-clicalc`.
+The current repository is `dbowm91/eggcalc`.
 
 The current Python implementation already contains:
 
@@ -1255,7 +1255,7 @@ Make the same deterministic tools useful to humans, not just MCP agents.
 
 ### Goal
 
-Document how `codegg` should use `eggsact`/`nl-clicalc` as deterministic middleware, not only as optional model-invoked MCP tools.
+Document how `codegg` should use `eggsact`/`eggcalc` as deterministic middleware, not only as optional model-invoked MCP tools.
 
 ### Suggested Document
 

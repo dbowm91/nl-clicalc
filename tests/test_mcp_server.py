@@ -2,9 +2,9 @@
 
 import json
 
-from nl_calc.exact.identifier import identifier_analyze
-from nl_calc.mcp.server import TOOL_HANDLERS, handle_request
-from nl_calc.mcp.tools import MAX_TEXT_LENGTH
+from egg_calc.exact.identifier import identifier_analyze
+from egg_calc.mcp.server import TOOL_HANDLERS, handle_request
+from egg_calc.mcp.tools import MAX_TEXT_LENGTH
 
 
 class TestProtocolHandshake:
@@ -3581,21 +3581,21 @@ class TestToolListGolden:
 
     def test_all_handlers_have_schemas(self):
         """Every tool in TOOL_HANDLERS must have a schema."""
-        from nl_calc.mcp.schemas import TOOL_SCHEMAS
-        from nl_calc.mcp.server import TOOL_HANDLERS
+        from egg_calc.mcp.schemas import TOOL_SCHEMAS
+        from egg_calc.mcp.server import TOOL_HANDLERS
         for name in TOOL_HANDLERS:
             assert name in TOOL_SCHEMAS, f"Tool {name} has no schema"
 
     def test_all_schemas_have_handlers(self):
         """Every schema must have a corresponding handler."""
-        from nl_calc.mcp.schemas import TOOL_SCHEMAS
-        from nl_calc.mcp.server import TOOL_HANDLERS
+        from egg_calc.mcp.schemas import TOOL_SCHEMAS
+        from egg_calc.mcp.server import TOOL_HANDLERS
         for name in TOOL_SCHEMAS:
             assert name in TOOL_HANDLERS, f"Schema {name} has no handler"
 
     def test_list_tools_returns_all_registered_tools(self):
         """tools/list must return exactly the tools in TOOL_HANDLERS."""
-        from nl_calc.mcp.server import TOOL_HANDLERS
+        from egg_calc.mcp.server import TOOL_HANDLERS
         response = handle_request({
             "jsonrpc": "2.0",
             "id": 1,

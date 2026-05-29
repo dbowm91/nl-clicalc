@@ -1,70 +1,70 @@
 # API Reference
 
-Complete API reference for nl-clicalc.
+Complete API reference for eggcalc.
 
 ## Core Functions
 
-::: nl_clicalc.evaluate
-::: nl_clicalc.evaluate_raw
-::: nl_clicalc.evaluate_cached
-::: nl_clicalc.evaluate_async
-::: nl_clicalc.evaluate_with_timeout
+::: egg_calc.evaluate
+::: egg_calc.evaluate_raw
+::: egg_calc.evaluate_cached
+::: egg_calc.evaluate_async
+::: egg_calc.evaluate_with_timeout
 
 ## PyCalcApp Class
 
-::: nl_clicalc.PyCalcApp
+::: egg_calc.PyCalcApp
 
 ## Configuration
 
-::: nl_clicalc.register_constant
-::: nl_clicalc.register_function
-::: nl_clicalc.load_user_config
-::: nl_clicalc.get_default_evaluator
+::: egg_calc.register_constant
+::: egg_calc.register_function
+::: egg_calc.load_user_config
+::: egg_calc.get_default_evaluator
 
 ## Types
 
-::: nl_clicalc.UnitValue
-::: nl_clicalc.EvaluationError
-::: nl_clicalc.TimeoutError
-::: nl_clicalc.Memory
+::: egg_calc.UnitValue
+::: egg_calc.EvaluationError
+::: egg_calc.TimeoutError
+::: egg_calc.Memory
 
 ## Unit Utilities
 
-::: nl_clicalc.normalize_unit
-::: nl_clicalc.get_conversion_factor
-::: nl_clicalc.get_all_units
-::: nl_clicalc.is_unit
+::: egg_calc.normalize_unit
+::: egg_calc.get_conversion_factor
+::: egg_calc.get_all_units
+::: egg_calc.is_unit
 
 ## Memory Functions
 
-::: nl_clicalc.memory_store
-::: nl_clicalc.memory_recall
-::: nl_clicalc.memory_add
-::: nl_clicalc.memory_subtract
-::: nl_clicalc.memory_clear
-::: nl_clicalc.memory_list
+::: egg_calc.memory_store
+::: egg_calc.memory_recall
+::: egg_calc.memory_add
+::: egg_calc.memory_subtract
+::: egg_calc.memory_clear
+::: egg_calc.memory_list
 
 ## Variable Functions
 
-::: nl_clicalc.setvar
-::: nl_clicalc.getvar
-::: nl_clicalc.delvar
-::: nl_clicalc.listvars
-::: nl_clicalc.clearvars
+::: egg_calc.setvar
+::: egg_calc.getvar
+::: egg_calc.delvar
+::: egg_calc.listvars
+::: egg_calc.clearvars
 
 ## Constants
 
-::: nl_clicalc.MAX_INPUT_LENGTH
-::: nl_clicalc.MAX_NESTING_DEPTH
-::: nl_clicalc.MAX_EXPONENT
-::: nl_clicalc.MAX_FACTORIAL
-::: nl_clicalc.MAX_RESULT_VALUE
-::: nl_clicalc.DEFAULT_CACHE_SIZE
+::: egg_calc.MAX_INPUT_LENGTH
+::: egg_calc.MAX_NESTING_DEPTH
+::: egg_calc.MAX_EXPONENT
+::: egg_calc.MAX_FACTORIAL
+::: egg_calc.MAX_RESULT_VALUE
+::: egg_calc.DEFAULT_CACHE_SIZE
 
 ## CLI Functions
 
-::: nl_clicalc.main
-::: nl_clicalc.run
-::: nl_clicalc.normalize
-::: nl_clicalc.normalize_expression
-::: nl_clicalc.print_help
+::: egg_calc.main
+::: egg_calc.run
+::: egg_calc.normalize
+::: egg_calc.normalize_expression
+::: egg_calc.print_help

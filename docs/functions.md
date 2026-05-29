@@ -1,6 +1,6 @@
 # Functions
 
-nl-clicalc supports a wide range of mathematical functions.
+eggcalc supports a wide range of mathematical functions.
 
 ## Trigonometric
 

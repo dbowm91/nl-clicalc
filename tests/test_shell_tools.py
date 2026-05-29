@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from nl_calc.exact.shell import (
+from egg_calc.exact.shell import (
     argv_compare,
     shell_quote_join,
     shell_split,

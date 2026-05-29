@@ -8,14 +8,14 @@
 ## Install from PyPI
 
 ```bash
-pip install nl-clicalc
+pip install eggcalc
 ```
 
 ## Install from Source
 
 ```bash
-git clone https://github.com/dbowman91/nl-clicalc.git
-cd nl-clicalc
+git clone https://github.com/dbowman91/eggcalc.git
+cd eggcalc
 pip install -e .
 ```
 
@@ -24,8 +24,8 @@ pip install -e .
 For contributing or development:
 
 ```bash
-git clone https://github.com/dbowman91/nl-clicalc.git
-cd nl-clicalc
+git clone https://github.com/dbowman91/eggcalc.git
+cd eggcalc
 pip install -e ".[dev]"
 pre-commit install
 ```
@@ -35,8 +35,8 @@ pre-commit install
 For portable CLI installation using the install script:
 
 ```bash
-git clone https://github.com/dbowman91/nl-clicalc.git
-cd nl-clicalc
+git clone https://github.com/dbowman91/eggcalc.git
+cd eggcalc
 python install.py --install
 ```
 
@@ -84,7 +84,7 @@ calc "one plus one"
 Add to `~/.bashrc`:
 
 ```bash
-source /path/to/nl-clicalc/completions/calc.bash
+source /path/to/eggcalc/completions/calc.bash
 ```
 
 ### Zsh
@@ -98,7 +98,7 @@ cp completions/_calc ~/.zsh/completions/
 Or add to `~/.zshrc`:
 
 ```bash
-fpath=(/path/to/nl-clicalc/completions $fpath)
+fpath=(/path/to/eggcalc/completions $fpath)
 ```
 
 ### Fish
@@ -114,6 +114,6 @@ cp completions/calc.fish ~/.config/fish/completions/
 Install the man page:
 
 ```bash
-cp docs/nl-clicalc.1 /usr/local/share/man/man1/
+cp docs/eggcalc.1 /usr/local/share/man/man1/
 man calc
 ```

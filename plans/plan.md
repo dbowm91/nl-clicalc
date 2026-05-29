@@ -1,4 +1,4 @@
-# nl-clicalc Implementation Plan
+# eggcalc Implementation Plan
 
 ## Status: COMPLETED (2026-05-29)
 
@@ -43,7 +43,7 @@ See git history for the detailed implementation.
 **D7: TypedDict documentation** - `architecture/synthesis.md`
 - Added `NormalizationState`, `UnicodeRisks`, `InspectTextNormalized`, `NormalizationFinding`
 
-**D8: CONTRIBUTING.md** - Fixed path references from `clicalc/` to `nl-clicalc/`
+**D8: CONTRIBUTING.md** - Fixed path references from `clicalc/` to `eggcalc/`
 
 ---
 

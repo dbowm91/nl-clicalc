@@ -3,13 +3,13 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nl-clicalc"
+name = "eggcalc"
 version = "1.1.1"
 description = "Natural language math expression calculator"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "nl-calc Contributors", email = "dbowman91@proton.me"}
+    {name = "eggcalc Contributors", email = "dbowman91@proton.me"}
 ]
 requires-python = ">=3.10"
 classifiers = [
@@ -47,15 +47,15 @@ docs = [
 ]
 
 [project.scripts]
-calc = "nl_calc.normalize:main"
+calc = "egg_calc.normalize:main"
 
 [project.urls]
-Homepage = "https://github.com/nl-calc/nl-calc"
-Repository = "https://github.com/nl-calc/nl-calc"
+Homepage = "https://github.com/eggcalc/eggcalc"
+Repository = "https://github.com/eggcalc/eggcalc"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["nl_calc*"]
+include = ["egg_calc*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

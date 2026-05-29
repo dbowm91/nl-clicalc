@@ -250,7 +250,7 @@ calc "5 * planck"      # 3.313e-33
 
 ## Text Tools
 
-nl-clicalc includes text inspection tools for detecting hidden characters, testing patterns, and analyzing text security risks. These tools are built on the `nl_calc.exact` module.
+eggcalc includes text inspection tools for detecting hidden characters, testing patterns, and analyzing text security risks. These tools are built on the `nl_calc.exact` module.
 
 **Why these tools exist:** Unicode text can contain invisible characters, confusables (characters from different scripts that look identical), and other security risks. These tools help detect such issues in user input.
 
@@ -395,7 +395,7 @@ calc regex "[invalid" "test"
 
 ## MCP Server Mode
 
-nl-clicalc can run as an MCP server, exposing exact text tools to AI agents:
+eggcalc can run as an MCP server, exposing exact text tools to AI agents:
 
 ```bash
 calc --mcp

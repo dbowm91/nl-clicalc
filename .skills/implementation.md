@@ -1,4 +1,4 @@
-# Implementation Patterns for nl-clicalc
+# Implementation Patterns for eggcalc
 
 ## Purpose
 Guide agents implementing fixes and features across the codebase.

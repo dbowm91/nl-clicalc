@@ -1,6 +1,6 @@
 # Python API
 
-nl-clicalc provides several evaluation functions with different trade-offs. Choose the right function for your use case.
+eggcalc provides several evaluation functions with different trade-offs. Choose the right function for your use case.
 
 ## Choosing an Evaluation Function
 
@@ -19,7 +19,7 @@ nl-clicalc provides several evaluation functions with different trade-offs. Choo
 **Recommended for any untrusted input.** Provides timeout protection against long-running computations.
 
 ```python
-from nl_clicalc import evaluate_with_timeout, TimeoutError
+from egg_calc import evaluate_with_timeout, TimeoutError
 
 try:
     result = evaluate_with_timeout(user_expression, timeout=5.0)
@@ -32,7 +32,7 @@ except TimeoutError:
 Direct AST evaluation. **Expects pre-normalized input** (no spaces, no natural language words).
 
 ```python
-from nl_clicalc import evaluate
+from egg_calc import evaluate
 
 result = evaluate("5+3")        # 8
 result = evaluate("sin(1)+2")  # 2.8414...
@@ -51,7 +51,7 @@ Full pipeline evaluation. Handles natural language, spaces, units, and mixed inp
 Internally calls `normalize_expression()` to convert natural language before evaluation.
 
 ```python
-from nl_clicalc import evaluate_raw
+from egg_calc import evaluate_raw
 
 result = evaluate_raw("5 + 3")          # 8
 result = evaluate_raw("five plus three")  # 8
@@ -65,7 +65,7 @@ result = evaluate_raw("what is five plus three")  # 8
 Like `evaluate_raw()` but with LRU caching (1024 entries). Best for repeated identical queries.
 
 ```python
-from nl_clicalc import evaluate_cached
+from egg_calc import evaluate_cached
 
 # First call: ~155 μs (compute + cache)
 result = evaluate_cached("five plus three")
@@ -80,7 +80,7 @@ Async version of `evaluate_raw()`. For use with async web frameworks (FastAPI, a
 
 ```python
 import asyncio
-from nl_clicalc import evaluate_async
+from egg_calc import evaluate_async
 
 async def calculate(expr: str):
     return await evaluate_async(expr)
@@ -93,7 +93,7 @@ result = asyncio.run(calculate("5 + 3"))  # 8
 Thread-safe wrapper optimized for web applications. Each instance has isolated constants/functions and optional caching.
 
 ```python
-from nl_clicalc import PyCalcApp
+from egg_calc import PyCalcApp
 
 app = PyCalcApp(cache_size=1000, enable_cache=True)
 
@@ -131,7 +131,7 @@ app.clear_cache()      # Clear all cache entries
 Register a custom constant globally (thread-safe).
 
 ```python
-from nl_clicalc import register_constant, evaluate_raw
+from egg_calc import register_constant, evaluate_raw
 
 register_constant("earth_radius", 6371)
 result = evaluate_raw("earth_radius")  # 6371
@@ -143,7 +143,7 @@ result = evaluate_raw("2 * pi * earth_radius")  # 40075...
 Register a custom function globally (thread-safe).
 
 ```python
-from nl_clicalc import register_function, evaluate_raw
+from egg_calc import register_function, evaluate_raw
 
 def circle_area(radius):
     import math
@@ -158,7 +158,7 @@ result = evaluate_raw("area(5)")  # 78.54...
 Load configuration from `nl_calc_config.py` in the working directory.
 
 ```python
-from nl_clicalc import load_user_config
+from egg_calc import load_user_config
 
 load_user_config()  # Loads CUSTOM_CONSTANTS, CUSTOM_FUNCTIONS, etc.
 ```
@@ -170,7 +170,7 @@ load_user_config()  # Loads CUSTOM_CONSTANTS, CUSTOM_FUNCTIONS, etc.
 Represents a numeric value with units. Returned when expressions involve units.
 
 ```python
-from nl_clicalc import evaluate_raw, UnitValue
+from egg_calc import evaluate_raw, UnitValue
 
 result = evaluate_raw("30m + 100ft")
 
@@ -189,7 +189,7 @@ result = uv1 + uv2  # UnitValue(60.48, "m")
 Named memory registers for calculator-style operations. Internally uses a dictionary mapping register names to float values.
 
 ```python
-from nl_clicalc import Memory, memory_store, memory_recall
+from egg_calc import Memory, memory_store, memory_recall
 
 # Memory is a TypedDict-like structure with named registers
 mem = Memory()
@@ -207,7 +207,7 @@ memory_subtract(5)    # Subtracts from M register: M = 45
 Raised when an expression is invalid or contains unsupported operations.
 
 ```python
-from nl_clicalc import evaluate_raw, EvaluationError
+from egg_calc import evaluate_raw, EvaluationError
 
 try:
     result = evaluate_raw("import os")
@@ -220,7 +220,7 @@ except EvaluationError as e:
 Raised when evaluation exceeds the specified timeout.
 
 ```python
-from nl_clicalc import evaluate_with_timeout, TimeoutError
+from egg_calc import evaluate_with_timeout, TimeoutError
 
 try:
     result = evaluate_with_timeout("factorial(10000)", timeout=1.0)
@@ -233,7 +233,7 @@ except TimeoutError:
 ### Unit Utilities
 
 ```python
-from nl_clicalc import (
+from egg_calc import (
     normalize_unit,      # Normalize unit name to canonical form
     get_conversion_factor,  # Get conversion factor between units
     get_all_units,       # List all supported units
@@ -254,7 +254,7 @@ is_unit("xyz")   # False
 Calculator-style memory operations (global state).
 
 ```python
-from nl_clicalc import (
+from egg_calc import (
     memory_store,     # Store value (default M register)
     memory_recall,   # Recall from memory
     memory_add,      # Add to memory (M+)
@@ -278,7 +278,7 @@ Also available: `MR` (alias for recall), `MC` (alias for clear), `Mplus(x)`, `Mm
 User-defined variables (global state, thread-safe).
 
 ```python
-from nl_clicalc import (
+from egg_calc import (
     setvar,       # Set variable value
     getvar,       # Get variable value
     delvar,       # Delete variable
@@ -297,7 +297,7 @@ clearvars()      # Remove all variables
 **Usage example:**
 
 ```python
-from nl_clicalc import evaluate_raw
+from egg_calc import evaluate_raw
 
 evaluate_raw('setvar("r", 5)')
 evaluate_raw('pi * r ^ 2')    # 78.54... (circle area)
@@ -310,7 +310,7 @@ evaluate_raw('pi * r ^ 2 * h')  # 785.4... (cylinder volume)
 Limits that protect against DoS attacks. Import and modify as needed.
 
 ```python
-from nl_clicalc import (
+from egg_calc import (
     MAX_INPUT_LENGTH,     # 10000 - max input characters
     MAX_NESTING_DEPTH,    # 100 - max parentheses nesting
     MAX_EXPONENT,         # 10000 - max exponent value

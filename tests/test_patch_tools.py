@@ -2,7 +2,7 @@
 
 import json
 
-from nl_calc.mcp.server import TOOL_HANDLERS, handle_request
+from egg_calc.mcp.server import TOOL_HANDLERS, handle_request
 
 # --- Test fixtures ---
 

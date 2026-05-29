@@ -1,6 +1,6 @@
 # Units
 
-nl-clicalc supports unit conversions across multiple categories.
+eggcalc supports unit conversions across multiple categories.
 
 ## Length
 
@@ -302,7 +302,7 @@ calc "temp(212, F, C)"
 The `UnitValue` class represents a numeric value with optional units:
 
 ```python
-from nl_clicalc import UnitValue
+from egg_calc import UnitValue
 
 uv = UnitValue(30, "m")
 ```
@@ -337,7 +337,7 @@ uv = UnitValue(30, "m")
 ## Python API
 
 ```python
-from nl_clicalc import evaluate_raw, UnitValue, get_conversion_factor
+from egg_calc import evaluate_raw, UnitValue, get_conversion_factor
 
 # Evaluate with units
 result = evaluate_raw("30m + 100ft")
@@ -356,13 +356,13 @@ factor = get_conversion_factor("km", "mi")
 print(f"1 km = {factor} miles")  # 0.621371
 
 # Check if text is a recognized unit
-from nl_clicalc import is_unit
+from egg_calc import is_unit
 print(is_unit("m"))     # True
 print(is_unit("kg"))    # True
 print(is_unit("xyz"))   # False
 
 # List all supported units
-from nl_clicalc import get_all_units
+from egg_calc import get_all_units
 units = get_all_units()
 print(f"Total units supported: {len(units)}")  # ~150
 
@@ -374,7 +374,7 @@ print(result)  # 212.0
 ## Unit Utility Functions
 
 ```python
-from nl_clicalc import normalize_unit, get_unit_category
+from egg_calc import normalize_unit, get_unit_category
 
 # Normalize unit to canonical form
 normalize_unit("meters")     # "m"

@@ -1,4 +1,4 @@
-"""Baseline performance results for nl-clicalc.
+"""Baseline performance results for eggcalc.
 
 These timings are documented in README.md and should be verified
 periodically to detect regressions.

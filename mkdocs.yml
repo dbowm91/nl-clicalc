@@ -1,8 +1,8 @@
 site_name: clicalc
 site_description: Natural language math expression calculator
 site_url: https://clicalc.readthedocs.io
-repo_url: https://github.com/dbowman91/nl-clicalc
-repo_name: nl-clicalc/nl-clicalc
+repo_url: https://github.com/dbowman91/eggcalc
+repo_name: eggcalc/eggcalc
 author: NlCliCalc Contributors
 
 theme:

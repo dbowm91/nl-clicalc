@@ -7,7 +7,7 @@ These tests verify that mathematical laws hold for the evaluator:
 - Trigonometric identities
 """
 
-from nl_calc import UnitValue, evaluate
+from egg_calc import UnitValue, evaluate
 
 
 def get_value(result):

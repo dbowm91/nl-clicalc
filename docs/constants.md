@@ -1,6 +1,6 @@
 # Constants
 
-nl-clicalc includes mathematical and physical constants.
+eggcalc includes mathematical and physical constants.
 
 ## Mathematical Constants
 
@@ -135,7 +135,7 @@ calc "2 * pi * earth_radius"
 ## Python API
 
 ```python
-from nl_clicalc import evaluate_raw, register_constant
+from egg_calc import evaluate_raw, register_constant
 
 # Use constants
 result = evaluate_raw("pi * 2")

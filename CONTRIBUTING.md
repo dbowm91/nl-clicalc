@@ -1,6 +1,6 @@
-# Contributing to nl-clicalc
+# Contributing to eggcalc
 
-Thank you for your interest in contributing to nl-clicalc! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to eggcalc! This document provides guidelines and instructions for contributing.
 
 ## Development Setup
 
@@ -13,8 +13,8 @@ Thank you for your interest in contributing to nl-clicalc! This document provide
 
 1. Fork and clone the repository:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/nl-clicalc.git
-   cd nl-clicalc
+   git clone https://github.com/YOUR_USERNAME/eggcalc.git
+   cd eggcalc
    ```
 
 2. Create a virtual environment:
@@ -88,7 +88,7 @@ mypy nl_calc --ignore-missing-imports
 ## Project Structure
 
 ```
-nl-clicalc/
+eggcalc/
 ├── nl_calc/           # Main package
 │   ├── __init__.py    # Package exports
 │   ├── __main__.py    # CLI entry point

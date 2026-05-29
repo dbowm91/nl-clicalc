@@ -1,13 +1,13 @@
 # Security
 
-nl-clicalc is designed with security as a priority. This page covers security features and best practices.
+eggcalc is designed with security as a priority. This page covers security features and best practices.
 
 ## Critical: Always Use Timeouts for Untrusted Input
 
 **For any expression from an untrusted source (web requests, user input, etc.), always use `evaluate_with_timeout()`:**
 
 ```python
-from nl_clicalc import evaluate_with_timeout, TimeoutError
+from egg_calc import evaluate_with_timeout, TimeoutError
 
 # ALWAYS use timeout with untrusted input
 try:
@@ -20,7 +20,7 @@ This is the single most important security practice. Without a timeout, a malici
 
 ## AST-Based Evaluation
 
-nl-clicalc uses Abstract Syntax Tree (AST) parsing instead of Python's `eval()`. This provides:
+eggcalc uses Abstract Syntax Tree (AST) parsing instead of Python's `eval()`. This provides:
 
 - **No arbitrary code execution** - Users cannot execute Python code
 - **Controlled function access** - Only whitelisted functions can be called
@@ -108,7 +108,7 @@ x[0]                       # Blocked
 ### Example: Secure Endpoint
 
 ```python
-from nl_clicalc import PyCalcApp, EvaluationError, TimeoutError
+from egg_calc import PyCalcApp, EvaluationError, TimeoutError
 
 app = PyCalcApp()
 
@@ -129,7 +129,7 @@ def handle_user_input(expression: str):
 Only register functions during initialization:
 
 ```python
-from nl_clicalc import register_function
+from egg_calc import register_function
 
 # Safe: Register during startup
 def my_safe_function(x):
@@ -160,7 +160,7 @@ In high-security environments, avoid config loading:
 
 ```python
 # Don't call load_user_config()
-from nl_clicalc import PyCalcApp
+from egg_calc import PyCalcApp
 
 app = PyCalcApp()
 # Manually configure instead
@@ -172,7 +172,7 @@ app.register_constant("safe_const", 42)
 ### 1. Always Use Timeouts
 
 ```python
-from nl_clicalc import evaluate_with_timeout
+from egg_calc import evaluate_with_timeout
 
 result = evaluate_with_timeout(user_input, timeout=1.0)
 ```
@@ -191,7 +191,7 @@ def validate_input(expr: str) -> str:
 ### 3. Use Instance Isolation
 
 ```python
-from nl_clicalc import PyCalcApp
+from egg_calc import PyCalcApp
 
 # Each user/tenant gets isolated instance
 app = PyCalcApp()
@@ -256,7 +256,7 @@ See [Exact Module](exact.md) for comprehensive text processing documentation.
 
 ## Security Audit
 
-nl-clicalc follows these security principles:
+eggcalc follows these security principles:
 
 1. **Principle of Least Privilege**: Only necessary operations allowed
 2. **Defense in Depth**: Multiple layers of protection
@@ -265,7 +265,7 @@ nl-clicalc follows these security principles:
 
 ## Reporting Vulnerabilities
 
-See [SECURITY.md](https://github.com/dbowman91/nl-clicalc/blob/main/SECURITY.md) for:
+See [SECURITY.md](https://github.com/dbowman91/eggcalc/blob/main/SECURITY.md) for:
 
 - How to report vulnerabilities
 - Response timeline

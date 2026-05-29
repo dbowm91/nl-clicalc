@@ -78,42 +78,37 @@ def register_function(name: str, func: Any) -> None:
 
 
 def load_user_config() -> None:
-    """Load user-defined configuration from nl_calc_config.py (thread-safe)."""
-    global _config_loaded
+    """Load user-defined configuration from egg_calc_config.py (thread-safe)."""
+    try:
+        import egg_calc.normalize as normalize_mod
+        import egg_calc_config as config
 
-    with _lock:
-        if _config_loaded:
-            return
+        for name, value in getattr(config, "CUSTOM_CONSTANTS", {}).items():
+            _default_evaluator.CONSTANTS[name] = value
 
-        try:
-            import nl_calc_config as config
+        for name, func in getattr(config, "CUSTOM_FUNCTIONS", {}).items():
+            _default_evaluator.FUNCTIONS[name] = func
 
-            for name, value in getattr(config, "CUSTOM_CONSTANTS", {}).items():
-                _default_evaluator.CONSTANTS[name] = value
+        from . import units
 
-            for name, func in getattr(config, "CUSTOM_FUNCTIONS", {}).items():
-                _default_evaluator.FUNCTIONS[name] = func
+        for base, unit_dict in getattr(config, "CUSTOM_UNITS", {}).items():
+            if base in units.UNIT_BASE:
+                units.UNIT_BASE[base].update(unit_dict)
+            else:
+                units.UNIT_BASE[base] = unit_dict
 
-            from . import units
+        for unit, canonical in getattr(config, "CUSTOM_ALIASES", {}).items():
+            units.UNIT_ALIASES[unit] = canonical
 
-            for base, unit_dict in getattr(config, "CUSTOM_UNITS", {}).items():
-                if base in units.UNIT_BASE:
-                    units.UNIT_BASE[base].update(unit_dict)
-                else:
-                    units.UNIT_BASE[base] = unit_dict
+        for key, (mult, offset) in getattr(config, "CUSTOM_TEMP_CONVERSIONS", {}).items():
+            units.TEMPERATURE_CONVERSIONS[key] = (mult, offset)
 
-            for unit, canonical in getattr(config, "CUSTOM_ALIASES", {}).items():
-                units.UNIT_ALIASES[unit] = canonical
+        units._rebuild_conversions()
 
-            for key, (mult, offset) in getattr(config, "CUSTOM_TEMP_CONVERSIONS", {}).items():
-                units.TEMPERATURE_CONVERSIONS[key] = (mult, offset)
+    except ImportError:
+        pass
 
-            units._rebuild_conversions()
-
-        except ImportError:
-            pass
-
-        _config_loaded = True
+    _config_loaded = True
 
 
 def _ensure_config_loaded() -> None:
@@ -169,8 +164,8 @@ async def evaluate_async(expression: str) -> Any:
 def load_user_config_extended() -> None:
     """Load user-defined configuration including normalize (call after normalize is loaded)."""
     try:
-        import nl_calc.normalize as normalize_mod
-        import nl_calc_config as config
+        import egg_calc.normalize as normalize_mod
+        import egg_calc_config as config
 
         for word, num in getattr(config, "CUSTOM_NUMBER_WORDS", {}).items():
             normalize_mod.NUMBER_WORDS[num] = normalize_mod.NUMBER_WORDS.get(num, [])

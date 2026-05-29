@@ -6,9 +6,9 @@ Converts mathematical expressions written in natural language
 mathematical expressions.
 
 Usage:
-    python -m nl_calc "five plus two"
-    python -m nl_calc "30m + 100ft"
-    python -m nl_calc --help
+    python -m egg_calc "five plus two"
+    python -m egg_calc "30m + 100ft"
+    python -m egg_calc --help
 """
 
 from __future__ import annotations
@@ -1701,8 +1701,7 @@ def _cli_text_command(expression: str, json_output: bool = False) -> int:
 def main() -> int:
     """Main entry point for CLI."""
     import os
-
-    from nl_calc import __version__
+    import egg_calc
 
     parser = argparse.ArgumentParser(
         description="Natural language math expression calculator",
@@ -1744,11 +1743,11 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.mcp:
-        from nl_calc.mcp.server import mcp_main
+        from egg_calc.mcp.server import mcp_main
         return mcp_main()
 
     if args.version:
-        print(f"nl-calc {__version__}")
+        print(f"eggcalc {egg_calc.__version__}")
         return 0
 
     if args.usage:
@@ -1769,7 +1768,7 @@ def main() -> int:
         expression = " ".join(args.expression)
         quiet_by_default = False
 
-    # Detect shell glob expansion (e.g., "python nl_calc.py 30 * 3" expands "*" to files)
+    # Detect shell glob expansion (e.g., "python egg_calc.py 30 * 3" expands "*" to files)
     if args.expression and len(args.expression) > 1:
         # Check if any argument is a file or directory that exists (likely from glob expansion)
         cwd = os.getcwd()

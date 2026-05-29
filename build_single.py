@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Build script to combine nl_calc modules into a single self-contained executable.
+Build script to combine egg_calc modules into a single self-contained executable.
 
 Supports both CLI mode (calculator) and MCP server mode (--mcp flag).
 
 Usage:
-    python3 build_single.py          # Build nl_calc.py in current directory
+    python3 build_single.py          # Build egg_calc.py in current directory
     python3 build_single.py -o /path/to/output  # Custom output path
 """
 
@@ -16,7 +16,7 @@ import os
 import sys
 
 
-NL_CALC_DIR = os.path.join(os.path.dirname(__file__), "nl_calc")
+EGG_CALC_DIR = os.path.join(os.path.dirname(__file__), "egg_calc")
 
 MODULES_CALC = [
     "units",
@@ -57,14 +57,14 @@ HEADER = '''#!/usr/bin/env python3
 from __future__ import annotations
 
 """
-nl_calc - Natural language math expression calculator + MCP exact tools
+egg_calc - Natural language math expression calculator + MCP exact tools
 
 Single-file version.
 
-CLI mode:     python3 nl_calc.py "five plus two"
-MCP mode:     python3 nl_calc.py --mcp
+CLI mode:     python3 egg_calc.py "five plus two"
+MCP mode:     python3 egg_calc.py --mcp
 
-Or make executable: chmod +x nl_calc.py && ./nl_calc.py "five plus two"
+Or make executable: chmod +x egg_calc.py && ./egg_calc.py "five plus two"
 """
 
 import sys
@@ -77,7 +77,7 @@ os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
 
 def get_version() -> str:
     """Get version from __init__.py"""
-    init_path = os.path.join(NL_CALC_DIR, "__init__.py")
+    init_path = os.path.join(EGG_CALC_DIR, "__init__.py")
     with open(init_path, "r") as f:
         for line in f:
             if line.startswith("__version__"):
@@ -170,8 +170,8 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
         # Skip relative imports (they reference inlined modules)
         if stripped.startswith("from ."):
             return False
-        # Skip nl_calc imports (package reference)
-        if "nl_calc" in stripped:
+        # Skip egg_calc imports (package reference)
+        if "egg_calc" in stripped:
             return False
         # Must be a complete single-line import (ends without_open paren, no backslash)
         if "(" in stripped or ")" in stripped:
@@ -222,7 +222,7 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
             continue
 
         # Handle simple "import X" statements - collect them if top-level
-        if stripped.startswith("import ") and not stripped.startswith("import nl_calc"):
+        if stripped.startswith("import ") and not stripped.startswith("import egg_calc"):
             if is_valid_single_line_import(stripped, line):
                 imports.append(line)
                 continue  # Skip - imported at top level
@@ -262,7 +262,7 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     code = code.replace("units._rebuild_conversions()", "_rebuild_conversions()")
 
     # Normalize references to modules now inlined
-    code = code.replace("from nl_calc import __version__", "# __version__ is defined at module level")
+    code = code.replace("from egg_calc import __version__", "# __version__ is defined at module level")
 
     # Rename normalize.main() to normalize_main() to avoid conflict with MCP main()
     if '"""Main entry point for CLI."""' in code:
@@ -303,7 +303,7 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     # Exact imports into synthesis
     code = code.replace("from ..exact import", "from exact import")
 
-    # MCP imports from nl_calc
+    # MCP imports from egg_calc
     code = code.replace("from .. import EvaluationError, evaluate_raw", "from evaluator import EvaluationError, evaluate_raw")
     code = code.replace("from ..exact import", "from exact import")
 
@@ -401,11 +401,11 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
 
 
 def build_single_file(output_path: str | None = None) -> str:
-    """Combine all nl_calc modules into a single file."""
+    """Combine all egg_calc modules into a single file."""
     version = get_version()
 
     if output_path is None:
-        output_path = os.path.join(os.path.dirname(__file__), "nl_calc.py")
+        output_path = os.path.join(os.path.dirname(__file__), "egg_calc.py")
 
     content: list[str] = [HEADER]
     content.append(f'__version__ = "{version}"\n')
@@ -502,7 +502,7 @@ def build_single_file(output_path: str | None = None) -> str:
 def _main():
     import argparse
     import sys
-    parser = argparse.ArgumentParser(description="nl_calc - Natural language calculator + MCP server")
+    parser = argparse.ArgumentParser(description="eggcalc - Natural language calculator + MCP server")
     parser.add_argument("--mcp", action="store_true", help="Run as MCP server")
     parser.add_argument("expression", nargs="*", help="Math expression to evaluate")
     parser.add_argument("-e", "--expression", dest="single_expr", metavar="<expr>", help="Evaluate a single expression (useful for piping)")
@@ -517,7 +517,7 @@ def _main():
         print_help()
         return 0
     elif args.expression or args.single_expr:
-        sys.argv = ["nl_calc"]
+        sys.argv = ["egg_calc"]
         if args.single_expr:
             sys.argv.extend(["-e", args.single_expr])
         else:
@@ -630,7 +630,7 @@ if __name__ == "__main__":
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build single-file nl_calc")
+    parser = argparse.ArgumentParser(description="Build single-file eggcalc")
     parser.add_argument("-o", "--output", help="Output file path")
     args = parser.parse_args()
 

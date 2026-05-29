@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Install script for nl_calc.
+Install script for eggcalc.
 
 Creates a single self-contained executable and adds it to the user's PATH.
 Supports Linux, macOS, and Windows.
@@ -34,11 +34,11 @@ def is_installed(install_dir: str) -> bool:
 
 
 def build_single_file():
-    """Build the single-file version of nl_calc."""
+    """Build the single-file version of eggcalc."""
     build_script = os.path.join(os.path.dirname(__file__), "build_single.py")
     if os.path.exists(build_script):
         subprocess.run([sys.executable, build_script], check=True)
-        return os.path.join(os.path.dirname(__file__), "nl_calc.py")
+        return os.path.join(os.path.dirname(__file__), "egg_calc.py")
     else:
         print("Error: build_single.py not found")
         sys.exit(1)
@@ -87,7 +87,7 @@ def add_to_path(install_dir: str) -> bool:
                 return True
 
             with open(target_file, "a") as f:
-                f.write(f"\n# Added by nl_calc install\n{export_line}\n")
+                f.write(f"\n# Added by eggcalc install\n{export_line}\n")
 
             print(f"Added {install_dir} to PATH in {target_file}")
             return True
@@ -115,8 +115,8 @@ def remove_from_path(install_dir: str) -> bool:
         content = f.read()
 
     export_line = f'export PATH="{install_dir}:$PATH"'
-    added_marker = "# Added by nl_calc install"
-    removed_marker = "# Removed by nl_calc install"
+    added_marker = "# Added by eggcalc install"
+    removed_marker = "# Removed by eggcalc install"
 
     lines = content.split('\n')
     new_lines = []
@@ -178,7 +178,7 @@ def install_calc(install_dir: str, no_path: bool = False) -> bool:
         print("Use --update to replace the existing installation.")
         return False
 
-    print("Building single-file nl_calc...")
+    print("Building single-file eggcalc...")
     single_file = build_single_file()
 
     calc_path = create_executable(single_file, install_dir)
@@ -210,7 +210,7 @@ def update_calc(install_dir: str) -> bool:
         print("Use --install to install it first.")
         return False
 
-    print("Building new single-file nl_calc...")
+    print("Building new single-file eggcalc...")
     single_file = build_single_file()
 
     calc_path = get_calc_path(install_dir)

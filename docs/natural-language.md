@@ -1,6 +1,6 @@
 # Natural Language
 
-nl-clicalc converts natural language expressions into mathematical operations. Understanding how parsing works helps you write expressions that work reliably.
+eggcalc converts natural language expressions into mathematical operations. Understanding how parsing works helps you write expressions that work reliably.
 
 ## How Parsing Works
 
@@ -237,7 +237,7 @@ calc "negative three times four"  # -3*4 -> -12
 
 ## Order of Operations
 
-nl-clicalc follows standard mathematical precedence:
+eggcalc follows standard mathematical precedence:
 
 ```bash
 calc "five plus three times two"

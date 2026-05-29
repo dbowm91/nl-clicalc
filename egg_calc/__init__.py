@@ -1,21 +1,21 @@
 """
-nl-calc - Natural language math expression calculator.
+eggcalc - Natural language math expression calculator.
 
 A calculator that accepts natural language expressions and converts them
 to mathematical expressions that can be evaluated.
 
 Usage:
-    python -m nl_calc "five plus two"
-    python -m nl_calc "30m + 100ft"
-    python -m nl_calc --help
-    python -m nl_calc -i  # Interactive REPL mode
+    python -m egg_calc "five plus two"
+    python -m egg_calc "30m + 100ft"
+    python -m egg_calc --help
+    python -m egg_calc -i  # Interactive REPL mode
 
 Library usage:
-    from nl_calc import evaluate, EvaluationError, UnitValue
+    from egg_calc import evaluate, EvaluationError, UnitValue
     result = evaluate("5 + 3")
 
     # For webapps with caching:
-    from nl_calc import PyCalcApp
+    from egg_calc import PyCalcApp
     app = PyCalcApp(cache_size=1024)
     result = app.calculate("five plus two")
 
@@ -76,8 +76,8 @@ from .units import (
     normalize_unit,
 )
 
-__version__ = "1.1.0"
-__author__ = "nl-calc Contributors"
+__version__ = "1.1.1"
+__author__ = "eggcalc Contributors"
 
 __all__ = [
     # Core evaluation

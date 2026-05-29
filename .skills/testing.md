@@ -1,4 +1,4 @@
-# Unit Testing Patterns for nl-clicalc
+# Unit Testing Patterns for eggcalc
 
 ## Purpose
 Guide agents on writing and running tests for this codebase.

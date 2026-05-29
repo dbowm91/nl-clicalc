@@ -21,7 +21,7 @@ class TestSecurityFuzz:
 
     def test_random_string_inputs(self):
         """Test that random strings don't cause crashes."""
-        from nl_calc import EvaluationError, evaluate_raw
+        from egg_calc import EvaluationError, evaluate_raw
 
         # Generate random strings
         random.seed(42)
@@ -44,7 +44,7 @@ class TestSecurityFuzz:
 
     def test_special_character_inputs(self):
         """Test inputs with special characters don't cause crashes."""
-        from nl_calc import EvaluationError, evaluate_raw
+        from egg_calc import EvaluationError, evaluate_raw
 
         special_inputs = [
             ";;;",
@@ -90,7 +90,7 @@ class TestSecurityFuzz:
 
     def test_very_long_inputs(self):
         """Test that very long inputs are rejected quickly."""
-        from nl_calc import MAX_INPUT_LENGTH, EvaluationError, evaluate_raw
+        from egg_calc import MAX_INPUT_LENGTH, EvaluationError, evaluate_raw
 
         # Test at exactly the limit
         long_input = "1+" * (MAX_INPUT_LENGTH // 2)
@@ -116,7 +116,7 @@ class TestSecurityFuzz:
 
     def test_max_input_length_enforced(self):
         """Test MAX_INPUT_LENGTH is properly enforced."""
-        from nl_calc import MAX_INPUT_LENGTH, NORMALIZE, PATTERNS, run
+        from egg_calc import MAX_INPUT_LENGTH, NORMALIZE, PATTERNS, run
 
         # Create input longer than MAX_INPUT_LENGTH
         long_expr = "a" * (MAX_INPUT_LENGTH + 1)
@@ -128,7 +128,7 @@ class TestSecurityFuzz:
 
     def test_deeply_nested_expressions(self):
         """Test deeply nested expressions don't cause stack overflow."""
-        from nl_calc import MAX_NESTING_DEPTH, EvaluationError, evaluate_raw
+        from egg_calc import MAX_NESTING_DEPTH, EvaluationError, evaluate_raw
 
         # Test within the limit
         nested = "(" * MAX_NESTING_DEPTH + "1" + ")" * MAX_NESTING_DEPTH
@@ -148,7 +148,7 @@ class TestSecurityFuzz:
 
     def test_large_exponents(self):
         """Test that large exponents are rejected."""
-        from nl_calc import EvaluationError, evaluate
+        from egg_calc import EvaluationError, evaluate
 
         large_exp_inputs = [
             "2**100000",
@@ -167,7 +167,7 @@ class TestSecurityFuzz:
 
     def test_wide_expressions(self):
         """Test expressions with many operations don't cause memory issues."""
-        from nl_calc import EvaluationError, evaluate_raw
+        from egg_calc import EvaluationError, evaluate_raw
 
         # Create expression with many operations (not nested)
         wide_expr = "+".join(["1"] * 10000)
@@ -181,7 +181,7 @@ class TestSecurityFuzz:
 
     def test_code_execution_attempts(self):
         """Verify that code execution attempts are blocked."""
-        from nl_calc import EvaluationError, evaluate, evaluate_raw
+        from egg_calc import EvaluationError, evaluate, evaluate_raw
 
         dangerous_inputs = [
             # Import attempts
@@ -234,7 +234,7 @@ class TestSecurityFuzz:
 
     def test_attribute_access_blocked(self):
         """Test that dangerous attribute access is blocked."""
-        from nl_calc import EvaluationError, evaluate
+        from egg_calc import EvaluationError, evaluate
 
         attr_attempts = [
             "().__class__",
@@ -253,7 +253,7 @@ class TestSecurityFuzz:
 
     def test_comprehensions_blocked(self):
         """Test that list/dict comprehensions are blocked."""
-        from nl_calc import EvaluationError, evaluate
+        from egg_calc import EvaluationError, evaluate
 
         comp_inputs = [
             "[x for x in range(10)]",
@@ -270,7 +270,7 @@ class TestSecurityFuzz:
 
     def test_lambda_blocked(self):
         """Test that lambda expressions are blocked."""
-        from nl_calc import EvaluationError, evaluate
+        from egg_calc import EvaluationError, evaluate
 
         lambda_inputs = [
             "lambda x: x+1",
@@ -284,7 +284,7 @@ class TestSecurityFuzz:
 
     def test_if_expression_blocked(self):
         """Test that ternary if expressions are blocked."""
-        from nl_calc import EvaluationError, evaluate
+        from egg_calc import EvaluationError, evaluate
 
         if_inputs = [
             "1 if True else 0",
@@ -297,7 +297,7 @@ class TestSecurityFuzz:
 
     def test_comparison_blocked(self):
         """Test that comparison operators are blocked."""
-        from nl_calc import EvaluationError, evaluate
+        from egg_calc import EvaluationError, evaluate
 
         compare_inputs = [
             "1 < 2",
@@ -315,7 +315,7 @@ class TestSecurityFuzz:
 
     def test_boolean_operators_blocked(self):
         """Test that boolean operators are blocked."""
-        from nl_calc import EvaluationError, evaluate
+        from egg_calc import EvaluationError, evaluate
 
         bool_inputs = [
             "True and False",
@@ -332,7 +332,7 @@ class TestSecurityFuzz:
 
     def test_subscription_blocked(self):
         """Test that subscripting is blocked."""
-        from nl_calc import EvaluationError, evaluate
+        from egg_calc import EvaluationError, evaluate
 
         sub_inputs = [
             "[1,2,3][0]",
@@ -354,7 +354,7 @@ class TestCLISecurity:
         long_expr = "x" * 20000
 
         result = subprocess.run(
-            [sys.executable, "-m", "nl_calc", long_expr],
+            [sys.executable, "-m", "egg_calc", long_expr],
             capture_output=True,
             text=True,
             timeout=5,
@@ -369,7 +369,7 @@ class TestCLISecurity:
         complex_expr = "(" * 100 + "1" + ")" * 100
 
         result = subprocess.run(
-            [sys.executable, "-m", "nl_calc", "-e", complex_expr],
+            [sys.executable, "-m", "egg_calc", "-e", complex_expr],
             capture_output=True,
             text=True,
             timeout=5,  # Should complete within 5 seconds
@@ -391,7 +391,7 @@ class TestCLISecurity:
 
         for test_input in malicious_inputs:
             result = subprocess.run(
-                [sys.executable, "-m", "nl_calc", "-e", test_input],
+                [sys.executable, "-m", "egg_calc", "-e", test_input],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -408,7 +408,7 @@ class TestMemorySafety:
         """Test repeated calls don't leak memory."""
         import tracemalloc
 
-        from nl_calc import evaluate_raw
+        from egg_calc import evaluate_raw
 
         tracemalloc.start()
 
@@ -428,7 +428,7 @@ class TestMemorySafety:
 
     def test_recursion_limit_protection(self):
         """Test expression evaluation respects recursion limits."""
-        from nl_calc import MAX_NESTING_DEPTH, EvaluationError, evaluate_raw
+        from egg_calc import MAX_NESTING_DEPTH, EvaluationError, evaluate_raw
 
         # Test within the limit
         depth = MAX_NESTING_DEPTH
@@ -446,7 +446,7 @@ class TestASTSecurity:
 
     def test_ast_parse_blocks_unsafe_nodes(self):
         """Test that AST parser correctly identifies unsafe nodes."""
-        from nl_calc.evaluator import EvaluationError, Evaluator
+        from egg_calc.evaluator import EvaluationError, Evaluator
 
         evaluator = Evaluator()
 
@@ -468,7 +468,7 @@ class TestASTSecurity:
 
     def test_only_safe_functions_allowed(self):
         """Test only whitelisted functions can be called."""
-        from nl_calc import EvaluationError, evaluate
+        from egg_calc import EvaluationError, evaluate
 
         # Test math functions work
         assert evaluate("sqrt(4)") == 2

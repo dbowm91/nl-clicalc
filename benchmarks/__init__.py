@@ -1,4 +1,4 @@
-"""Benchmark suite for nl-clicalc performance measurement."""
+"""Benchmark suite for eggcalc performance measurement."""
 
 from .run import (
     benchmark_evaluate,

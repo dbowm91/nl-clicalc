@@ -2,7 +2,7 @@
 
 ## Configuration File
 
-Create `clicalc_config.py` in your working directory to customize nl-clicalc.
+Create `clicalc_config.py` in your working directory to customize eggcalc.
 
 ### Custom Constants
 
@@ -123,7 +123,7 @@ calc "long expression..."
 ### Register at Runtime
 
 ```python
-from nl_clicalc import (
+from egg_calc import (
     register_constant,
     register_function,
     PyCalcApp,
@@ -146,7 +146,7 @@ app.register_function("mysquare", my_func)
 ### Modify Security Limits
 
 ```python
-from nl_clicalc import (
+from egg_calc import (
     MAX_INPUT_LENGTH,
     MAX_NESTING_DEPTH,
     MAX_EXPONENT,
@@ -154,7 +154,7 @@ from nl_clicalc import (
 )
 
 # Increase limits (use with caution)
-import nl_clicalc.evaluator as ev
+import egg_calc.evaluator as ev
 ev.MAX_EXPONENT = 100000
 ```
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from nl_calc.exact.identifier_inspect import (
+from egg_calc.exact.identifier_inspect import (
     identifier_table_inspect,
 )
 

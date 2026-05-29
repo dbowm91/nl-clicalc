@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Overview
-`nl-clicalc` is a natural language math expression calculator that uses only Python's standard library. It parses math expressions in English (like "five plus three") and converts them to numeric results, with support for unit conversions.
+`eggcalc` is a natural language math expression calculator that uses only Python's standard library. It parses math expressions in English (like "five plus three") and converts them to numeric results, with support for unit conversions.
 
 ## Architecture
 

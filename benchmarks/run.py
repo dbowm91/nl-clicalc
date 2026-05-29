@@ -1,4 +1,4 @@
-"""Benchmark runner for nl-clicalc performance measurement."""
+"""Benchmark runner for eggcalc performance measurement."""
 
 import statistics
 import timeit
