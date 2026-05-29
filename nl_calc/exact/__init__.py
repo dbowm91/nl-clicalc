@@ -51,6 +51,7 @@ from .synthesis import (
 # Re-export unicode_tools
 from .unicode_tools import (
     ConfusableInfo,
+    MixedScriptsResult,
     ScriptInfo,
     detect_confusables,
     detect_mixed_scripts,
@@ -190,6 +191,7 @@ __all__ = [
     "reverse_confusables",
     "ScriptInfo",
     "ConfusableInfo",
+    "MixedScriptsResult",
     # Diff
     "first_diff",
     "common_prefix_suffix",
