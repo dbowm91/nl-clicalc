@@ -9,19 +9,55 @@ from __future__ import annotations
 
 import re
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 
-CONFUSABLES_URL = "https://www.unicode.org/Public/security/latest/confusables.txt"
+DEFAULT_URL = "https://www.unicode.org/Public/security/latest/confusables.txt"
 OUTPUT_FILE = Path(__file__).parent.parent / "nl_calc" / "exact" / "confusables.py"
 COMMENTS_AND_HEADER_LINES = 35  # Approximate header lines to skip
+CACHE_DIR = Path(__file__).parent.parent / "data"
+CACHE_FILE = CACHE_DIR / "confusables.txt"
 
 
-def fetch_confusables_txt() -> str:
-    """Download the confusables.txt file."""
-    print(f"Fetching {CONFUSABLES_URL}...")
-    with urllib.request.urlopen(CONFUSABLES_URL, timeout=30) as response:
-        return response.read().decode("utf-8")
+def get_confusables_url(version: str | None = None) -> str:
+    """Get URL for confusables.txt, optionally version-pinned."""
+    if version:
+        return f"https://www.unicode.org/Public/security/{version}/confusables.txt"
+    return DEFAULT_URL
+
+
+def fetch_confusables_txt(use_cache: bool = False) -> tuple[str, str | None, str | None]:
+    """Download the confusables.txt file.
+
+    Returns:
+        tuple of (content, source_version, source_date) from file header
+        source_version and source_date are extracted from header comments
+    """
+    if use_cache and CACHE_FILE.exists():
+        content = CACHE_FILE.read_text(encoding="utf-8")
+        source_version, source_date = _parse_header_metadata(content)
+        print(f"Loaded from cache: {CACHE_FILE}")
+        return content, source_version, source_date
+
+    url = get_confusables_url()
+    print(f"Fetching {url}...")
+    with urllib.request.urlopen(url, timeout=30) as response:
+        content = response.read().decode("utf-8")
+        source_version, source_date = _parse_header_metadata(content)
+        return content, source_version, source_date
+
+
+def _parse_header_metadata(content: str) -> tuple[str | None, str | None]:
+    """Parse version and date from confusables.txt header."""
+    source_version = None
+    source_date = None
+    for line in content.split("\n")[:50]:
+        if line.startswith("# Version:"):
+            source_version = line.split(":", 1)[1].strip()
+        elif line.startswith("# Date:"):
+            source_date = line.split(":", 1)[1].strip()
+    return source_version, source_date
 
 
 def parse_code_point(s: str) -> str | None:
@@ -99,24 +135,38 @@ def parse_confusables(content: str) -> dict[str, str]:
     return result
 
 
-def generate_python_file(confusables: dict[str, str]) -> str:
+def generate_python_file(
+    confusables: dict[str, str],
+    source_version: str | None = None,
+    source_date: str | None = None,
+) -> str:
     """Generate Python source for confusables.py."""
     lines = [
         '"""',
         "Unicode confusables table.",
         "",
         "Auto-generated from confusables.txt (Unicode UTS #39).",
-        "DO NOT EDIT - regenerate with scripts/generate_confusables.py",
-        '"""',
-        "",
-        "from __future__ import annotations",
-        "",
-        "# Confusables table: codepoint string -> substitution codepoint string(s).",
-        "# e.g., 'U+0410' (Cyrillic A) -> 'U+0041' (Latin A)",
-        "# Names are derived at runtime via unicodedata.name().",
-        "",
-        "CONFUSABLES: dict[str, str] = {",
+        f"Source: {DEFAULT_URL}",
     ]
+
+    if source_version:
+        lines.append(f"Source-Version: {source_version}")
+    if source_date:
+        lines.append(f"Source-Date: {source_date}")
+
+    lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d')}")
+    lines.append(f"Entry-Count: {len(confusables)}")
+    lines.append("")
+    lines.append("DO NOT EDIT - regenerate with scripts/generate_confusables.py")
+    lines.append('"""')
+    lines.append("")
+    lines.append("from __future__ import annotations")
+    lines.append("")
+    lines.append("# Confusables table: codepoint string -> substitution codepoint string(s).")
+    lines.append("# e.g., 'U+0410' (Cyrillic A) -> 'U+0041' (Latin A)")
+    lines.append("# Names are derived at runtime via unicodedata.name().")
+    lines.append("")
+    lines.append("CONFUSABLES: dict[str, str] = {")
 
     # Sort by codepoint for deterministic output
     sorted_items = sorted(confusables.items(), key=lambda x: ord(x[0]))
@@ -133,22 +183,32 @@ def generate_python_file(confusables: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def save_cache(content: str) -> None:
+    """Save downloaded content to cache for reproducibility."""
+    CACHE_DIR.mkdir(exist_ok=True)
+    CACHE_FILE.write_text(content, encoding="utf-8")
+    print(f"Saved to cache: {CACHE_FILE}")
+
+
 def main() -> None:
     """Main entry point."""
-    # Fetch
-    content = fetch_confusables_txt()
+    # Fetch (try cache first for reproducibility)
+    content, source_version, source_date = fetch_confusables_txt(use_cache=True)
     print(f"Downloaded {len(content)} bytes")
 
     # Parse
     confusables = parse_confusables(content)
     print(f"Parsed {len(confusables)} confusable entries")
 
-    # Generate
-    python_source = generate_python_file(confusables)
+    # Generate with metadata
+    python_source = generate_python_file(confusables, source_version, source_date)
 
     # Write
     OUTPUT_FILE.write_text(python_source)
     print(f"Wrote {OUTPUT_FILE}")
+
+    # Save to cache
+    save_cache(content)
 
     # Verify by importing
     import sys

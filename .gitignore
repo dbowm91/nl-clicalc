@@ -144,3 +144,6 @@ clicalc.py
 .vtcode/
 nl_calc.py
 eggsact/
+
+# Benchmark cache
+data/
