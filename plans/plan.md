@@ -33,7 +33,7 @@ The following items were deferred during the review process:
 
 | Item | Description | Reason for Deferral |
 |------|-------------|---------------------|
-| D4 | Add `normalize_text` to `inspect_text()` | Overlaps with existing `normalize_unicode()` + `inspect_text()` workflow; design review needed |
+| D4 | Add `normalize_text` to `inspect_text()` | ✅ IMPLEMENTED - Added `normalization_diff` and `normals_repr` fields to `InspectTextResult` to show normalized form without changing raw inspection |
 | D5 | Performance review for confusables_count | O(n) with O(1) lookups is optimal; no action needed |
 | D6 | Reorganize documentation | Low priority; current structure is functional |
 

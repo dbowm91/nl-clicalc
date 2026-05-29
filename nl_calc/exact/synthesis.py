@@ -153,6 +153,8 @@ class InspectTextResult(TypedDict):
     safe_repr: str
     metrics: dict[str, Any]
     normalization: dict[str, bool]
+    normalization_diff: bool  # True if raw differs from NFC form
+    normals_repr: str | None  # NFC normalized representation, if different from raw
     invisibles: list[dict]
     scripts: dict[str, Any]
     confusables: list[dict]
@@ -582,6 +584,9 @@ def inspect_text(
                 "message": f"Text contains confusable character '{conf['char']}' (looks like '{conf['confusable_with']}') at index {conf['index']}.",
             })
 
+    nfc_text = _normalize_unicode(text, "NFC")
+    normalization_diff = text != nfc_text
+
     return InspectTextResult(
         safe_repr=safe_repr,
         metrics=metrics,
@@ -589,6 +594,8 @@ def inspect_text(
             "is_nfc": metrics["normalization"]["is_nfc"],
             "is_nfkc": metrics["normalization"]["is_nfkc"],
         },
+        normalization_diff=normalization_diff,
+        normals_repr=nfc_text if normalization_diff else None,
         invisibles=invisibles,
         scripts=scripts,
         confusables=confusables,
