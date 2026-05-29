@@ -75,7 +75,7 @@ For each module, examine:
 - Data structure field mismatches (verify against actual code)
 - Parameter name alignment (docs sometimes use different names than code)
 
-**Note:** The architecture review plan has been completed and pruned. All 35 original issues identified during review were implemented. See `plans/plan.md` for current deferred items.
+**Note:** The architecture review plan has been completed. `architecture/review_plan.md` is now in INCOMPLETE status for iterative improvement. All 15 module review outputs are in `plans/*_review.md`. See `plans/improvements.md` for improvement recommendations.
 
 ## Architecture Review Findings (2026-05-28 through 2026-05-29)
 
@@ -100,6 +100,27 @@ The architecture review identified issues across all modules. **All 35 actionabl
 - Complete findings consolidated in `plans/plan.md`
 - 35 actionable items across 5 waves implemented and verified
 - 8 items deferred for design review (see plan.md)
+
+### Current Review Cycle Findings (No Code Changes Made)
+These findings are documented but not fixed as the plan specifies review-only scope:
+
+1. **CLI Output Format** (`plans/cli_review.md`)
+   - Docs describe `expression -> result` format
+   - Code only outputs `result`
+   - This is a documentation issue, not a code bug
+
+2. **validate.py `list_sort` stable parameter** (`plans/validate_review.md`)
+   - `stable` parameter has no effect (Python's `sorted()` is always stable)
+   - Parameter is harmless but meaningless
+
+3. **API `normalize_expression` docs** (`plans/api_review.md`)
+   - Documentation shows string return, actual is `tuple[str, int]`
+   - Examples need updating to show tuple unpacking
+
+### Stale Item Detection (2026-05-29)
+- No stale architecture files detected
+- No stale review files detected
+- All 1231 tests pass
 
 ## Architecture Files Location
 - `architecture/` - Module-level documentation
