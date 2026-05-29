@@ -33,26 +33,15 @@ The variation selector check (0xfe00-0xfe0f) comes BEFORE the combining mark che
 **build_single.py Convention:**
 - `normalize_main` alias is created by `build_single.py:236` during assembly, does not exist in source `normalize.py`
 
-### Known Bugs (from verified plan.md)
+### Known Bugs - All Fixed (2026-05-29)
 
-These bugs are documented in `plans/plan.md` and await implementation:
+All bugs from plans/plan.md have been verified as fixed:
 
-1. **normalize.py:762-763** - Double minus bug: `"5 minus -2"` becomes `"52"` instead of `5-(-2)` → `7`
-   - Root cause: `tokens[i-1]` uses negative indexing when i=0, wrapping to last element
-   - Fix: Add bounds check `i > 0` before accessing `tokens[i-1]`
-
-2. **mcp/tools.py:324** - `unit_info()` calls non-existent `list_units()` from units.py
-   - Fix: Use `get_all_units()` instead
-
-3. **normalize.py:367,369** - Int regex patterns have erroneous `|` characters
-   - `[-|+]?` allows `|` as sign (should be `[-+]?`)
-   - `[-|+|*]?` allows `|` and `*` (should be `[-+*]?`)
-
-4. **mcp/tools.py:839 and 1337** - Duplicate `_VALID_TRANSFORM_OPERATIONS` constant
-   - Remove the second definition at line 1337
-
-5. **units.py:48-53** - `__eq__` returns `NotImplemented` for different units instead of `False`
-   - `UnitValue(5, "m") == UnitValue(5, "ft")` returns NotImplemented instead of False
+1. **normalize.py:762-763** - Double minus bug - FIXED (bounds check added)
+2. **mcp/tools.py:324** - `unit_info()` calls non-existent `list_units()` - FIXED (uses `get_all_units()`)
+3. **normalize.py:367,369** - Int regex patterns have erroneous `|` - FIXED (patterns corrected)
+4. **mcp/tools.py:839 and 1337** - Duplicate `_VALID_TRANSFORM_OPERATIONS` - FIXED (duplicate removed)
+5. **units.py:48-53** - `__eq__` returns NotImplemented for different units - FIXED (returns False)
 
 ### Verified as Working (No Action Needed)
 
@@ -98,6 +87,6 @@ The following items were claimed as bugs but are actually working correctly:
 
 ### Plan Reference
 
-The current implementation plan is at `plans/plan.md` with 35 verified actionable items organized in 5 waves.
+All 35 items in `plans/plan.md` have been verified as completed (2026-05-29). The plan file is being pruned to remove completed items.
 
 (End of file)
