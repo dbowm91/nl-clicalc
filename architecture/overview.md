@@ -193,7 +193,7 @@ Core text primitives built on Python's `unicodedata` module.
 | `normalized_equal(a, b)` | bool | Equality after NFC normalization |
 | `measure_basic(s)` | MeasureBasic | Basic text metrics |
 | `count_graphemes(s)` | int | Grapheme cluster count |
-| `truncate_to_grapheme(s, max_len)` | str | Truncate to grapheme boundary |
+| `truncate_to_grapheme(s, max_graphemes)` | str | Truncate to grapheme boundary |
 | `find_invisibles(s)` | list[InvisibleCharInfo] | Detect hidden characters |
 | `visible_repr(s)` | str | Display-safe representation |
 

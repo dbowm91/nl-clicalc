@@ -121,4 +121,4 @@ Errors are printed to stderr with user-friendly messages:
 - `Evaluation error: ...`
 - `Error: ...`
 
-Verbose mode (`--verbose`) shows full traceback.
+Verbose mode (`--verbose`) shows expression in output.

@@ -153,6 +153,7 @@ result = detect_confusables("pаypal")
 #   confusable_name='LATIN CAPITAL LETTER A'
 # )
 
+# Note: confusable_with can match multi-character confusables (e.g., "ffi" → "m")
 # Digits confusable with other characters
 detect_confusables("10")  # May detect '0' confusable with 'O'
 ```
@@ -186,6 +187,7 @@ unicode_script('3')   # 'Common'
 unicode_script('🎉')   # 'Common' (emoji)
 
 # Detect mixed scripts in text
+# Note: Digits and punctuation (script='Other') are excluded from mixed-script detection
 result = detect_mixed_scripts("HelloМир")  # Latin + Cyrillic
 # DetectMixedScriptsResult(
 #   mixed_scripts=True,
@@ -198,6 +200,8 @@ result = detect_mixed_scripts("HelloМир")  # Latin + Cyrillic
 ```
 
 **Common scripts:** Latin, Cyrillic, Greek, Han (Chinese), Hiragana, Katakana, Arabic, Hebrew, Devanagari, Common (punctuation, digits, emoji)
+
+**Note:** Characters with script='Other' (digits, punctuation, emoji) are excluded from the mixed_scripts verdict.
 
 ## measure.py - Text Metrics
 

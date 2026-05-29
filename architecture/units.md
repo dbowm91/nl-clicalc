@@ -55,6 +55,14 @@ UnitValue(value: float, unit: str | None = None)
 |--------|---------|-------------|
 | `convert_to(target_unit)` | UnitValue | Convert to different unit |
 | `__repr__()` | str | Human-readable representation |
+| `__str__()` | str | String representation (same as `__repr__`) |
+| `__format__(format_spec)` | str | Formatted string with unit |
+| `__eq__(other)` | bool | Equality comparison |
+| `__hash__()` | int | Hashable for use in sets/dicts |
+| `__add__ / __radd__` | UnitValue | Addition with unit conversion |
+| `__sub__ / __rsub__` | UnitValue | Subtraction with unit conversion |
+| `__mul__ / __rmul__` | UnitValue | Multiplication |
+| `__truediv__` | UnitValue | Division |
 
 ### Arithmetic Operations
 

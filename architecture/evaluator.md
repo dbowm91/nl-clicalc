@@ -155,7 +155,6 @@ Built-in physical and mathematical constants:
 | `k` / `boltzmann` / `boltzmannconstant` | 1.380649e-23 | Boltzmann constant (J/K) |
 | `r` / `gasconstant` / `idealgasconstant` | 8.314462618 | Gas constant (J/mol·K) |
 | `g` / `standardgravity` | 9.80665 | Standard gravity (m/s²) |
-| `G` / `gravitationalconstant` | 6.67430e-11 | Gravitational constant |
 | `elementarycharge` / `echarge` | 1.602176634e-19 | Elementary charge (C) |
 | `f` / `faraday` / `faradayconstant` | 96485.33212 | Faraday constant (C/mol) |
 | `u` / `amu` / `atomicmassunit` | 1.66053906660e-27 | Atomic mass unit (kg) |

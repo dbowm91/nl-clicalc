@@ -21,7 +21,7 @@ Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`. Word f
 - `confusables.py` is an auto-generated data file (~176KB, 6580 lines) containing only the CONFUSABLES dict
 - TypedDict classes are in their logical modules (validate.py, measure.py, unicode_tools.py, etc.), NOT in confusables.py
 - Helper functions like `confusables_count()` should go in `unicode_tools.py`, not `confusables.py`
-- `reverse_confusables()` is implemented and exported but undocumented in architecture docs
+- `reverse_confusables()` is implemented, exported, and documented in architecture docs
 
 **visible_repr() Check Order is Correct:**
 The variation selector check (0xfe00-0xfe0f) comes BEFORE the combining mark check in `visible_repr()`. This is the correct order per AGENTS.md conventions. The code at primitives.py:273-276 is correct.
@@ -38,17 +38,17 @@ The variation selector check (0xfe00-0xfe0f) comes BEFORE the combining mark che
 These are documented limitations that agents should be aware of:
 - `notifications/cancel` and `notifications/progress` not implemented in MCP server
 - `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
-- `_is_extended_pictographic` name-based fallback includes 'SIGN' keyword which over-matches non-pictographic symbols like © ® ™
+- `_is_extended_pictographic` name-based fallback includes 'SIGN' keyword which over-matches non-pictographic symbols like © ® ™ (acceptable for text detection purposes)
 - Script detection uses heuristic range-based approach, not `unicodedata.script()`
-- Temperature-to-non-temperature conversion (`units.py:146-164`) crashes after issuing warning
-- `_INVISIBLE_CHARS` contains 22 characters but documentation only shows 12
+- Temperature-to-non-temperature conversion now raises clear ValueError
+- `_INVISIBLE_CHARS` contains 22 characters - documentation updated to list all
 
-### Critical Bugs to Avoid
+### Previously Reported Issues (Now Fixed)
 
-The following bugs exist in the codebase and should NOT be introduced in new code:
-1. **synthesis.py:704-714** - Dead code in `list_compare()`: `"unicode_normalization_only"` near_match classification is unreachable through normal usage
-2. **units.py:146-164** - Temperature-to-non-temperature conversion crashes after issuing warning
-3. **normalize.py:368** - Float regex `[-|+]?` bug: matches literal pipe character instead of just minus and plus
+The following bugs were fixed in the plan implementation:
+1. ~~Dead code in `list_compare()` near_matches~~ - FIXED
+2. ~~Temperature-to-non-temperature conversion crash~~ - FIXED
+3. ~~Float regex pipe bug~~ - FIXED
 
 ### Architecture Conventions
 
@@ -64,7 +64,7 @@ The following bugs exist in the codebase and should NOT be introduced in new cod
 - Use `index`, `char`, `script`, `codepoint` (not `count`, `start`, `end`)
 
 **detect_mixed_scripts return:**
-- Returns dict with keys `mixed_scripts`, `scripts`, `positions` (not list[ScriptInfo])
+- Returns MixedScriptsResult TypedDict with keys `mixed_scripts`, `scripts`, `positions`
 
 **CommonPrefixSuffix fields:**
 - Use `common_prefix_len`, `common_suffix_len` (not `prefix`, `suffix`)
@@ -75,5 +75,6 @@ The following bugs exist in the codebase and should NOT be introduced in new cod
 
 **validate.py Input Limits:**
 - `MAX_INPUT_LENGTH = 100_000` enforced in `check_brackets()` and `validate_json()`
+- `MAX_SAMPLE_LENGTH = 10_000` enforced in `regex_test()`
 - Functions raise `ValueError` when input exceeds the limit
 - Consistent with MCP layer's `MAX_TEXT_LENGTH` constant
