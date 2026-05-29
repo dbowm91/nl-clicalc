@@ -75,11 +75,11 @@ For each module, examine:
 - Data structure field mismatches (verify against actual code)
 - Parameter name alignment (docs sometimes use different names than code)
 
-**Note:** All 56 issues identified during the 2026-05-28 architecture review were implemented and verified. See `plans/plan.md` for details.
+**Note:** The architecture review plan has been completed and pruned. All 35 original issues identified during review were implemented. See `plans/plan.md` for current deferred items.
 
-## Architecture Review Findings (2026-05-28)
+## Architecture Review Findings (2026-05-28 through 2026-05-29)
 
-The architecture review identified 56 issues across all modules. **All have been implemented/fixed.**
+The architecture review identified issues across all modules. **All 35 actionable items implemented/fixed.**
 
 ### HIGH Priority Bugs (FIXED)
 - `units.py:146-164` - Temperature-to-non-temperature conversion crash → now raises clear ValueError
@@ -98,7 +98,8 @@ The architecture review identified 56 issues across all modules. **All have been
 ### Review Process Notes
 - All modules reviewed with improvement plans generated
 - Complete findings consolidated in `plans/plan.md`
-- 56 items across 5 waves implemented and verified
+- 35 actionable items across 5 waves implemented and verified
+- 8 items deferred for design review (see plan.md)
 
 ## Architecture Files Location
 - `architecture/` - Module-level documentation
