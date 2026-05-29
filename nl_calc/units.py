@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
+Numeric = float | int | complex
+
 FLOAT_EPSILON = 1e-10
 MAX_RESULT_VALUE = 1e308
 
@@ -55,7 +57,7 @@ class UnitValue:
     def __hash__(self) -> int:
         return hash((self.value, self.unit))
 
-    def __add__(self, other: Any) -> UnitValue:
+    def __add__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             if not are_units_compatible(self.unit, other.unit):
                 raise ValueError(f"Cannot add incompatible units: {self.unit} + {other.unit}")
@@ -64,10 +66,10 @@ class UnitValue:
             converted = other.convert_to(self.unit)
             return UnitValue(self.value + converted.value, self.unit)
         raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
-    def __radd__(self, other: Any) -> UnitValue:
+    def __radd__(self, other: Numeric) -> UnitValue:
         return self.__add__(other)
 
-    def __sub__(self, other: Any) -> UnitValue:
+    def __sub__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             if not are_units_compatible(self.unit, other.unit):
                 raise ValueError(f"Cannot subtract incompatible units: {self.unit} - {other.unit}")
@@ -77,12 +79,12 @@ class UnitValue:
             return UnitValue(self.value - converted.value, self.unit)
         raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
 
-    def __rsub__(self, other: Any) -> UnitValue:
+    def __rsub__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             return other.__sub__(self)
         raise ValueError(f"Cannot subtract dimensional value from scalar")
 
-    def __mul__(self, other: Any) -> UnitValue:
+    def __mul__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             if self.unit and other.unit:
                 if self.unit == other.unit:
@@ -91,10 +93,10 @@ class UnitValue:
             return UnitValue(self.value * other.value, self.unit or other.unit)
         return UnitValue(self.value * other, self.unit)
 
-    def __rmul__(self, other: Any) -> UnitValue:
+    def __rmul__(self, other: Numeric) -> UnitValue:
         return self.__mul__(other)
 
-    def __truediv__(self, other: Any) -> UnitValue:
+    def __truediv__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             if self.unit and other.unit:
                 if self.unit == other.unit:
@@ -103,10 +105,10 @@ class UnitValue:
             return UnitValue(self.value / other.value, self.unit)
         return UnitValue(self.value / other, self.unit)
 
-    def __rtruediv__(self, other: Any) -> UnitValue:
+    def __rtruediv__(self, other: Numeric) -> UnitValue:
         return UnitValue(other / self.value, self.unit)
 
-    def __pow__(self, other: Any) -> UnitValue:
+    def __pow__(self, other: Numeric) -> UnitValue:
         return UnitValue(self.value**other, self.unit)
 
     def __neg__(self) -> UnitValue:

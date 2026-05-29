@@ -159,7 +159,7 @@ async def evaluate_async(expression: str) -> Any:
     """
     import asyncio
 
-    def _eval():
+    def _eval() -> float:
         return evaluate_raw(expression)
 
     loop = asyncio.get_running_loop()
@@ -332,7 +332,7 @@ def _phase(z: complex) -> float:
     return cmath.phase(z)
 
 
-def _polar(z: complex) -> tuple:
+def _polar(z: complex) -> tuple[float, float]:
     """Return polar coordinates (r, phi) of a complex number."""
     return cmath.polar(z)
 
@@ -485,7 +485,7 @@ def _prime_factors(n: int) -> str:
     if n < 2:
         return str(n)
 
-    factors = {}
+    factors: dict[int, int] = {}
     d = 2
     temp = n
     while d * d <= temp:
@@ -638,7 +638,7 @@ def _complex_aware(
     if cmplx_func is None:
         cmplx_func = getattr(cmath, real_func.__name__, real_func)
 
-    def wrapper(x):
+    def wrapper(x: float) -> complex | float:
         if isinstance(x, complex):
             return cmplx_func(x)
         if use_complex_for_negative and x < 0:
@@ -1469,7 +1469,7 @@ class PyCalcApp:
         """
         import asyncio
 
-        def _eval():
+        def _eval() -> float:
             return self.calculate(expression)
 
         loop = asyncio.get_running_loop()

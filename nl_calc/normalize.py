@@ -795,10 +795,10 @@ def _finish_number_group(group: list, patterns: Mapping[str, Pattern[str]]) -> l
         return []
 
     # Only use combine_number_parts for real numbers (int or float), not complex
-    def is_real(n):
+    def is_real(n) -> bool:
         return isinstance(n, (int, float)) and not isinstance(n, complex)
 
-    def is_compound_real(n):
+    def is_compound_real(n) -> bool:
         return is_real(n) and (n >= 100 or (20 <= n < 100))
 
     has_compound = any(is_compound_real(n) for n in numbers_only)
@@ -963,7 +963,7 @@ def _join_number_parts(expression: str) -> str:
         return expression
 
     result = []
-    current_number_seq = []
+    current_number_seq: list[str] = []
 
     for token in tokens:
         if token in ('+', '-'):
