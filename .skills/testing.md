@@ -130,7 +130,7 @@ tests/
 ```
 
 ## Current Test Count
-- 1192 tests pass (as of 2026-05-29)
+- 1231 tests pass (as of 2026-05-29)
 - All must continue to pass
 
 ## Common Issues When Testing
