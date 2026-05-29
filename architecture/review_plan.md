@@ -1,370 +1,172 @@
 # Architecture Review Plan
 
-**Created:** 2026-05-28  
-**Status:** COMPLETE — 2026-05-28
+## Overview
 
-Systematic review of all architecture documentation against the nl-clicalc codebase. Uses subagents to review discrete modules in parallel, with each producing an improvement plan.
+This plan orchestrates a systematic review of all architecture documentation modules in the `architecture/` directory. Each module document will be reviewed by a dedicated subagent who will:
 
----
+1. Read the architecture document
+2. Verify all claims against the actual code
+3. Interrogate the code for bugs, improvements, and inconsistencies
+4. Write findings to `plans/<module>_review.md` at the repository root
 
-## Purpose
+## Architecture Modules to Review
 
-This plan orchestrates a deep, evidence-based review of every architecture document in `architecture/`. The goal is NOT to make direct code changes, but to produce a prioritized improvement plan for each module that a future agent can execute. Each subagent is assigned a discrete module, verifies documentation claims against source code, interrogates for bugs and improvements, and writes findings to `plans/review_improvements_<module>.md`.
+The following architecture documents (15 total) will be reviewed, excluding `review_plan.md`:
 
----
+| Module | Document | Code Location |
+|--------|----------|---------------|
+| API | `api.md` | `nl_calc/__init__.py`, `nl_calc/evaluator.py` |
+| CLI | `cli.md` | `nl_calc/__main__.py` |
+| Confusables | `confusables.md` | `nl_calc/exact/confusables.py` |
+| Diff | `diff.md` | `nl_calc/exact/diff.py` |
+| Evaluator | `evaluator.md` | `nl_calc/evaluator.py` |
+| Exact | `exact.md` | `nl_calc/exact/` (overview) |
+| MCP | `mcp.md` | `nl_calc/mcp/` |
+| Measure | `measure.md` | `nl_calc/exact/measure.py` |
+| Normalize | `normalize.md` | `nl_calc/normalize.py` |
+| Overview | `overview.md` | Entire codebase |
+| Primitives | `primitives.md` | `nl_calc/exact/primitives.py` |
+| Synthesis | `synthesis.md` | `nl_calc/exact/synthesis.py` |
+| Unicode Tools | `unicode_tools.md` | `nl_calc/exact/unicode_tools.py` |
+| Units | `units.md` | `nl_calc/units.py` |
+| Validate | `validate.md` | `nl_calc/exact/validate.py` |
 
-## Review Process
+## Subagent Tasks
 
-### Phase 1: Parallel Module Reviews (Subagents)
+Each subagent will perform the following steps for their assigned module:
 
-Each subagent receives:
-- Architecture document(s) to review (from `architecture/`)
-- Corresponding source file(s) to verify claims against
-- A checklist of things to verify
-- Output file path in `plans/` directory
+### Step 1: Read Architecture Document
+- Read the corresponding `.md` file in `architecture/`
+- Note all claims about code structure, functions, constants, and behaviors
 
-**Subagent Instructions:**
-1. Read the assigned architecture document(s) completely
-2. Read the corresponding source code file(s) in `nl_calc/`
-3. For each claim in the documentation:
-   - Verify the claim matches the code (function names, signatures, line numbers, behavior)
-   - Note discrepancies where documentation says X but code does Y
-   - Note undocumented features where code has X but docs don't mention it
-4. Interrogate the code:
-   - Look for potential bugs (edge cases, error handling, type issues, unsafe patterns)
-   - Look for inconsistencies (naming, patterns, return types across modules)
-   - Look for missing tests or documentation gaps
-5. Write improvement plan to `plans/review_improvements_<module>.md`
+### Step 2: Locate Source Code
+- Map document claims to actual source files
+- Identify the relevant code module(s) to verify
 
-### Phase 2: Stale Item Identification
+### Step 3: Verify Claims Against Code
+For each claim in the document:
+- Find the corresponding code
+- Verify accuracy (MATCHES / MISMATCH / MISSING)
+- Document any discrepancies
 
-After all module reviews complete, a designated subagent performs a stale item scan:
-- Architecture documents that reference removed/renamed functions
-- Documentation for features not implemented in code
-- Module files that have been superseded or are no longer relevant
-- Duplicate documentation across files
-- Line number references that are stale due to code changes
-- Outdated examples in docs that wouldn't work with current API
+### Step 4: Interrogate for Bugs
+- Check for edge cases not handled
+- Look for potential IndexError, KeyError, TypeError sources
+- Verify error handling is complete
+- Check for race conditions or thread-safety issues
 
-Findings written to `plans/review_stale_items.md`.
+### Step 5: Identify Improvements
+- Look for code that could be simplified
+- Identify missing validation
+- Note performance concerns
+- Check for consistency issues
 
-### Phase 3: Consolidation
+### Step 6: Write Review Output
+Write a `<module>_review.md` file to `plans/` at repository root with:
+- Verified claims (with MATCHES/MISMATCH status)
+- Discrepancies found
+- Bugs identified
+- Improvements suggested
+- Priority classification for each item
 
-After all reviews complete, this file is updated with:
-- Summary of findings across all modules
-- Final status for each module review
-- Top-priority items across the entire codebase
+## Review Output Format
 
----
-
-## Discrete Architecture Modules
-
-Each row defines a review unit: the doc(s), the source files, and the output plan.
-
-| # | Module | Documentation | Source Files | Output Plan |
-|---|--------|--------------|--------------|-------------|
-| 1 | overview | `architecture/overview.md` | (cross-cutting) | `plans/review_improvements_overview.md` |
-| 2 | normalize | `architecture/normalize.md` | `nl_calc/normalize.py` | `plans/review_improvements_normalize.md` |
-| 3 | evaluator | `architecture/evaluator.md` | `nl_calc/evaluator.py` | `plans/review_improvements_evaluator.md` |
-| 4 | units | `architecture/units.md` | `nl_calc/units.py` | `plans/review_improvements_units.md` |
-| 5 | primitives | `architecture/primitives.md` | `nl_calc/exact/primitives.py` | `plans/review_improvements_primitives.md` |
-| 6 | unicode_tools | `architecture/unicode_tools.md` | `nl_calc/exact/unicode_tools.py` | `plans/review_improvements_unicode_tools.md` |
-| 7 | confusables | `architecture/confusables.md` | `nl_calc/exact/confusables.py` | `plans/review_improvements_confusables.md` |
-| 8 | validate | `architecture/validate.md` | `nl_calc/exact/validate.py` | `plans/review_improvements_validate.md` |
-| 9 | diff | `architecture/diff.md` | `nl_calc/exact/diff.py` | `plans/review_improvements_diff.md` |
-| 10 | measure | `architecture/measure.md` | `nl_calc/exact/measure.py` | `plans/review_improvements_measure.md` |
-| 11 | synthesis | `architecture/synthesis.md` | `nl_calc/exact/synthesis.py` | `plans/review_improvements_synthesis.md` |
-| 12 | cli | `architecture/cli.md` | `nl_calc/__main__.py` | `plans/review_improvements_cli.md` |
-| 13 | mcp | `architecture/mcp.md` | `nl_calc/mcp/server.py`, `tools.py`, `schemas.py` | `plans/review_improvements_mcp.md` |
-| 14 | api | `architecture/api.md` | (various — cross-cutting) | `plans/review_improvements_api.md` |
-| 15 | exact | `architecture/exact.md` | `nl_calc/exact/__init__.py`, `nl_calc/exact/*.py` | `plans/review_improvements_exact.md` |
-
----
-
-## Subagent Dispatch Plan
-
-Subagents are dispatched in batches. Each subagent operates independently and writes its own output file.
-
-### Batch 1: Core Modules (3 subagents)
-
-- **Subagent A**: overview + api
-  - `architecture/overview.md`, `architecture/api.md`
-  - Cross-cutting review: verify overview claims against all modules, verify API doc against actual exports
-  - Output: `plans/review_improvements_overview.md`, `plans/review_improvements_api.md`
-
-- **Subagent B**: normalize + evaluator
-  - `architecture/normalize.md`, `architecture/evaluator.md`
-  - Verify NL processing pipeline claims, AST evaluation claims, function signatures
-  - Output: `plans/review_improvements_normalize.md`, `plans/review_improvements_evaluator.md`
-
-- **Subagent C**: units
-  - `architecture/units.md`
-  - Verify unit definitions, conversion factors, temperature handling, UnitValue class
-  - Output: `plans/review_improvements_units.md`
-
-### Batch 2: exact/ Primitives (3 subagents)
-
-- **Subagent D**: primitives
-  - `architecture/primitives.md`
-  - Verify UTF-8, codepoint, normalization, invisible detection claims
-  - Output: `plans/review_improvements_primitives.md`
-
-- **Subagent E**: unicode_tools
-  - `architecture/unicode_tools.md`
-  - Verify script detection, confusable detection claims
-  - Output: `plans/review_improvements_unicode_tools.md`
-
-- **Subagent F**: confusables
-  - `architecture/confusables.md`
-  - Verify data file structure, generation claims, integration points
-  - Output: `plans/review_improvements_confusables.md`
-
-### Batch 3: exact/ Analysis (4 subagents)
-
-- **Subagent G**: validate
-  - `architecture/validate.md`
-  - Verify bracket, JSON, regex validation claims
-  - Output: `plans/review_improvements_validate.md`
-
-- **Subagent H**: diff
-  - `architecture/diff.md`
-  - Verify diff algorithms, LCS implementation, Levenshtein claims
-  - Output: `plans/review_improvements_diff.md`
-
-- **Subagent I**: measure
-  - `architecture/measure.md`
-  - Verify text metrics, line metrics, word metrics claims
-  - Output: `plans/review_improvements_measure.md`
-
-- **Subagent J**: synthesis
-  - `architecture/synthesis.md`
-  - Verify higher-level analysis claims, integration with other exact/ modules
-  - Output: `plans/review_improvements_synthesis.md`
-
-### Batch 4: Interface & Integration (3 subagents)
-
-- **Subagent K**: cli
-  - `architecture/cli.md`
-  - Verify CLI argument handling, interactive mode, output formatting
-  - Output: `plans/review_improvements_cli.md`
-
-- **Subagent L**: mcp
-  - `architecture/mcp.md`
-  - Verify MCP server protocol, tool definitions, error handling
-  - Output: `plans/review_improvements_mcp.md`
-
-- **Subagent M**: exact (subpackage overview)
-  - `architecture/exact.md`
-  - Verify __init__.py exports, module interconnections, public API surface
-  - Output: `plans/review_improvements_exact.md`
-
-### Phase 2 Subagent: Stale Item Scanner
-
-- **Subagent N**: Stale item identification
-  - Scans all architecture docs against current codebase
-  - Checks for dead references, unimplemented features, superseded docs
-  - Output: `plans/review_stale_items.md`
-
----
-
-## Review Checklist (Per Module)
-
-Each subagent must address every item in this checklist:
-
-### Documentation Accuracy
-- [ ] Documentation exists for all public functions/classes
-- [ ] Function signatures match between docs and code (parameter names, types, defaults)
-- [ ] Line number references in docs are accurate against current code
-- [ ] Return type documentation matches actual return types
-- [ ] All constants and values are documented correctly
-- [ ] No undocumented public API surface (functions/classes exported but not in docs)
-- [ ] Error handling behavior is documented
-- [ ] Edge cases are documented where relevant
-
-### Code Quality Interrogation
-- [ ] No potential bugs in edge cases (empty input, zero division, overflow)
-- [ ] Error handling is consistent and robust
-- [ ] Type annotations are present and accurate
-- [ ] No unsafe patterns (eval, exec, injection risks)
-- [ ] Caching behavior is correct and documented
-- [ ] No resource leaks (file handles, connections, memory)
-- [ ] Concurrency safety if applicable
-
-### Cross-Module Consistency
-- [ ] Naming conventions are consistent across modules
-- [ ] Return type patterns are consistent
-- [ ] Import patterns follow established conventions
-- [ ] No circular dependencies
-- [ ] Module boundaries are clean
-
-### Test Coverage Observations
-- [ ] Note any functions that appear to lack test coverage
-- [ ] Note any edge cases that should be tested
-- [ ] Note any integration tests that are missing
-
----
-
-## Output Format
-
-Each subagent writes to `plans/review_improvements_<module>.md` using this structure:
+Each subagent should output a file named `plans/<module>_review.md`:
 
 ```markdown
-# <Module> Module Review — Improvement Plan
+# <Module> Architecture Review
 
-**Reviewed:** architecture/<doc>.md against nl_calc/<module>.py  
-**Date:** <YYYY-MM-DD>
+## Verified Claims
+1. [Claim description] - MATCHES/MISMATCH
+   - Evidence: [file:line]
 
-## Verified Claims (with line references)
-- [claim from docs] — VERIFIED at code line <N> (docs line <M>)
-- [claim from docs] — VERIFIED at code line <N> (docs line <M>)
+## Discrepancies
+1. [Description of mismatch]
+   - Doc says: [what doc claims]
+   - Code has: [what code actually does]
 
-## Discrepancies Between Documentation and Code
-- [HIGH/MEDIUM/LOW] <description of discrepancy>
-  - Documentation says: <X> (docs line <M>)
-  - Code actually does: <Y> (code line <N>)
-  - Impact: <what this means>
+## Bugs Found
+1. [Bug description]
+   - Location: [file:line]
+   - Severity: [High/Medium/Low]
 
-## Potential Bugs
-- [HIGH/MEDIUM/LOW] <bug description>
-  - Location: `<file>:<line>`
-  - Issue: <what could go wrong>
-  - Suggested investigation: <what to look at>
+## Improvements
+1. [Improvement suggestion]
+   - Priority: [High/Medium/Low]
 
-## Improvement Suggestions
-### HIGH Priority
-- [critical improvements that affect correctness or security]
-
-### MEDIUM Priority
-- [important improvements for robustness, performance, or maintainability]
-
-### LOW Priority
-- [nice-to-have improvements, style, clarity]
-
-## Summary
-[2-3 sentence summary of module health, overall documentation quality, 
-and key areas needing attention]
+## Priority Summary
+- High: [list]
+- Medium: [list]
+- Low: [list]
 ```
 
----
+## Dispatch Order
 
-## Stale Item Detection Criteria
+Subagents will be dispatched in the following order (grouped for parallel execution):
 
-During Phase 2, the stale item scanner flags items for pruning:
+**Group 1 (Independent modules):**
+- `api` → Review api.md
+- `cli` → Review cli.md
+- `validate` → Review validate.md
 
-1. **Dead references**: Documentation mentions functions/classes/variables that no longer exist in code
-2. **Unimplemented features**: Documentation describes features not in code (not deferred, just absent)
-3. **Superseded docs**: Multiple documents covering same topic with conflicting info
-4. **Outdated examples**: Code examples in docs that wouldn't work with current API
-5. **Orphaned modules**: Architecture docs for modules that have been removed or renamed
-6. **Stale line numbers**: Docs reference specific line numbers that no longer match
-7. **Duplicate content**: Same information repeated across multiple architecture files
-8. **Outdated counts**: Line counts, file sizes, test counts that are stale
-9. **Missing modules**: Code modules that have no corresponding architecture doc
+**Group 2 (Exact/ submodules):**
+- `primitives` → Review primitives.md
+- `confusables` → Review confusables.md
+- `unicode_tools` → Review unicode_tools.md
+- `measure` → Review measure.md
+- `diff` → Review diff.md
+- `synthesis` → Review synthesis.md
 
----
+**Group 3 (Core modules):**
+- `normalize` → Review normalize.md
+- `evaluator` → Review evaluator.md
+- `units` → Review units.md
 
-## Existing Review Plans (from prior review)
+**Group 4 (Meta modules):**
+- `mcp` → Review mcp.md
+- `overview` → Review overview.md
+- `exact` → Review exact.md
 
-The following improvement plans already exist from a previous review. These may be refreshed or replaced based on the current review:
+## Stale Item Detection
 
-- `plans/review_improvements_api.md` — API documentation review
-- `plans/review_improvements_cli.md` — CLI documentation review
-- `plans/review_improvements_confusables.md` — confusables.py documentation review
-- `plans/review_improvements_diff.md` — diff.py documentation review
-- `plans/review_improvements_evaluator.md` — evaluator.py documentation review
-- `plans/review_improvements_exact.md` — exact/ subpackage documentation review
-- `plans/review_improvements_mcp.md` — MCP server documentation review
-- `plans/review_improvements_measure.md` — measure.py documentation review
-- `plans/review_improvements_normalize.md` — normalize.py documentation review
-- `plans/review_improvements_overview.md` — overview documentation review
-- `plans/review_improvements_primitives.md` — primitives.py documentation review
-- `plans/review_improvements_synthesis.md` — synthesis.py documentation review
-- `plans/review_improvements_unicode_tools.md` — unicode_tools.py documentation review
-- `plans/review_improvements_units.md` — units.py documentation review
-- `plans/review_improvements_validate.md` — validate.py documentation review
+After all reviews complete, the orchestrator will:
 
-Subagents should overwrite these files with fresh analysis based on the current state of the codebase.
+1. Compare `architecture/plans/` contents against the new `plans/` directory
+2. Identify stale review files (those in `architecture/plans/` that are older or superseded)
+3. Remove `architecture/plans/` stale items (these are outdated review artifacts)
 
----
+Files to evaluate for removal:
+- `architecture/plans/api_review.md`
+- `architecture/plans/cli_review.md`
+- `architecture/plans/confusables_review.md`
+- `architecture/plans/diff_review.md`
+- `architecture/plans/evaluator_review.md`
+- `architecture/plans/exact_review.md`
+- `architecture/plans/mcp_server_review.md`
+- `architecture/plans/measure_review.md`
+- `architecture/plans/normalize_review.md`
+- `architecture/plans/overview_review.md`
+- `architecture/plans/primitives_review.md`
+- `architecture/plans/synthesis_review.md`
+- `architecture/plans/unicode_tools_review.md`
+- `architecture/plans/units_review.md`
+- `architecture/plans/validate_review.md`
 
-## Progress Tracking
+## Execution
 
-| Phase | Status | Notes |
-|-------|--------|-------|
-| Phase 1: Batch 1 (overview, api, normalize, evaluator, units) | COMPLETE | 15 review files generated |
-| Phase 1: Batch 2 (primitives, unicode_tools, confusables) | COMPLETE | 3 review files generated |
-| Phase 1: Batch 3 (validate, diff, measure, synthesis) | COMPLETE | 4 review files generated |
-| Phase 1: Batch 4 (cli, mcp, exact) | COMPLETE | 3 review files generated |
-| Phase 2: Stale item identification | COMPLETE | 1 stale items report generated |
-| Phase 3: Consolidation | COMPLETE | This file updated |
+After writing this plan:
+1. Dispatch all Group 1 subagents in parallel
+2. Wait for completion, then dispatch Group 2 (6 agents)
+3. Wait for completion, then dispatch Group 3 (3 agents)
+4. Wait for completion, then dispatch Group 4 (3 agents)
+5. Detect and remove stale items from `architecture/plans/`
+6. Commit this plan and all review outputs to main
 
----
+## Verification
 
-## Completion Summary
+After all reviews complete, run:
+```bash
+python3 -m pytest tests/ -v
+```
 
-**All 15 modules reviewed** with corresponding improvement plans:
-- overview, api, normalize, evaluator, units
-- primitives, unicode_tools, confusables
-- validate, diff, measure, synthesis
-- cli, mcp, exact
-
-**Key Findings by Priority:**
-
-### HIGH Priority Issues (Require Attention)
-1. **evaluator.md**: Missing constants `g`/`standardgravity` and `wien`/`wienconstant`
-2. **diff.md**: All `common_prefix_suffix` examples return wrong values
-3. **diff.md**: `FirstDiff` TypedDict shows 3 fields but code has 6
-4. **api.md/normalize.md**: `normalize_expression` return type documented as `str` but returns `tuple[str, int]`
-5. **cli.md**: `normalize_main` alias documented but doesn't exist in source
-6. **cli.md**: `--verbose` flag behavior mismatch (shows expression vs tracebacks)
-7. **units.py**: Temperature-to-non-temperature conversion crashes after warning
-8. **unicode_tools.md**: `reverse_confusables()` undocumented public function
-
-### MEDIUM Priority Issues
-- `evaluate_with_timeout` docstring uses forbidden generator expression syntax
-- `diff_spans` example shows `equal` spans that code filters out
-- `visible_repr()` BIDI handling undocumented
-- Multiple UnitValue methods undocumented
-- `load_user_config_extended()` undocumented
-- Dead code in `_classify_difference()` and `list_compare()`
-
-### Known Bugs (Code Issues, Not Documentation)
-- **units.py**: Temperature conversion crashes after warning (HIGH)
-- **primitives.py**: `_is_extended_pictographic` range check returns early, bypassing category/name filter
-- **normalize.py**: `_handle_negative_token` may crash on empty split; float regex pattern concerns
-- **synthesis.py**: Unreachable code branches for `accent_or_diacritic_difference` classification
-
----
-
-## Generated Review Files
-
-All review files are in `plans/` directory:
-- `review_improvements_overview.md`
-- `review_improvements_api.md`
-- `review_improvements_normalize.md`
-- `review_improvements_evaluator.md`
-- `review_improvements_units.md`
-- `review_improvements_primitives.md`
-- `review_improvements_unicode_tools.md`
-- `review_improvements_confusables.md`
-- `review_improvements_validate.md`
-- `review_improvements_diff.md`
-- `review_improvements_measure.md`
-- `review_improvements_synthesis.md`
-- `review_improvements_cli.md`
-- `review_improvements_mcp.md`
-- `review_improvements_exact.md`
-- `review_stale_items.md`
-
----
-
-## Next Steps
-
-This review identified documentation and code issues requiring attention. Priority should be given to:
-1. Fix HIGH priority documentation discrepancies (wrong examples, missing exports)
-2. Investigate and fix HIGH priority code bugs (temperature conversion, dead code)
-3. Address MEDIUM priority issues in subsequent iterations
-
-**Status:** REVIEW COMPLETE — 2026-05-28
-
----
+Ensure all tests pass after any code changes identified in reviews.
