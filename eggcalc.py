@@ -3964,10 +3964,7 @@ def run(
 
             print(json.dumps({"expression": joined, "result": str(result)}))
         else:
-            if show_expression:
-                print(f"{joined} -> {result}")
-            else:
-                print(result)
+            print(result)
         return result, 0
     except ZeroDivisionError as e:
         error_message(original, e)
@@ -4004,7 +4001,7 @@ def _run_repl(show_expression: bool = True) -> int:
 
         if line.lower() == "history":
             for expr, result in history:
-                print(f"{expr} -> {result}")
+                print(result)
             continue
 
         if line.lower() == "clear":

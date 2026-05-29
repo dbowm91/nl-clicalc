@@ -46,6 +46,15 @@ evaluate("five plus three")                  # ✗ Fails (invalid Python)
 evaluate("1km in m")                         # ✗ Fails (invalid Python)
 ```
 
+### Output Format
+The CLI prints **only the result** — no echo of the input, no arrows, no extra characters:
+```bash
+calc "5 + 3"      # → 8
+calc "sqrt(144)"  # → 12.0
+calc "30m + 100ft"  # → 60.48 m
+```
+This applies to both single-expression mode and interactive REPL. History in REPL also shows result only. Use `-e` for quiet/piped mode, `--json` for structured output.
+
 ### Core Modules
 
 | Module | Purpose |
