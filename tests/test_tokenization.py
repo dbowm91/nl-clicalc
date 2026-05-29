@@ -10,8 +10,8 @@ These tests ensure that the expression tokenizer correctly handles:
 
 import pytest
 
-from egg_calc import UnitValue, evaluate
-from egg_calc.normalize import NORMALIZE, PATTERNS, split_at_operators
+from eggcalc import UnitValue, evaluate
+from eggcalc.normalize import NORMALIZE, PATTERNS, split_at_operators
 
 
 def get_value(result):

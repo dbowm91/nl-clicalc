@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from egg_calc.exact.path_tools import path_compare
+from eggcalc.exact.path_tools import path_compare
 
 
 class TestPathCompareBasic:

@@ -4,67 +4,67 @@ Complete API reference for eggcalc.
 
 ## Core Functions
 
-::: egg_calc.evaluate
-::: egg_calc.evaluate_raw
-::: egg_calc.evaluate_cached
-::: egg_calc.evaluate_async
-::: egg_calc.evaluate_with_timeout
+::: eggcalc.evaluate
+::: eggcalc.evaluate_raw
+::: eggcalc.evaluate_cached
+::: eggcalc.evaluate_async
+::: eggcalc.evaluate_with_timeout
 
 ## PyCalcApp Class
 
-::: egg_calc.PyCalcApp
+::: eggcalc.PyCalcApp
 
 ## Configuration
 
-::: egg_calc.register_constant
-::: egg_calc.register_function
-::: egg_calc.load_user_config
-::: egg_calc.get_default_evaluator
+::: eggcalc.register_constant
+::: eggcalc.register_function
+::: eggcalc.load_user_config
+::: eggcalc.get_default_evaluator
 
 ## Types
 
-::: egg_calc.UnitValue
-::: egg_calc.EvaluationError
-::: egg_calc.TimeoutError
-::: egg_calc.Memory
+::: eggcalc.UnitValue
+::: eggcalc.EvaluationError
+::: eggcalc.TimeoutError
+::: eggcalc.Memory
 
 ## Unit Utilities
 
-::: egg_calc.normalize_unit
-::: egg_calc.get_conversion_factor
-::: egg_calc.get_all_units
-::: egg_calc.is_unit
+::: eggcalc.normalize_unit
+::: eggcalc.get_conversion_factor
+::: eggcalc.get_all_units
+::: eggcalc.is_unit
 
 ## Memory Functions
 
-::: egg_calc.memory_store
-::: egg_calc.memory_recall
-::: egg_calc.memory_add
-::: egg_calc.memory_subtract
-::: egg_calc.memory_clear
-::: egg_calc.memory_list
+::: eggcalc.memory_store
+::: eggcalc.memory_recall
+::: eggcalc.memory_add
+::: eggcalc.memory_subtract
+::: eggcalc.memory_clear
+::: eggcalc.memory_list
 
 ## Variable Functions
 
-::: egg_calc.setvar
-::: egg_calc.getvar
-::: egg_calc.delvar
-::: egg_calc.listvars
-::: egg_calc.clearvars
+::: eggcalc.setvar
+::: eggcalc.getvar
+::: eggcalc.delvar
+::: eggcalc.listvars
+::: eggcalc.clearvars
 
 ## Constants
 
-::: egg_calc.MAX_INPUT_LENGTH
-::: egg_calc.MAX_NESTING_DEPTH
-::: egg_calc.MAX_EXPONENT
-::: egg_calc.MAX_FACTORIAL
-::: egg_calc.MAX_RESULT_VALUE
-::: egg_calc.DEFAULT_CACHE_SIZE
+::: eggcalc.MAX_INPUT_LENGTH
+::: eggcalc.MAX_NESTING_DEPTH
+::: eggcalc.MAX_EXPONENT
+::: eggcalc.MAX_FACTORIAL
+::: eggcalc.MAX_RESULT_VALUE
+::: eggcalc.DEFAULT_CACHE_SIZE
 
 ## CLI Functions
 
-::: egg_calc.main
-::: egg_calc.run
-::: egg_calc.normalize
-::: egg_calc.normalize_expression
-::: egg_calc.print_help
+::: eggcalc.main
+::: eggcalc.run
+::: eggcalc.normalize
+::: eggcalc.normalize_expression
+::: eggcalc.print_help

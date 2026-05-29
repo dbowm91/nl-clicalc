@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Build script to combine egg_calc modules into a single self-contained executable.
+Build script to combine eggcalc modules into a single self-contained executable.
 
 Supports both CLI mode (calculator) and MCP server mode (--mcp flag).
 
 Usage:
-    python3 build_single.py          # Build egg_calc.py in current directory
+    python3 build_single.py          # Build eggcalc.py in current directory
     python3 build_single.py -o /path/to/output  # Custom output path
 """
 
@@ -16,7 +16,7 @@ import os
 import sys
 
 
-EGG_CALC_DIR = os.path.join(os.path.dirname(__file__), "egg_calc")
+EGGCALC_DIR = os.path.join(os.path.dirname(__file__), "eggcalc")
 
 MODULES_CALC = [
     "units",
@@ -57,14 +57,14 @@ HEADER = '''#!/usr/bin/env python3
 from __future__ import annotations
 
 """
-egg_calc - Natural language math expression calculator + MCP exact tools
+eggcalc - Natural language math expression calculator + MCP exact tools
 
 Single-file version.
 
-CLI mode:     python3 egg_calc.py "five plus two"
-MCP mode:     python3 egg_calc.py --mcp
+CLI mode:     python3 eggcalc.py "five plus two"
+MCP mode:     python3 eggcalc.py --mcp
 
-Or make executable: chmod +x egg_calc.py && ./egg_calc.py "five plus two"
+Or make executable: chmod +x eggcalc.py && ./eggcalc.py "five plus two"
 """
 
 import sys
@@ -77,7 +77,7 @@ os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
 
 def get_version() -> str:
     """Get version from __init__.py"""
-    init_path = os.path.join(EGG_CALC_DIR, "__init__.py")
+    init_path = os.path.join(EGGCALC_DIR, "__init__.py")
     with open(init_path, "r") as f:
         for line in f:
             if line.startswith("__version__"):
@@ -93,7 +93,7 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     Returns:
         Tuple of (cleaned_code, list_of_import_statements)
     """
-    module_path = os.path.join(NL_CALC_DIR, f"{module_name}.py")
+    module_path = os.path.join(EGGCALC_DIR, f"{module_name}.py")
 
     with open(module_path, "r") as f:
         lines = f.readlines()
@@ -170,8 +170,8 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
         # Skip relative imports (they reference inlined modules)
         if stripped.startswith("from ."):
             return False
-        # Skip egg_calc imports (package reference)
-        if "egg_calc" in stripped:
+        # Skip eggcalc imports (package reference)
+        if "eggcalc" in stripped:
             return False
         # Must be a complete single-line import (ends without_open paren, no backslash)
         if "(" in stripped or ")" in stripped:
@@ -222,7 +222,7 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
             continue
 
         # Handle simple "import X" statements - collect them if top-level
-        if stripped.startswith("import ") and not stripped.startswith("import egg_calc"):
+        if stripped.startswith("import ") and not stripped.startswith("import eggcalc"):
             if is_valid_single_line_import(stripped, line):
                 imports.append(line)
                 continue  # Skip - imported at top level
@@ -262,11 +262,18 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     code = code.replace("units._rebuild_conversions()", "_rebuild_conversions()")
 
     # Normalize references to modules now inlined
-    code = code.replace("from egg_calc import __version__", "# __version__ is defined at module level")
+    code = code.replace("from eggcalc import __version__", "# __version__ is defined at module level")
 
     # Rename normalize.main() to normalize_main() to avoid conflict with MCP main()
     if '"""Main entry point for CLI."""' in code:
         code = code.replace("def main() -> int:", "def normalize_main() -> int:")
+
+    # Fix eggcalc import inside normalize.main() - in single file, __version__ is at module level
+    # Also fix the MCP import which is a global in single file
+    if '"""Main entry point for CLI."""' in code:
+        code = code.replace("    import eggcalc\n", "")
+        code = code.replace("eggcalc.__version__", "__version__")
+        code = code.replace("        from eggcalc.mcp.server import mcp_main\n", "")
 
     # Exact module internal references (within exact package)
     # These are relative imports that now become direct
@@ -303,7 +310,7 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     # Exact imports into synthesis
     code = code.replace("from ..exact import", "from exact import")
 
-    # MCP imports from egg_calc
+    # MCP imports from eggcalc
     code = code.replace("from .. import EvaluationError, evaluate_raw", "from evaluator import EvaluationError, evaluate_raw")
     code = code.replace("from ..exact import", "from exact import")
 
@@ -401,11 +408,11 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
 
 
 def build_single_file(output_path: str | None = None) -> str:
-    """Combine all egg_calc modules into a single file."""
+    """Combine all eggcalc modules into a single file."""
     version = get_version()
 
     if output_path is None:
-        output_path = os.path.join(os.path.dirname(__file__), "egg_calc.py")
+        output_path = os.path.join(os.path.dirname(__file__), "eggcalc.py")
 
     content: list[str] = [HEADER]
     content.append(f'__version__ = "{version}"\n')
@@ -509,7 +516,8 @@ def _main():
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress expression in output")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--usage", action="store_true", help="Show full usage information and examples")
-    args = parser.parse_args()
+    # Parse known args - let normalize_main handle the rest (-v, -i, -s, -h, etc.)
+    args, extra = parser.parse_known_args()
 
     if args.mcp:
         return mcp_main()
@@ -517,7 +525,7 @@ def _main():
         print_help()
         return 0
     elif args.expression or args.single_expr:
-        sys.argv = ["egg_calc"]
+        sys.argv = ["eggcalc"]
         if args.single_expr:
             sys.argv.extend(["-e", args.single_expr])
         else:
@@ -526,8 +534,14 @@ def _main():
             sys.argv.append("--json")
         if args.quiet:
             sys.argv.append("-q")
+        if extra:
+            sys.argv.extend(extra)
         return normalize_main()
     else:
+        # No expression given - forward all args to normalize_main (handles -v, -i, -s, -h, etc.)
+        if extra:
+            sys.argv = ["eggcalc"] + extra
+            return normalize_main()
         parser.print_help()
         return 0
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from egg_calc.exact.identifier_inspect import (
+from eggcalc.exact.identifier_inspect import (
     identifier_table_inspect,
 )
 

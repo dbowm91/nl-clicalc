@@ -2,7 +2,7 @@
 
 Core text primitives built on Python's `unicodedata` module. These are the **building blocks** for all other exact/ modules.
 
-## File: `nl_calc/exact/primitives.py`
+## File: `eggcalc/exact/primitives.py`
 
 ## Overview
 
@@ -273,7 +273,7 @@ primitives.py
 ## Usage Example
 
 ```python
-from nl_calc.exact import (
+from eggcalc.exact import (
     utf8_bytes, codepoints, normalize_unicode,
     measure_basic, count_graphemes, find_invisibles
 )

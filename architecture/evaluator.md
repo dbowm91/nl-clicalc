@@ -13,7 +13,7 @@ The `evaluator` module is the **core computation engine**. It:
 ## Key Exports
 
 ```python
-from nl_calc.evaluator import (
+from eggcalc.evaluator import (
     evaluate,           # Main evaluation function
     evaluate_raw,       # Evaluate with NL normalization
     evaluate_cached,    # LRU cached evaluation
@@ -25,7 +25,7 @@ from nl_calc.evaluator import (
     get_default_evaluator,
     register_constant,  # Add user constants
     register_function,  # Add user functions
-    load_user_config,   # Load nl_calc_config.py
+    load_user_config,   # Load eggcalc_config.py
     # Memory functions
     memory_store, memory_recall, memory_add, memory_subtract,
     memory_clear, memory_list,
@@ -278,7 +278,7 @@ Functions automatically use `cmath` when:
 Webapp wrapper with caching:
 
 ```python
-from nl_calc import PyCalcApp
+from eggcalc import PyCalcApp
 
 app = PyCalcApp(cache_size=1024, enable_cache=True)
 result = app.calculate("five plus two")

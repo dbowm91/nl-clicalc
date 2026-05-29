@@ -12,7 +12,7 @@ import sys
 def run_calc(args: list[str]) -> tuple[int, str, str]:
     """Run calc command and return (returncode, stdout, stderr)."""
     result = subprocess.run(
-        [sys.executable, "nl_calc.py"] + args,
+        [sys.executable, "eggcalc.py"] + args,
         capture_output=True,
         text=True,
     )

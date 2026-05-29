@@ -23,7 +23,7 @@ def benchmark_evaluate(n: int = 10000, warmup: int = 100) -> BenchmarkStats:
     Returns:
         BenchmarkStats with timing results
     """
-    from nl_calc import evaluate
+    from eggcalc import evaluate
 
     # Warmup
     for _ in range(warmup):
@@ -52,7 +52,7 @@ def benchmark_evaluate_raw(n: int = 10000, warmup: int = 100) -> BenchmarkStats:
     Returns:
         BenchmarkStats with timing results
     """
-    from nl_calc import evaluate_raw
+    from eggcalc import evaluate_raw
 
     # Warmup
     for _ in range(warmup):
@@ -81,7 +81,7 @@ def benchmark_normalize(n: int = 10000, warmup: int = 100) -> BenchmarkStats:
     Returns:
         BenchmarkStats with timing results
     """
-    from nl_calc.normalize import normalize_expression, NORMALIZE, PATTERNS
+    from eggcalc.normalize import normalize_expression, NORMALIZE, PATTERNS
 
     # Warmup
     for _ in range(warmup):
@@ -112,7 +112,7 @@ def benchmark_evaluate_cached(n: int = 10000, warmup: int = 100) -> BenchmarkSta
     Returns:
         BenchmarkStats with timing results
     """
-    from nl_calc import evaluate_cached
+    from eggcalc import evaluate_cached
 
     # One warmup - cached results used for all iterations
     evaluate_cached("five plus three")

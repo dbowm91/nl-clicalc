@@ -1,8 +1,8 @@
 """Tests for .env and INI config validation tools."""
 
 
-from egg_calc.exact.config import dotenv_validate, ini_validate
-from egg_calc.mcp.tools import dotenv_validate_mcp, ini_validate_mcp
+from eggcalc.exact.config import dotenv_validate, ini_validate
+from eggcalc.mcp.tools import dotenv_validate_mcp, ini_validate_mcp
 
 
 class TestDotenvValidate:

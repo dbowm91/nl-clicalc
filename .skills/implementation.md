@@ -59,10 +59,10 @@ The `_classify_difference()` function in synthesis.py returns different classifi
 ### Module Organization
 
 #### Core modules (combined by build_single.py)
-- `nl_calc/normalize.py` - NL processing
-- `nl_calc/evaluator.py` - AST evaluation
-- `nl_calc/units.py` - Unit definitions
-- `nl_calc/__main__.py` - CLI entry
+- `eggcalc/normalize.py` - NL processing
+- `eggcalc/evaluator.py` - AST evaluation
+- `eggcalc/units.py` - Unit definitions
+- `eggcalc/__main__.py` - CLI entry
 
 #### exact/ modules (always separate)
 - `primitives.py` - UTF-8, codepoints, visible_repr
@@ -88,5 +88,5 @@ When modifying `build_single.py`:
 ### Docstring Updates
 When adding new functions, update:
 1. The function docstring
-2. `nl_calc/exact/__init__.py` exports if public API
+2. `eggcalc/exact/__init__.py` exports if public API
 3. AGENTS.md Implementation Notes if notable pattern

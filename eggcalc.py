@@ -1,0 +1,27588 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+"""
+eggcalc - Natural language math expression calculator + MCP exact tools
+
+Single-file version.
+
+CLI mode:     python3 eggcalc.py "five plus two"
+MCP mode:     python3 eggcalc.py --mcp
+
+Or make executable: chmod +x eggcalc.py && ./eggcalc.py "five plus two"
+"""
+
+import sys
+import os
+
+os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+
+__version__ = "1.1.1"
+
+# === Collected imports ===
+import ast
+import cmath
+import math
+import random
+import threading
+from collections import OrderedDict
+from functools import lru_cache
+from typing import Any
+import argparse
+import re
+import sys
+import traceback
+from collections.abc import Mapping
+from re import Pattern
+import unicodedata
+from typing import NamedTuple, TypedDict
+import difflib
+from typing import TypedDict
+import hashlib
+import json
+from typing import Any, TypedDict
+import functools
+import shlex
+import zlib
+import keyword
+
+
+# === units.py ===
+Numeric = float | int | complex
+
+FLOAT_EPSILON = 1e-10
+MAX_RESULT_VALUE = 1e308
+
+
+class UnitValue:
+    """Represents a numeric value with optional units.
+
+    Supports arithmetic operations with automatic unit conversion
+    when adding or subtracting values with compatible units.
+    """
+
+    def __init__(self, value: float, unit: str | None = None) -> None:
+        self.value = value
+        self.unit = unit
+
+    def __repr__(self) -> str:
+        if self.unit:
+            return f"{self.value} {self.unit}"
+        return str(self.value)
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+    def __format__(self, format_spec: str) -> str:
+        if self.unit:
+            return f"{self.value:{format_spec}} {self.unit}"
+        return f"{self.value:{format_spec}}"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, UnitValue):
+            return NotImplemented
+        if self.unit != other.unit:
+            return False
+        return abs(self.value - other.value) < FLOAT_EPSILON
+
+    def __hash__(self) -> int:
+        return hash((self.value, self.unit))
+
+    def __add__(self, other: Numeric) -> UnitValue:
+        if isinstance(other, UnitValue):
+            if not are_units_compatible(self.unit, other.unit):
+                raise ValueError(f"Cannot add incompatible units: {self.unit} + {other.unit}")
+            if self.unit == other.unit or other.unit is None or self.unit is None:
+                return UnitValue(self.value + other.value, self.unit or other.unit)
+            converted = other.convert_to(self.unit)
+            return UnitValue(self.value + converted.value, self.unit)
+        raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
+    def __radd__(self, other: Numeric) -> UnitValue:
+        return self.__add__(other)
+
+    def __sub__(self, other: Numeric) -> UnitValue:
+        if isinstance(other, UnitValue):
+            if not are_units_compatible(self.unit, other.unit):
+                raise ValueError(f"Cannot subtract incompatible units: {self.unit} - {other.unit}")
+            if self.unit == other.unit or other.unit is None or self.unit is None:
+                return UnitValue(self.value - other.value, self.unit or other.unit)
+            converted = other.convert_to(self.unit)
+            return UnitValue(self.value - converted.value, self.unit)
+        raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
+
+    def __rsub__(self, other: Numeric) -> UnitValue:
+        if isinstance(other, UnitValue):
+            return other.__sub__(self)
+        raise ValueError("Cannot subtract dimensional value from scalar")
+
+    def __mul__(self, other: Numeric) -> UnitValue:
+        if isinstance(other, UnitValue):
+            if self.unit and other.unit:
+                if self.unit == other.unit:
+                    return UnitValue(self.value * other.value, self.unit)
+                return UnitValue(self.value * other.value, f"{self.unit}*{other.unit}")
+            return UnitValue(self.value * other.value, self.unit or other.unit)
+        return UnitValue(self.value * other, self.unit)
+
+    def __rmul__(self, other: Numeric) -> UnitValue:
+        return self.__mul__(other)
+
+    def __truediv__(self, other: Numeric) -> UnitValue:
+        if isinstance(other, UnitValue):
+            if self.unit and other.unit:
+                if self.unit == other.unit:
+                    return UnitValue(self.value / other.value, None)
+                return UnitValue(self.value / other.value, f"{self.unit}/{other.unit}")
+            return UnitValue(self.value / other.value, self.unit)
+        return UnitValue(self.value / other, self.unit)
+
+    def __rtruediv__(self, other: Numeric) -> UnitValue:
+        return UnitValue(other / self.value, self.unit)
+
+    def __pow__(self, other: Numeric) -> UnitValue:
+        return UnitValue(self.value**other, self.unit)
+
+    def __neg__(self) -> UnitValue:
+        return UnitValue(-self.value, self.unit)
+
+    def __pos__(self) -> UnitValue:
+        return UnitValue(self.value, self.unit)
+
+    def __abs__(self) -> UnitValue:
+        return UnitValue(abs(self.value), self.unit)
+
+    def __round__(self, ndigits: int = 0) -> UnitValue:
+        return UnitValue(round(self.value, ndigits), self.unit)
+
+    def __complex__(self) -> complex:
+        return complex(self.value)
+
+    def __int__(self) -> int:
+        return int(self.value)
+
+    def __float__(self) -> float:
+        return float(self.value)
+
+    def convert_to(self, target_unit: str) -> UnitValue:
+        """Convert to a different unit of the same type."""
+
+        if self.unit == target_unit:
+            return UnitValue(self.value, target_unit)
+
+        if self.unit is None:
+            raise ValueError("Cannot convert dimensionless value")
+
+        cat = get_unit_category(self.unit)
+        target_cat = get_unit_category(target_unit)
+        if cat == "temperature" and target_cat == "temperature":
+            converted = convert_temperature(self.value, self.unit, target_unit)
+            return UnitValue(converted, target_unit)
+        if cat == "temperature" and target_cat != "temperature":
+            raise ValueError(
+                f"Cannot convert temperature unit '{self.unit}' to non-temperature unit '{target_unit}'. "
+                f"Temperature units (K, C, F, R) can only be converted to other temperature units."
+            )
+        factor = get_conversion_factor(self.unit, target_unit)
+        return UnitValue(self.value * factor, target_unit)
+
+
+# Unit definitions: base unit -> {unit: factor to base}
+UNIT_BASE: dict[str, dict[str, float]] = {
+    # Length (base: meters)
+    "m": {
+        "m": 1.0,
+        "meter": 1.0,
+        "meters": 1.0,
+        "km": 1000.0,
+        "kilometer": 1000.0,
+        "kilometers": 1000.0,
+        "cm": 0.01,
+        "centimeter": 0.01,
+        "centimeters": 0.01,
+        "mm": 0.001,
+        "millimeter": 0.001,
+        "millimeters": 0.001,
+        "um": 1e-6,
+        "μm": 1e-6,
+        "micrometer": 1e-6,
+        "micrometers": 1e-6,
+        "nm": 1e-9,
+        "nanometer": 1e-9,
+        "nanometers": 1e-9,
+        "pm": 1e-12,
+        "picometer": 1e-12,
+        "picometers": 1e-12,
+        "in": 0.0254,
+        "inch": 0.0254,
+        "inches": 0.0254,
+        "ft": 0.3048,
+        "foot": 0.3048,
+        "feet": 0.3048,
+        "yd": 0.9144,
+        "yard": 0.9144,
+        "yards": 0.9144,
+        "mi": 1609.344,
+        "mile": 1609.344,
+        "miles": 1609.344,
+        "ly": 9.4607e15,
+        "lightyear": 9.4607e15,
+        "lightyears": 9.4607e15,
+        "au": 1.496e11,
+        "astronomicalunit": 1.496e11,
+        "astronomicalunits": 1.496e11,
+        "pc": 3.086e16,
+        "parsec": 3.086e16,
+        "parsecs": 3.086e16,
+        "angstrom": 1e-10,
+        "angstroms": 1e-10,
+        "fermi": 1e-15,
+        "nmi": 1852.0,
+        "nauticalmile": 1852.0,
+        "nauticalmiles": 1852.0,
+        "furlong": 201.168,
+        "furlongs": 201.168,
+        "chain": 20.1168,
+        "chains": 20.1168,
+        "rd": 5.0292,
+        "rod": 5.0292,
+        "rods": 5.0292,
+        "fathom": 1.8288,
+        "fathoms": 1.8288,
+        "smoot": 1.7018,
+        "smoots": 1.7018,
+    },
+    # Time (base: seconds)
+    "s": {
+        "s": 1.0,
+        "second": 1.0,
+        "seconds": 1.0,
+        "ms": 0.001,
+        "millisecond": 0.001,
+        "milliseconds": 0.001,
+        "us": 1e-6,
+        "μs": 1e-6,
+        "microsecond": 1e-6,
+        "microseconds": 1e-6,
+        "ns": 1e-9,
+        "nanosecond": 1e-9,
+        "nanoseconds": 1e-9,
+        "ps": 1e-12,
+        "picosecond": 1e-12,
+        "picoseconds": 1e-12,
+        "min": 60.0,
+        "minute": 60.0,
+        "minutes": 60.0,
+        "h": 3600.0,
+        "hr": 3600.0,
+        "hour": 3600.0,
+        "hours": 3600.0,
+        "d": 86400.0,
+        "day": 86400.0,
+        "days": 86400.0,
+        "wk": 604800.0,
+        "week": 604800.0,
+        "weeks": 604800.0,
+        "fortnight": 1209600.0,
+        "fortnights": 1209600.0,
+        "yr": 31536000.0,
+        "year": 31536000.0,
+        "years": 31536000.0,
+        "decade": 315360000.0,
+        "decades": 315360000.0,
+        "century": 3153600000.0,
+        "centuries": 3153600000.0,
+        "millennium": 31536000000.0,
+        "millennia": 31536000000.0,
+    },
+    # Note: Year is defined as 365 days (31536000 seconds), ignoring leap years.
+    # Data storage (base: bytes) - uses binary (1024) prefixes per IEEE/ASTM standard
+    "B": {
+        "B": 1.0,
+        "byte": 1.0,
+        "bytes": 1.0,
+        "bit": 0.125,
+        "bits": 0.125,
+        "KB": 1024.0,
+        "kilobyte": 1024.0,
+        "kilobytes": 1024.0,
+        "MB": 1048576.0,
+        "megabyte": 1048576.0,
+        "megabytes": 1048576.0,
+        "GB": 1073741824.0,
+        "gigabyte": 1073741824.0,
+        "gigabytes": 1073741824.0,
+        "TB": 1099511627776.0,
+        "terabyte": 1099511627776.0,
+        "terabytes": 1099511627776.0,
+        "PB": 1125899906842624.0,
+        "petabyte": 1125899906842624.0,
+        "petabytes": 1125899906842624.0,
+        "EB": 1152921504606846976.0,
+        "exabyte": 1152921504606846976.0,
+        "exabytes": 1152921504606846976.0,
+        "ZB": 1.1805916207174113e21,
+        "zettabyte": 1.1805916207174113e21,
+        "zettabytes": 1.1805916207174113e21,
+        "YB": 1.2089258196146292e24,
+        "yottabyte": 1.2089258196146292e24,
+        "yottabytes": 1.2089258196146292e24,
+    },
+    # Data transfer rate (base: bits per second) - uses decimal (1000) prefixes per SI standard
+    "bps": {
+        "bps": 1.0,
+        "bit/s": 1.0,
+        "bits/s": 1.0,
+        "Kbps": 1000.0,
+        "kilobps": 1000.0,
+        "kilobit/s": 1000.0,
+        "kilobits/s": 1000.0,
+        "Mbps": 1000000.0,
+        "megabps": 1000000.0,
+        "megabit/s": 1000000.0,
+        "megabits/s": 1000000.0,
+        "Gbps": 1000000000.0,
+        "gigabps": 1000000000.0,
+        "gigabit/s": 1000000000.0,
+        "gigabits/s": 1000000000.0,
+    },
+    # Mass (base: kilograms)
+    "kg": {
+        "kg": 1.0,
+        "kilogram": 1.0,
+        "kilograms": 1.0,
+        "g": 0.001,
+        "gram": 0.001,
+        "grams": 0.001,
+        "mg": 1e-6,
+        "milligram": 1e-6,
+        "milligrams": 1e-6,
+        "ug": 1e-9,
+        "μg": 1e-9,
+        "microgram": 1e-9,
+        "micrograms": 1e-9,
+        "ng": 1e-12,
+        "nanogram": 1e-12,
+        "nanograms": 1e-12,
+        "lb": 0.45359237,
+        "lbs": 0.45359237,
+        "pound": 0.45359237,
+        "pounds": 0.45359237,
+        "oz": 0.0283495231,
+        "ounce": 0.0283495231,
+        "ounces": 0.0283495231,
+        "ton": 907.18474,
+        "tons": 907.18474,
+        "tonne": 1000.0,
+        "tonnes": 1000.0,
+        "stone": 6.35029318,
+        "stones": 6.35029318,
+        "slug": 14.593903,
+        "slugs": 14.593903,
+        "ct": 0.0002,
+        "carat": 0.0002,
+        "carats": 0.0002,
+        "gr": 6.479891e-5,
+        "grain": 6.479891e-5,
+        "grains": 6.479891e-5,
+        "dr": 0.0017718452,
+        "dram": 0.0017718452,
+        "drams": 0.0017718452,
+    },
+    # Volume (base: liters)
+    "L": {
+        "L": 1.0,
+        "liter": 1.0,
+        "liters": 1.0,
+        "l": 1.0,
+        "mL": 0.001,
+        "milliliter": 0.001,
+        "milliliters": 0.001,
+        "uL": 1e-6,
+        "μL": 1e-6,
+        "microliter": 1e-6,
+        "microliters": 1e-6,
+        "gal": 3.785411784,
+        "gallon": 3.785411784,
+        "gallons": 3.785411784,
+        "qt": 0.946352946,
+        "quart": 0.946352946,
+        "quarts": 0.946352946,
+        "pt": 0.473176473,
+        "pint": 0.473176473,
+        "pints": 0.473176473,
+        "cup": 0.2365882365,
+        "cups": 0.2365882365,
+        "floz": 0.0295735296,
+        "fl oz": 0.0295735296,
+        "fluidounce": 0.0295735296,
+        "fluidounces": 0.0295735296,
+        "tbsp": 0.0147867678,
+        "tablespoon": 0.0147867678,
+        "tablespoons": 0.0147867678,
+        "tsp": 0.00492892159,
+        "teaspoon": 0.00492892159,
+        "teaspoons": 0.00492892159,
+    },
+    # Pressure (base: Pascal)
+    "Pa": {
+        "Pa": 1.0,
+        "pascal": 1.0,
+        "pascals": 1.0,
+        "kPa": 1000.0,
+        "kilopascal": 1000.0,
+        "kilopascals": 1000.0,
+        "MPa": 1000000.0,
+        "megapascal": 1000000.0,
+        "megapascals": 1000000.0,
+        "GPa": 1e9,
+        "gigapascal": 1e9,
+        "gigapascals": 1e9,
+        "bar": 100000.0,
+        "bars": 100000.0,
+        "mbar": 100.0,
+        "millibar": 100.0,
+        "atm": 101325.0,
+        "atmosphere": 101325.0,
+        "atmospheres": 101325.0,
+        "psi": 6894.757293168,
+    },
+    # Energy (base: Joules)
+    "J": {
+        "J": 1.0,
+        "joule": 1.0,
+        "joules": 1.0,
+        "kJ": 1000.0,
+        "kilojoule": 1000.0,
+        "kilojoules": 1000.0,
+        "MJ": 1e6,
+        "megajoule": 1e6,
+        "megajoules": 1e6,
+        "GJ": 1e9,
+        "gigajoule": 1e9,
+        "gigajoules": 1e9,
+        "cal": 4.184,
+        "calorie": 4.184,
+        "calories": 4.184,
+        "kcal": 4184.0,
+        "kilocalorie": 4184.0,
+        "kilocalories": 4184.0,
+        "Wh": 3600.0,
+        "watt-hour": 3600.0,
+        "watt-hours": 3600.0,
+        "kWh": 3600000.0,
+        "kilowatt-hour": 3600000.0,
+        "kilowatt-hours": 3600000.0,
+        "BTU": 1055.06,
+        "btu": 1055.06,
+        "eV": 1.602176634e-19,
+    },
+    # Power (base: Watts)
+    "W": {
+        "W": 1.0,
+        "watt": 1.0,
+        "watts": 1.0,
+        "kW": 1000.0,
+        "kilowatt": 1000.0,
+        "kilowatts": 1000.0,
+        "MW": 1e6,
+        "megawatt": 1e6,
+        "megawatts": 1e6,
+        "GW": 1e9,
+        "gigawatt": 1e9,
+        "gigawatts": 1e9,
+        "mW": 0.001,
+        "milliwatt": 0.001,
+        "milliwatts": 0.001,
+        "hp": 745.699872,
+        "horsepower": 745.699872,
+    },
+    "N": {
+        "N": 1.0,
+        "newton": 1.0,
+        "newtons": 1.0,
+        "kN": 1000.0,
+        "kilonewton": 1000.0,
+        "mN": 0.001,
+        "millinewton": 0.001,
+        "dyne": 1e-5,
+        "dynes": 1e-5,
+        "lbf": 4.4482216152605,
+        "poundforce": 4.4482216152605,
+    },
+    "V": {
+        "V": 1.0,
+        "volt": 1.0,
+        "volts": 1.0,
+        "kV": 1000.0,
+        "kilovolt": 1000.0,
+        "mV": 0.001,
+        "millivolt": 0.001,
+        "uV": 1e-6,
+        "μV": 1e-6,
+        "microvolt": 1e-6,
+    },
+    "A": {
+        "A": 1.0,
+        "amp": 1.0,
+        "ampere": 1.0,
+        "amperes": 1.0,
+        "mA": 0.001,
+        "milliamp": 0.001,
+        "milliampere": 0.001,
+        "uA": 1e-6,
+        "μA": 1e-6,
+        "microamp": 1e-6,
+        "microampere": 1e-6,
+    },
+    "rad": {
+        "rad": 1.0,
+        "radian": 1.0,
+        "radians": 1.0,
+        "deg": 0.017453292519943295,
+        "degree": 0.017453292519943295,
+        "degrees": 0.017453292519943295,
+    },
+    # Speed (base: meters per second)
+    "m/s": {
+        "m/s": 1.0,
+        "mps": 1.0,
+        "meterpersecond": 1.0,
+        "meterspersecond": 1.0,
+        "km/h": 0.277777778,
+        "kph": 0.277777778,
+        "kilometerperhour": 0.277777778,
+        "kilometersperhour": 0.277777778,
+        "mph": 0.44704,
+        "mileperhour": 0.44704,
+        "milesperhour": 0.44704,
+        "kn": 0.514444,
+        "knot": 0.514444,
+        "knots": 0.514444,
+        "kt": 0.514444,
+        "mach": 340.29,
+    },
+    # Area (base: square meters)
+    "m2": {
+        "m2": 1.0,
+        "m^2": 1.0,
+        "sqm": 1.0,
+        "squaremeter": 1.0,
+        "squaremeters": 1.0,
+        "km2": 1000000.0,
+        "km^2": 1000000.0,
+        "squarekilometer": 1000000.0,
+        "squarekilometers": 1000000.0,
+        "cm2": 0.0001,
+        "cm^2": 0.0001,
+        "squarecentimeter": 0.0001,
+        "squarecentimeters": 0.0001,
+        "mm2": 1e-6,
+        "mm^2": 1e-6,
+        "squaremillimeter": 1e-6,
+        "squaremillimeters": 1e-6,
+        "ha": 10000.0,
+        "hectare": 10000.0,
+        "hectares": 10000.0,
+        "acre": 4046.8564224,
+        "acres": 4046.8564224,
+        "ft2": 0.09290304,
+        "ft^2": 0.09290304,
+        "sqft": 0.09290304,
+        "squarefoot": 0.09290304,
+        "squarefeet": 0.09290304,
+        "in2": 0.00064516,
+        "in^2": 0.00064516,
+        "sqin": 0.00064516,
+        "squareinch": 0.00064516,
+        "squareinches": 0.00064516,
+        "mi2": 2589988.110336,
+        "mi^2": 2589988.110336,
+        "sqmi": 2589988.110336,
+        "squaremile": 2589988.110336,
+        "squaremiles": 2589988.110336,
+        "yd2": 0.83612736,
+        "yd^2": 0.83612736,
+        "sqyd": 0.83612736,
+        "squareyard": 0.83612736,
+        "squareyards": 0.83612736,
+    },
+    # Frequency (base: Hertz)
+    "Hz": {
+        "Hz": 1.0,
+        "hertz": 1.0,
+        "kHz": 1000.0,
+        "kilohertz": 1000.0,
+        "MHz": 1000000.0,
+        "megahertz": 1000000.0,
+        "GHz": 1000000000.0,
+        "gigahertz": 1000000000.0,
+        "THz": 1000000000000.0,
+        "terahertz": 1000000000000.0,
+    },
+}
+
+
+def _build_unit_conversions() -> dict[tuple[str, str], float]:
+    """Build a complete unit conversion lookup table."""
+    conversions: dict[tuple[str, str], float] = {}
+
+    for base_unit, units in UNIT_BASE.items():
+        unit_factors = {unit: factor for unit, factor in units.items()}
+
+        for from_unit, from_factor in unit_factors.items():
+            for to_unit, to_factor in unit_factors.items():
+                if from_unit != to_unit:
+                    key = (from_unit, to_unit)
+                    conversions[key] = from_factor / to_factor
+
+    return conversions
+
+
+# Pre-computed conversion factors: (from_unit, to_unit) -> factor
+UNIT_CONVERSIONS: dict[tuple[str, str], float] = {}
+
+
+def _rebuild_conversions() -> None:
+    """Rebuild UNIT_CONVERSIONS after adding custom units."""
+    global UNIT_CONVERSIONS
+    UNIT_CONVERSIONS = _build_unit_conversions()
+
+
+_rebuild_conversions()
+
+
+# Map all unit aliases to canonical forms.
+# Self-mappings (e.g., "m": "m") ensure normalize_unit() recognizes canonical
+# forms via .get(unit, unit) — without them, canonical forms would pass through
+# unmapped and fall back to the raw input.
+UNIT_ALIASES: dict[str, str] = {
+    # Length
+    "m": "m",
+    "meter": "m",
+    "meters": "m",
+    "km": "km",
+    "kilometer": "km",
+    "kilometers": "km",
+    "cm": "cm",
+    "centimeter": "cm",
+    "centimeters": "cm",
+    "mm": "mm",
+    "millimeter": "mm",
+    "millimeters": "mm",
+    "um": "um",
+    "μm": "um",
+    "micrometer": "um",
+    "micrometers": "um",
+    "nm": "nm",
+    "nanometer": "nm",
+    "nanometers": "nm",
+    "pm": "pm",
+    "picometer": "pm",
+    "picometers": "pm",
+    "in": "in",
+    "inch": "in",
+    "inches": "in",
+    "ft": "ft",
+    "foot": "ft",
+    "feet": "ft",
+    "yd": "yd",
+    "yard": "yd",
+    "yards": "yd",
+    "mi": "mi",
+    "mile": "mi",
+    "miles": "mi",
+    "ly": "ly",
+    "lightyear": "ly",
+    "lightyears": "ly",
+    "au": "au",
+    "astronomicalunit": "au",
+    "astronomicalunits": "au",
+    "pc": "pc",
+    "parsec": "pc",
+    "parsecs": "pc",
+    "angstrom": "angstrom",
+    "angstroms": "angstrom",
+    "fermi": "fermi",
+    "nmi": "nmi",
+    "nauticalmile": "nmi",
+    "nauticalmiles": "nmi",
+    "furlong": "furlong",
+    "furlongs": "furlong",
+    "chain": "chain",
+    "chains": "chain",
+    "rd": "rd",
+    "rod": "rd",
+    "rods": "rd",
+    "fathom": "fathom",
+    "fathoms": "fathom",
+    "smoot": "smoot",
+    "smoots": "smoot",
+    # Time
+    "s": "s",
+    "second": "s",
+    "seconds": "s",
+    "ms": "ms",
+    "millisecond": "ms",
+    "milliseconds": "ms",
+    "us": "us",
+    "μs": "us",
+    "microsecond": "us",
+    "microseconds": "us",
+    "ns": "ns",
+    "nanosecond": "ns",
+    "nanoseconds": "ns",
+    "ps": "ps",
+    "picosecond": "ps",
+    "picoseconds": "ps",
+    "min": "min",
+    "minute": "min",
+    "minutes": "min",
+    "h": "h",
+    "hr": "h",
+    "hour": "h",
+    "hours": "h",
+    "d": "d",
+    "day": "d",
+    "days": "d",
+    "wk": "wk",
+    "week": "wk",
+    "weeks": "wk",
+    "yr": "yr",
+    "year": "yr",
+    "years": "yr",
+    "fortnight": "fortnight",
+    "fortnights": "fortnight",
+    "decade": "decade",
+    "decades": "decade",
+    "century": "century",
+    "centuries": "century",
+    "millennium": "millennium",
+    "millennia": "millennium",
+    # Data storage
+    "B": "B",
+    "byte": "B",
+    "bytes": "B",
+    "bit": "bit",
+    "bits": "bit",
+    "KB": "KB",
+    "kilobyte": "KB",
+    "kilobytes": "KB",
+    "MB": "MB",
+    "megabyte": "MB",
+    "megabytes": "MB",
+    "GB": "GB",
+    "gigabyte": "GB",
+    "gigabytes": "GB",
+    "TB": "TB",
+    "terabyte": "TB",
+    "terabytes": "TB",
+    "PB": "PB",
+    "petabyte": "PB",
+    "petabytes": "PB",
+    "EB": "EB",
+    "exabyte": "EB",
+    "exabytes": "EB",
+    "ZB": "ZB",
+    "zettabyte": "ZB",
+    "zettabytes": "ZB",
+    "YB": "YB",
+    "yottabyte": "YB",
+    "yottabytes": "YB",
+    # Data transfer
+    "bps": "bps",
+    "bit/s": "bps",
+    "bits/s": "bps",
+    "Kbps": "Kbps",
+    "kilobps": "Kbps",
+    "kilobit/s": "Kbps",
+    "kilobits/s": "Kbps",
+    "Mbps": "Mbps",
+    "megabps": "Mbps",
+    "megabit/s": "Mbps",
+    "megabits/s": "Mbps",
+    "Gbps": "Gbps",
+    "gigabps": "Gbps",
+    "gigabit/s": "Gbps",
+    "gigabits/s": "Gbps",
+    # Mass
+    "kg": "kg",
+    "kilogram": "kg",
+    "kilograms": "kg",
+    "g": "g",
+    "gram": "g",
+    "grams": "g",
+    "mg": "mg",
+    "milligram": "mg",
+    "milligrams": "mg",
+    "ug": "ug",
+    "μg": "ug",
+    "microgram": "ug",
+    "micrograms": "ug",
+    "ng": "ng",
+    "nanogram": "ng",
+    "nanograms": "ng",
+    "lb": "lb",
+    "lbs": "lb",
+    "pound": "lb",
+    "pounds": "lb",
+    "oz": "oz",
+    "ounce": "oz",
+    "ounces": "oz",
+    "ton": "ton",
+    "tons": "ton",
+    "tonne": "tonne",
+    "tonnes": "tonne",
+    "stone": "stone",
+    "stones": "stone",
+    "slug": "slug",
+    "slugs": "slug",
+    "ct": "ct",
+    "carat": "ct",
+    "carats": "ct",
+    "gr": "gr",
+    "grain": "gr",
+    "grains": "gr",
+    "dr": "dr",
+    "dram": "dr",
+    "drams": "dr",
+    # Volume
+    "L": "L",
+    "l": "L",
+    "liter": "L",
+    "liters": "L",
+    "mL": "mL",
+    "milliliter": "mL",
+    "milliliters": "mL",
+    "uL": "uL",
+    "μL": "uL",
+    "microliter": "uL",
+    "microliters": "uL",
+    "gal": "gal",
+    "gallon": "gal",
+    "gallons": "gal",
+    "qt": "qt",
+    "quart": "qt",
+    "quarts": "qt",
+    "pt": "pt",
+    "pint": "pt",
+    "pints": "pt",
+    "cup": "cup",
+    "cups": "cup",
+    "floz": "floz",
+    "fl oz": "floz",
+    "fluidounce": "floz",
+    "fluidounces": "floz",
+    "tbsp": "tbsp",
+    "tablespoon": "tbsp",
+    "tablespoons": "tbsp",
+    "tsp": "tsp",
+    "teaspoon": "tsp",
+    "teaspoons": "tsp",
+    # Pressure
+    "Pa": "Pa",
+    "pascal": "Pa",
+    "pascals": "Pa",
+    "kPa": "kPa",
+    "kilopascal": "kPa",
+    "kilopascals": "kPa",
+    "MPa": "MPa",
+    "megapascal": "MPa",
+    "megapascals": "MPa",
+    "GPa": "GPa",
+    "gigapascal": "GPa",
+    "gigapascals": "GPa",
+    "bar": "bar",
+    "bars": "bar",
+    "mbar": "mbar",
+    "millibar": "mbar",
+    "atm": "atm",
+    "atmosphere": "atm",
+    "atmospheres": "atm",
+    "psi": "psi",
+    "psia": "psi",
+    # Energy
+    "J": "J",
+    "joule": "J",
+    "joules": "J",
+    "kJ": "kJ",
+    "kilojoule": "kJ",
+    "kilojoules": "kJ",
+    "MJ": "MJ",
+    "megajoule": "MJ",
+    "megajoules": "MJ",
+    "GJ": "GJ",
+    "gigajoule": "GJ",
+    "gigajoules": "GJ",
+    "cal": "cal",
+    "calorie": "cal",
+    "calories": "cal",
+    "kcal": "kcal",
+    "kilocalorie": "kcal",
+    "kilocalories": "kcal",
+    "Wh": "Wh",
+    "watt-hour": "Wh",
+    "watt-hours": "Wh",
+    "kWh": "kWh",
+    "kilowatt-hour": "kWh",
+    "kilowatt-hours": "kWh",
+    "BTU": "BTU",
+    "btu": "BTU",
+    "eV": "eV",
+    "ev": "eV",
+    "electronvolt": "eV",
+    "electronvolts": "eV",
+    # Power
+    "W": "W",
+    "watt": "W",
+    "watts": "W",
+    "kW": "kW",
+    "kilowatt": "kW",
+    "kilowatts": "kW",
+    "MW": "MW",
+    "megawatt": "MW",
+    "megawatts": "MW",
+    "GW": "GW",
+    "gigawatt": "GW",
+    "gigawatts": "GW",
+    "mW": "mW",
+    "milliwatt": "mW",
+    "milliwatts": "mW",
+    "hp": "hp",
+    "horsepower": "hp",
+    # Force
+    "N": "N",
+    "newton": "N",
+    "newtons": "N",
+    "kN": "kN",
+    "kilonewton": "kN",
+    "dyne": "dyne",
+    "dynes": "dyne",
+    "lbf": "lbf",
+    "poundforce": "lbf",
+    # Voltage
+    "V": "V",
+    "volt": "V",
+    "volts": "V",
+    "kV": "kV",
+    "kilovolt": "kV",
+    "mV": "mV",
+    "millivolt": "mV",
+    "uV": "μV",
+    "μV": "μV",
+    "microvolt": "μV",
+    # Current
+    "A": "A",
+    "amp": "A",
+    "ampere": "A",
+    "amperes": "A",
+    "mA": "mA",
+    "milliamp": "mA",
+    "milliampere": "mA",
+    "uA": "μA",
+    "μA": "μA",
+    "microamp": "μA",
+    "microampere": "μA",
+    # Angles
+    "rad": "rad",
+    "radian": "rad",
+    "radians": "rad",
+    "deg": "deg",
+    "degree": "deg",
+    "degrees": "deg",
+    # Temperature
+    "K": "K",
+    "kelvin": "K",
+    "kelvins": "K",
+    "C": "C",
+    "celsius": "C",
+    "centigrade": "C",
+    "F": "F",
+    "fahrenheit": "F",
+    "R": "R",
+    "Ra": "R",
+    "rankine": "R",
+    # Speed
+    "m/s": "m/s",
+    "mps": "m/s",
+    "meterpersecond": "m/s",
+    "meterspersecond": "m/s",
+    "km/h": "km/h",
+    "kph": "km/h",
+    "kilometerperhour": "km/h",
+    "kilometersperhour": "km/h",
+    "mph": "mph",
+    "mileperhour": "mph",
+    "milesperhour": "mph",
+    "kn": "kn",
+    "knot": "kn",
+    "knots": "kn",
+    "kt": "kn",
+    "mach": "mach",
+    # Area
+    "m2": "m2",
+    "m^2": "m2",
+    "sqm": "m2",
+    "squaremeter": "m2",
+    "squaremeters": "m2",
+    "km2": "km2",
+    "km^2": "km2",
+    "squarekilometer": "km2",
+    "squarekilometers": "km2",
+    "cm2": "cm2",
+    "cm^2": "cm2",
+    "squarecentimeter": "cm2",
+    "squarecentimeters": "cm2",
+    "mm2": "mm2",
+    "mm^2": "mm2",
+    "squaremillimeter": "mm2",
+    "squaremillimeters": "mm2",
+    "ha": "ha",
+    "hectare": "ha",
+    "hectares": "ha",
+    "acre": "acre",
+    "acres": "acre",
+    "ft2": "ft2",
+    "ft^2": "ft2",
+    "sqft": "ft2",
+    "squarefoot": "ft2",
+    "squarefeet": "ft2",
+    "in2": "in2",
+    "in^2": "in2",
+    "sqin": "in2",
+    "squareinch": "in2",
+    "squareinches": "in2",
+    "mi2": "mi2",
+    "mi^2": "mi2",
+    "sqmi": "mi2",
+    "squaremile": "mi2",
+    "squaremiles": "mi2",
+    "yd2": "yd2",
+    "yd^2": "yd2",
+    "sqyd": "yd2",
+    "squareyard": "yd2",
+    "squareyards": "yd2",
+    # Frequency
+    "Hz": "Hz",
+    "hertz": "Hz",
+    "kHz": "kHz",
+    "kilohertz": "kHz",
+    "MHz": "MHz",
+    "megahertz": "MHz",
+    "GHz": "GHz",
+    "gigahertz": "GHz",
+    "THz": "THz",
+    "terahertz": "THz",
+}
+
+
+def normalize_unit(unit: str) -> str:
+    """Normalize a unit to its canonical form."""
+    return UNIT_ALIASES.get(unit, unit)
+
+
+TEMPERATURE_CONVERSIONS: dict[tuple[str, str], tuple[float, float]] = {
+    # (from, to) -> (multiplier, offset)
+    # Note: Offsets are derived values; floating-point precision may cause minor rounding differences
+    ("K", "C"): (1.0, -273.15),
+    ("C", "K"): (1.0, 273.15),
+    ("K", "F"): (1.8, -459.67),
+    ("F", "K"): (1.0 / 1.8, 255.372222),
+    ("C", "F"): (1.8, 32.0),
+    ("F", "C"): (1.0 / 1.8, -32.0 / 1.8),
+    ("K", "R"): (1.8, 0.0),
+    ("R", "K"): (1.0 / 1.8, 0.0),
+    ("C", "R"): (1.8, 491.67),
+    ("R", "C"): (1.0 / 1.8, -273.15),
+    ("F", "R"): (1.0, 459.67),
+    ("R", "F"): (1.0, -459.67),
+}
+
+
+def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
+    """Convert temperature values with proper offset handling."""
+    from_unit = normalize_unit(from_unit)
+    to_unit = normalize_unit(to_unit)
+
+    if from_unit == to_unit:
+        return value
+
+    key = (from_unit, to_unit)
+    if key in TEMPERATURE_CONVERSIONS:
+        multiplier, offset = TEMPERATURE_CONVERSIONS[key]
+        return value * multiplier + offset
+
+    reverse_key = (to_unit, from_unit)
+    if reverse_key in TEMPERATURE_CONVERSIONS:
+        multiplier, offset = TEMPERATURE_CONVERSIONS[reverse_key]
+        return (value - offset) / multiplier
+
+    raise ValueError(f"Cannot convert temperature from {from_unit} to {to_unit}")
+
+
+def get_conversion_factor(from_unit: str, to_unit: str) -> float:
+    """Get conversion factor from one unit to another."""
+    from_unit = normalize_unit(from_unit)
+    to_unit = normalize_unit(to_unit)
+
+    if from_unit == to_unit:
+        return 1.0
+
+    key = (from_unit, to_unit)
+    if key in UNIT_CONVERSIONS:
+        return UNIT_CONVERSIONS[key]
+
+    raise ValueError(f"Cannot convert from {from_unit} to {to_unit}")
+
+
+def is_unit(text: str) -> bool:
+    """Check if text represents a unit."""
+    return text in UNIT_ALIASES or text in UNIT_CONVERSIONS
+
+
+UNIT_CATEGORIES: dict[str, str] = {
+    "m": "length",
+    "km": "length",
+    "cm": "length",
+    "mm": "length",
+    "um": "length",
+    "nm": "length",
+    "pm": "length",
+    "in": "length",
+    "ft": "length",
+    "yd": "length",
+    "mi": "length",
+    "ly": "length",
+    "au": "length",
+    "pc": "length",
+    "angstrom": "length",
+    "fermi": "length",
+    "nmi": "length",
+    "furlong": "length",
+    "chain": "length",
+    "rd": "length",
+    "fathom": "length",
+    "smoot": "length",
+    "s": "time",
+    "ms": "time",
+    "us": "time",
+    "ns": "time",
+    "ps": "time",
+    "min": "time",
+    "h": "time",
+    "hr": "time",
+    "d": "time",
+    "wk": "time",
+    "yr": "time",
+    "fortnight": "time",
+    "decade": "time",
+    "century": "time",
+    "millennium": "time",
+    "B": "data",
+    "bit": "data",
+    "KB": "data",
+    "MB": "data",
+    "GB": "data",
+    "TB": "data",
+    "PB": "data",
+    "EB": "data",
+    "ZB": "data",
+    "YB": "data",
+    "bps": "data_rate",
+    "Kbps": "data_rate",
+    "Mbps": "data_rate",
+    "Gbps": "data_rate",
+    "kg": "mass",
+    "g": "mass",
+    "mg": "mass",
+    "ug": "mass",
+    "ng": "mass",
+    "lb": "mass",
+    "oz": "mass",
+    "ton": "mass",
+    "tonne": "mass",
+    "stone": "mass",
+    "slug": "mass",
+    "ct": "mass",
+    "gr": "mass",
+    "dr": "mass",
+    "L": "volume",
+    "mL": "volume",
+    "uL": "volume",
+    "gal": "volume",
+    "qt": "volume",
+    "pt": "volume",
+    "cup": "volume",
+    "floz": "volume",
+    "tbsp": "volume",
+    "tsp": "volume",
+    "Pa": "pressure",
+    "kPa": "pressure",
+    "MPa": "pressure",
+    "GPa": "pressure",
+    "bar": "pressure",
+    "mbar": "pressure",
+    "atm": "pressure",
+    "psi": "pressure",
+    "J": "energy",
+    "kJ": "energy",
+    "MJ": "energy",
+    "GJ": "energy",
+    "cal": "energy",
+    "kcal": "energy",
+    "Wh": "energy",
+    "kWh": "energy",
+    "BTU": "energy",
+    "eV": "energy",
+    "W": "power",
+    "kW": "power",
+    "MW": "power",
+    "GW": "power",
+    "mW": "power",
+    "hp": "power",
+    "N": "force",
+    "kN": "force",
+    "dyne": "force",
+    "lbf": "force",
+    "V": "voltage",
+    "kV": "voltage",
+    "mV": "voltage",
+    "uV": "voltage",
+    "μV": "voltage",
+    "A": "current",
+    "mA": "current",
+    "uA": "current",
+    "μA": "current",
+    "rad": "angle",
+    "deg": "angle",
+    "K": "temperature",
+    "C": "temperature",
+    "F": "temperature",
+    "R": "temperature",
+    "m/s": "speed",
+    "mps": "speed",
+    "km/h": "speed",
+    "mph": "speed",
+    "kn": "speed",
+    "mach": "speed",
+    "m2": "area",
+    "km2": "area",
+    "cm2": "area",
+    "mm2": "area",
+    "ha": "area",
+    "acre": "area",
+    "ft2": "area",
+    "in2": "area",
+    "mi2": "area",
+    "yd2": "area",
+    "Hz": "frequency",
+    "kHz": "frequency",
+    "MHz": "frequency",
+    "GHz": "frequency",
+    "THz": "frequency",
+}
+
+
+def get_unit_category(unit: str) -> str | None:
+    """Get the category for a unit (e.g., 'm' -> 'length', 'gal' -> 'volume')."""
+    normalized = normalize_unit(unit)
+    return UNIT_CATEGORIES.get(normalized)
+
+
+def are_units_compatible(unit1: str | None, unit2: str | None) -> bool:
+    """Check if two units are compatible for addition/subtraction.
+
+    Returns True if:
+    - Both units are None (dimensionless)
+    - One unit is None and the other is not (dimensionless can mix with units)
+    - Both units belong to the same category (e.g., both length)
+
+    Returns False if:
+    - Units are from different categories
+    - One category is known but the other is unknown
+    """
+    if unit1 is None or unit2 is None:
+        return True
+
+    cat1 = get_unit_category(unit1)
+    cat2 = get_unit_category(unit2)
+
+    if cat1 is None or cat2 is None:
+        return False
+
+    return cat1 == cat2
+
+
+def get_all_units() -> list[str]:
+    """Get list of all supported units."""
+    return sorted(UNIT_ALIASES.keys())
+
+# === evaluator.py ===
+__all__ = [
+    "EvaluationError",
+    "Evaluator",
+    "evaluate",
+    "evaluate_raw",
+    "evaluate_cached",
+    "evaluate_async",
+    "evaluate_with_timeout",
+    "get_default_evaluator",
+    "register_constant",
+    "register_function",
+    "load_user_config",
+    "PyCalcApp",
+    "TimeoutError",
+    "memory_store",
+    "memory_recall",
+    "memory_add",
+    "memory_subtract",
+    "memory_clear",
+    "memory_list",
+    "setvar",
+    "getvar",
+    "delvar",
+    "listvars",
+    "clearvars",
+]
+
+
+_lock = threading.Lock()
+_config_loaded = False
+
+MAX_EXPONENT = 10000
+MAX_FACTORIAL = 1000
+MAX_NESTING_DEPTH = 100
+MAX_RESULT_VALUE = 1e308
+DEFAULT_CACHE_SIZE = 1024
+
+
+def register_constant(name: str, value: float) -> None:
+    """Register a user-defined constant (thread-safe)."""
+    with _lock:
+        _default_evaluator.CONSTANTS[name] = value
+
+
+def register_function(name: str, func: Any) -> None:
+    """Register a user-defined function (thread-safe)."""
+    with _lock:
+        _default_evaluator.FUNCTIONS[name] = func
+
+
+def load_user_config() -> None:
+    """Load user-defined configuration from eggcalc_config.py (thread-safe)."""
+    try:
+        import eggcalc.normalize as normalize_mod
+        import eggcalc_config as config
+
+        for name, value in getattr(config, "CUSTOM_CONSTANTS", {}).items():
+            _default_evaluator.CONSTANTS[name] = value
+
+        for name, func in getattr(config, "CUSTOM_FUNCTIONS", {}).items():
+            _default_evaluator.FUNCTIONS[name] = func
+
+        from . import units
+
+        for base, unit_dict in getattr(config, "CUSTOM_UNITS", {}).items():
+            if base in UNIT_BASE:
+                UNIT_BASE[base].update(unit_dict)
+            else:
+                UNIT_BASE[base] = unit_dict
+
+        for unit, canonical in getattr(config, "CUSTOM_ALIASES", {}).items():
+            UNIT_ALIASES[unit] = canonical
+
+        for key, (mult, offset) in getattr(config, "CUSTOM_TEMP_CONVERSIONS", {}).items():
+            TEMPERATURE_CONVERSIONS[key] = (mult, offset)
+
+        _rebuild_conversions()
+
+    except ImportError:
+        pass
+
+    _config_loaded = True
+
+
+def _ensure_config_loaded() -> None:
+    """Ensure user config is loaded (lazy loading)."""
+    global _config_loaded
+    if not _config_loaded:
+        load_user_config()
+
+
+@lru_cache(maxsize=DEFAULT_CACHE_SIZE)
+def _cached_normalize_and_evaluate(expression: str) -> Any:
+    """Cache for normalized and evaluated expressions."""
+    _ensure_config_loaded()
+
+    normalized, exit_code = normalize_expression(expression, NORMALIZE, PATTERNS)
+    if exit_code != 0:
+        raise EvaluationError(f"Invalid expression: {expression}")
+
+    return _default_evaluator.evaluate(normalized)
+
+
+def evaluate_cached(expression: str) -> Any:
+    """Evaluate an expression with caching (for repeated identical expressions).
+
+    Handles natural language input and caching. Uses LRU cache with 1024 entries.
+    Best for webapps with repeated queries.
+    """
+    try:
+        return _cached_normalize_and_evaluate(expression)
+    except EvaluationError:
+        raise
+    except (ValueError, SyntaxError, RecursionError):
+        _cached_normalize_and_evaluate.cache_clear()
+        raise
+
+
+async def evaluate_async(expression: str) -> Any:
+    """Evaluate an expression asynchronously (for use with async web frameworks).
+
+    Handles natural language input. Runs evaluation in a thread pool to avoid
+    blocking the event loop.
+    """
+    import asyncio
+
+    def _eval() -> float:
+        return evaluate_raw(expression)
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _eval)
+
+
+def load_user_config_extended() -> None:
+    """Load user-defined configuration including normalize (call after normalize is loaded)."""
+    try:
+        import eggcalc.normalize as normalize_mod
+        import eggcalc_config as config
+
+        for word, num in getattr(config, "CUSTOM_NUMBER_WORDS", {}).items():
+            normalize_mod.NUMBER_WORDS[num] = normalize_mod.NUMBER_WORDS.get(num, [])
+            normalize_mod.NUMBER_WORDS[num].append(word)
+
+        for word, op in getattr(config, "CUSTOM_OPERATOR_WORDS", {}).items():
+            if op not in normalize_mod.OPERATOR_CONVERSIONS:
+                normalize_mod.OPERATOR_CONVERSIONS[op] = []
+            normalize_mod.OPERATOR_CONVERSIONS[op].append(word)
+
+        if hasattr(normalize_mod, "_rebuild_config"):
+            normalize_mod._rebuild_config()
+
+    except ImportError:
+        pass
+
+
+def _safe_pow(base: float, exp: float) -> float:
+    """Safe power function with exponent limits to prevent DoS."""
+    if abs(exp) > MAX_EXPONENT:
+        raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
+    if base < 0 and exp != int(exp):
+        raise EvaluationError("Cannot raise negative number to non-integer power")
+    result = pow(base, exp)
+    if abs(result) > MAX_RESULT_VALUE:
+        raise EvaluationError("Result too large")
+    return result
+
+
+def _safe_factorial(n: int) -> int:
+    """Safe factorial with input bounds checking to prevent DoS."""
+    if isinstance(n, float):
+        if not n.is_integer():
+            raise EvaluationError("factorial requires integer input")
+        if abs(n) > MAX_FACTORIAL * 10:
+            raise EvaluationError(f"factorial input too large (max {MAX_FACTORIAL})")
+    n = int(n)
+    if n < 0:
+        raise EvaluationError("factorial requires non-negative input")
+    if n > MAX_FACTORIAL:
+        raise EvaluationError(f"factorial input too large (max {MAX_FACTORIAL})")
+    return math.factorial(n)
+
+
+def _mean(*args: float) -> float:
+    """Calculate arithmetic mean."""
+    if not args:
+        raise EvaluationError("mean requires at least one argument")
+    return sum(args) / len(args)
+
+
+def _std(*args: float) -> float:
+    """Calculate standard deviation."""
+    if len(args) < 2:
+        raise EvaluationError("std requires at least two arguments")
+    m = sum(args) / len(args)
+    variance = sum((x - m) ** 2 for x in args) / len(args)
+    return math.sqrt(variance)
+
+
+def _sum(*args: float) -> float:
+    """Sum all arguments."""
+    return sum(args)
+
+
+def _max(*args: float) -> float:
+    """Return maximum of arguments."""
+    if not args:
+        raise EvaluationError("max requires at least one argument")
+    return max(args)
+
+
+def _min(*args: float) -> float:
+    """Return minimum of arguments."""
+    if not args:
+        raise EvaluationError("min requires at least one argument")
+    return min(args)
+
+
+def _to_bin(x: int) -> str:
+    """Convert integer to binary string."""
+    return bin(x)
+
+
+def _to_hex(x: int) -> str:
+    """Convert integer to hexadecimal string."""
+    return hex(x)
+
+
+def _to_oct(x: int) -> str:
+    """Convert integer to octal string."""
+    return oct(x)
+
+
+def _temp(value: float, from_unit: float | str, to_unit: float | str) -> float:
+    """Convert temperature between units."""
+    if isinstance(from_unit, float):
+        from_unit = {1.0: "K", 0.017453292519943295: "deg"}.get(from_unit, "K")
+    if isinstance(to_unit, float):
+        to_unit = {1.0: "K", 0.017453292519943295: "deg"}.get(to_unit, "K")
+    return convert_temperature(value, str(from_unit), str(to_unit))
+
+
+def _convert(value: Any, to_unit: str) -> Any:
+    """Convert a value with units to a different unit.
+
+    Args:
+        value: A number or UnitValue to convert
+        to_unit: The target unit to convert to (can be str or UnitValue)
+
+    Returns:
+        UnitValue with the converted value and unit
+    """
+    # Handle case where to_unit is passed as a UnitValue (unit name like 'ft')
+    if isinstance(to_unit, UnitValue):
+        to_unit = to_unit.unit if to_unit.unit else str(to_unit.value)
+
+    if isinstance(value, UnitValue):
+        # Check for temperature conversions (special handling needed)
+        cat = get_unit_category(value.unit) if value.unit else None
+        if cat == "temperature" and value.unit:
+            try:
+                converted_val = convert_temperature(value.value, value.unit, to_unit)
+                return UnitValue(converted_val, to_unit)
+            except ValueError:
+                pass  # Fall through to regular conversion
+        return value.convert_to(to_unit)
+    # If it's just a number without units, assume it's a dimensionless value
+    # and try to convert (will fail if not a valid unit)
+    return UnitValue(float(value), None).convert_to(to_unit)
+
+
+# === Complex number functions ===
+
+
+def _real(z: complex) -> float:
+    """Return the real part of a complex number."""
+    if isinstance(z, complex):
+        return z.real
+    return float(z)
+
+
+def _imag(z: complex) -> float:
+    """Return the imaginary part of a complex number."""
+    if isinstance(z, complex):
+        return z.imag
+    return 0.0
+
+
+def _conj(z: complex) -> complex:
+    """Return the complex conjugate."""
+    if isinstance(z, complex):
+        return z.conjugate()
+    return complex(z, 0)
+
+
+def _phase(z: complex) -> float:
+    """Return the phase (argument) of a complex number in radians."""
+    return cmath.phase(z)
+
+
+def _polar(z: complex) -> tuple[float, float]:
+    """Return polar coordinates (r, phi) of a complex number."""
+    return cmath.polar(z)
+
+
+def _rect(r: float, phi: float) -> complex:
+    """Return complex number from polar coordinates."""
+    return cmath.rect(r, phi)
+
+
+# === Statistical functions ===
+
+
+def _median(*args: float) -> float:
+    """Calculate median of arguments."""
+    if not args:
+        raise EvaluationError("median requires at least one argument")
+    sorted_args = sorted(args)
+    n = len(sorted_args)
+    mid = n // 2
+    if n % 2 == 0:
+        return (sorted_args[mid - 1] + sorted_args[mid]) / 2
+    return sorted_args[mid]
+
+
+def _mode(*args: float) -> float:
+    """Calculate mode of arguments."""
+    if not args:
+        raise EvaluationError("mode requires at least one argument")
+    from collections import Counter
+
+    counts = Counter(args)
+    max_count = max(counts.values())
+    modes = [x for x, c in counts.items() if c == max_count]
+    if len(modes) > 1:
+        raise EvaluationError("Multiple modes found")
+    return modes[0]
+
+
+def _variance(*args: float) -> float:
+    """Calculate population variance."""
+    if len(args) < 2:
+        raise EvaluationError("variance requires at least two arguments")
+    m = sum(args) / len(args)
+    return sum((x - m) ** 2 for x in args) / len(args)
+
+
+def _variance_sample(*args: float) -> float:
+    """Calculate sample variance (n-1 denominator)."""
+    if len(args) < 2:
+        raise EvaluationError("variance_sample requires at least two arguments")
+    m = sum(args) / len(args)
+    return sum((x - m) ** 2 for x in args) / (len(args) - 1)
+
+
+# === Bitwise operations ===
+
+
+def _bitand(a: int, b: int) -> int:
+    """Bitwise AND."""
+    return int(a) & int(b)
+
+
+def _bitor(a: int, b: int) -> int:
+    """Bitwise OR."""
+    return int(a) | int(b)
+
+
+def _bitxor(a: int, b: int) -> int:
+    """Bitwise XOR."""
+    return int(a) ^ int(b)
+
+
+def _bitnot(a: int) -> int:
+    """Bitwise NOT (inverts all bits)."""
+    return ~int(a)
+
+
+def _bitlshift(a: int, b: int) -> int:
+    """Left shift."""
+    return int(a) << int(b)
+
+
+def _bitrshift(a: int, b: int) -> int:
+    """Right shift."""
+    return int(a) >> int(b)
+
+
+# === Combinatorics ===
+
+
+def _perm(n: int, r: int | None = None) -> int:
+    """Calculate permutations P(n,r) = n!/(n-r)!."""
+    n = int(n)
+    if r is None:
+        return math.factorial(n)
+    r = int(r)
+    if r > n:
+        return 0
+    return math.perm(n, r)
+
+
+def _comb(n: int, r: int) -> int:
+    """Calculate combinations C(n,r) = n!/(r!(n-r)!)."""
+    n, r = int(n), int(r)
+    if r > n:
+        return 0
+    return math.comb(n, r)
+
+
+# === LCM ===
+
+
+def _lcm(*args: int) -> int:
+    """Calculate least common multiple."""
+    if not args:
+        raise EvaluationError("lcm requires at least one argument")
+    result = int(abs(args[0]))
+    for arg in args[1:]:
+        result = abs(result * int(arg)) // math.gcd(result, int(arg))
+    return result
+
+
+# === Prime functions ===
+
+
+def _is_prime(n: int) -> bool:
+    """Check if a number is prime."""
+    n = int(n)
+    if n < 2:
+        return False
+    if n == 2:
+        return True
+    if n % 2 == 0:
+        return False
+    for i in range(3, int(n**0.5) + 1, 2):
+        if n % i == 0:
+            return False
+    return True
+
+
+def _prime_factors(n: int) -> str:
+    """Return prime factorization as a formatted string.
+
+    Returns a string of the form "2^2 × 3 × 5" where each prime factor
+    is separated by " × ". Factors with exponent 1 appear as the prime
+    itself (e.g. "3"), while factors with higher exponents include the
+    exponent (e.g. "2^2"). For n < 2, returns the number as a string.
+    """
+    n = int(n)
+    if n < 2:
+        return str(n)
+
+    factors: dict[int, int] = {}
+    d = 2
+    temp = n
+    while d * d <= temp:
+        while temp % d == 0:
+            factors[d] = factors.get(d, 0) + 1
+            temp //= d
+        d += 1
+    if temp > 1:
+        factors[temp] = factors.get(temp, 0) + 1
+
+    parts = []
+    for prime in sorted(factors.keys()):
+        exp = factors[prime]
+        if exp == 1:
+            parts.append(str(prime))
+        else:
+            parts.append(f"{prime}^{exp}")
+    return " × ".join(parts)
+
+
+def _next_prime(n: int) -> int:
+    """Return the next prime after n."""
+    n = int(n)
+    candidate = n + 1
+    while not _is_prime(candidate):
+        candidate += 1
+    return candidate
+
+
+def _prev_prime(n: int) -> int:
+    """Return the previous prime before n."""
+    n = int(n)
+    if n <= 2:
+        raise EvaluationError("No prime less than 2")
+    candidate = n - 1
+    while candidate > 1 and not _is_prime(candidate):
+        candidate -= 1
+    if candidate < 2:
+        raise EvaluationError("No prime less than 2")
+    return candidate
+
+
+# === Random functions ===
+
+_random_generator = random.Random()
+
+
+def _random() -> float:
+    """Return random float in [0, 1)."""
+    return _random_generator.random()
+
+
+def _randint(a: int, b: int) -> int:
+    """Return random integer in [a, b]."""
+    return _random_generator.randint(int(a), int(b))
+
+
+def _randrange(a: int, b: int | None = None) -> int:
+    """Return random integer in [a, b) or [0, a) if b is None."""
+    if b is None:
+        return _random_generator.randrange(int(a))
+    return _random_generator.randrange(int(a), int(b))
+
+
+def _uniform(a: float, b: float) -> float:
+    """Return random float in [a, b]."""
+    return _random_generator.uniform(float(a), float(b))
+
+
+def _randn() -> float:
+    """Return random float from standard normal distribution."""
+    return _random_generator.gauss(0, 1)
+
+
+def _gauss(mu: float, sigma: float) -> float:
+    """Return random float from normal distribution with mean mu and std sigma."""
+    return _random_generator.gauss(float(mu), float(sigma))
+
+
+def _seed(s: int | None = None) -> None:
+    """Seed the random number generator."""
+    _random_generator.seed(s)
+    return None
+
+
+# === Percentage functions ===
+
+
+def _percent_of(p: float, x: float) -> float:
+    """Calculate p percent of x."""
+    return (p / 100) * x
+
+
+def _as_percent(x: float, total: float) -> float:
+    """Calculate what percent x is of total."""
+    if total == 0:
+        raise EvaluationError("Cannot divide by zero")
+    if abs(total) < 1e-100:
+        raise EvaluationError("Near-zero divisor could cause overflow")
+    return (x / total) * 100
+
+
+# === Rounding ===
+
+
+def _round(x: float, ndigits: int = 0) -> float:
+    """Round to ndigits decimal places."""
+    return round(float(x), int(ndigits))
+
+
+def _sign(x: float) -> int:
+    """Return sign of x: -1, 0, or 1."""
+    if x > 0:
+        return 1
+    elif x < 0:
+        return -1
+    return 0
+
+
+# === Clamping ===
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    """Clamp x to range [lo, hi]."""
+    return max(lo, min(hi, x))
+
+
+# === Hypot ===
+
+
+def _hypot(*args: float) -> float:
+    """Calculate hypotenuse: sqrt(sum(x**2))."""
+    return math.hypot(*[float(x) for x in args])
+
+
+def _complex_aware(
+    real_func, cmplx_func=None, *, use_complex_for_negative=False, use_complex_for_abs_gt_one=False
+):
+    """Create a function that handles both real and complex inputs.
+
+    Args:
+        real_func: Function for real numbers (from math module)
+        cmplx_func: Function for complex numbers (from cmath module). Defaults to real_func.
+        use_complex_for_negative: If True, use complex function for negative real inputs
+        use_complex_for_abs_gt_one: If True, use complex function when abs(x) > 1
+
+    Returns:
+        A function that handles both real and complex inputs appropriately.
+    """
+    if cmplx_func is None:
+        cmplx_func = getattr(cmath, real_func.__name__, real_func)
+
+    def wrapper(x: float) -> complex | float:
+        if isinstance(x, complex):
+            return cmplx_func(x)
+        if use_complex_for_negative and x < 0:
+            return cmplx_func(x)
+        if use_complex_for_abs_gt_one and abs(x) > 1:
+            return cmplx_func(x)
+        return real_func(x)
+
+    wrapper.__name__ = real_func.__name__
+    wrapper.__doc__ = f"{real_func.__name__} that handles complex numbers."
+    return wrapper
+
+
+_sqrt = _complex_aware(math.sqrt, cmath.sqrt, use_complex_for_negative=True)
+_log = _complex_aware(math.log, cmath.log, use_complex_for_negative=True)
+_log10 = _complex_aware(math.log10, cmath.log10, use_complex_for_negative=True)
+_log2 = _complex_aware(math.log2, lambda x: cmath.log(x, 2), use_complex_for_negative=True)
+_exp = _complex_aware(math.exp, cmath.exp)
+_sin = _complex_aware(math.sin, cmath.sin)
+_cos = _complex_aware(math.cos, cmath.cos)
+_tan = _complex_aware(math.tan, cmath.tan)
+_asin = _complex_aware(math.asin, cmath.asin, use_complex_for_abs_gt_one=True)
+_acos = _complex_aware(math.acos, cmath.acos, use_complex_for_abs_gt_one=True)
+_atan = _complex_aware(math.atan, cmath.atan)
+_sinh = _complex_aware(math.sinh, cmath.sinh)
+_cosh = _complex_aware(math.cosh, cmath.cosh)
+_tanh = _complex_aware(math.tanh, cmath.tanh)
+_asinh = _complex_aware(math.asinh, cmath.asinh)
+_acosh = _complex_aware(math.acosh, cmath.acosh)
+_atanh = _complex_aware(math.atanh, cmath.atanh)
+_cbrt = _complex_aware(lambda x: x ** (1 / 3), lambda x: x ** (1 / 3), use_complex_for_negative=True)
+
+
+class EvaluationError(Exception):
+    """Raised when an expression contains unsafe or unsupported operations."""
+
+    pass
+
+
+class Memory:
+    """Memory registers for storing values (like scientific calculator memory)."""
+
+    def __init__(self) -> None:
+        self._registers: dict[str, float] = {}
+        self._default_register: float = 0.0
+        self._lock = threading.Lock()
+
+    def _get_and_set(self, register: str, new_value: float) -> float:
+        """Set a register value and return it (internal, assumes lock held)."""
+        if register == "M":
+            self._default_register = new_value
+            return new_value
+        self._registers[register] = new_value
+        return new_value
+
+    def _get(self, register: str) -> float:
+        """Get a register value (internal, assumes lock held)."""
+        if register == "M":
+            return self._default_register
+        return self._registers.get(register, 0.0)
+
+    def store(self, value: float, register: str = "M") -> float:
+        """Store value in register (default: M)."""
+        with self._lock:
+            return self._get_and_set(register, float(value))
+
+    def recall(self, register: str = "M") -> float:
+        """Recall value from register (default: M)."""
+        with self._lock:
+            return self._get(register)
+
+    def add(self, value: float, register: str = "M") -> float:
+        """Add value to register (M+)."""
+        with self._lock:
+            return self._get_and_set(register, self._get(register) + float(value))
+
+    def subtract(self, value: float, register: str = "M") -> float:
+        """Subtract value from register (M-)."""
+        with self._lock:
+            return self._get_and_set(register, self._get(register) - float(value))
+
+    def clear(self, register: str | None = None) -> None:
+        """Clear register (or all if register is None)."""
+        with self._lock:
+            if register is None:
+                self._default_register = 0.0
+                self._registers.clear()
+            elif register == "M":
+                self._default_register = 0.0
+            else:
+                self._registers.pop(register, None)
+
+    def list_registers(self) -> dict[str, float]:
+        """List all registers and their values."""
+        with self._lock:
+            result = {"M": self._default_register}
+            result.update(self._registers.copy())
+            return result
+
+
+# Global memory instance
+_memory = Memory()
+
+
+def memory_store(value: float, register: str = "M") -> float:
+    """Store value in memory register."""
+    return _memory.store(value, register)
+
+
+def memory_recall(register: str = "M") -> float:
+    """Recall value from memory register."""
+    return _memory.recall(register)
+
+
+def memory_add(value: float, register: str = "M") -> float:
+    """Add value to memory register (M+)."""
+    return _memory.add(value, register)
+
+
+def memory_subtract(value: float, register: str = "M") -> float:
+    """Subtract value from memory register (M-)."""
+    return _memory.subtract(value, register)
+
+
+def memory_clear(register: str | None = None) -> None:
+    """Clear memory register(s)."""
+    _memory.clear(register)
+
+
+def memory_list() -> dict[str, float]:
+    """List all memory registers."""
+    return _memory.list_registers()
+
+
+# === Variable storage ===
+
+_user_variables: dict[str, Any] = {}
+_variables_lock = threading.Lock()
+
+
+def setvar(name: str, value: Any) -> Any:
+    """Set a user variable.
+
+    Args:
+        name: Variable name
+        value: Variable value
+
+    Returns:
+        The value that was set
+    """
+    with _variables_lock:
+        _user_variables[name] = value
+        return value
+
+
+def getvar(name: str) -> Any:
+    """Get a user variable.
+
+    Args:
+        name: Variable name
+
+    Returns:
+        The variable value or 0 if not found
+    """
+    with _variables_lock:
+        return _user_variables.get(name, 0)
+
+
+def delvar(name: str) -> None:
+    """Delete a user variable."""
+    with _variables_lock:
+        _user_variables.pop(name, None)
+
+
+def listvars() -> dict[str, Any]:
+    """List all user variables."""
+    with _variables_lock:
+        return _user_variables.copy()
+
+
+def clearvars() -> None:
+    """Clear all user variables."""
+    with _variables_lock:
+        _user_variables.clear()
+
+
+class Evaluator(ast.NodeVisitor):
+    """Safe AST-based expression evaluator.
+
+    Evaluates mathematical expressions without using eval().
+    Supports arithmetic operators, trig functions, constants,
+    logarithms, and unit conversions.
+    """
+
+    # Safe mathematical constants
+    CONSTANTS: dict[str, Any] = {
+        "pi": math.pi,
+        "e": math.e,
+        "tau": math.tau,
+        "inf": math.inf,
+        "nan": math.nan,
+        # Imaginary unit
+        "i": 1j,
+        "j": 1j,
+        # Physical constants
+        "na": 6.02214076e23,
+        "avogadro": 6.02214076e23,
+        "avogadros": 6.02214076e23,
+        "r": 8.314462618,
+        "gasconstant": 8.314462618,
+        "idealgasconstant": 8.314462618,
+        "h": 6.62607015e-34,
+        "planck": 6.62607015e-34,
+        "planckconstant": 6.62607015e-34,
+        "k": 1.380649e-23,
+        "boltzmann": 1.380649e-23,
+        "boltzmannconstant": 1.380649e-23,
+        "c": 299792458,
+        "c0": 299792458,
+        "speedoflight": 299792458,
+        "speedoflightvacuum": 299792458,
+        "elementarycharge": 1.602176634e-19,
+        "echarge": 1.602176634e-19,
+        "f": 96485.33212,
+        "faraday": 96485.33212,
+        "faradayconstant": 96485.33212,
+        "u": 1.66053906660e-27,
+        "amu": 1.66053906660e-27,
+        "atomicmassunit": 1.66053906660e-27,
+        "epsilon0": 8.8541878128e-12,
+        "vacuumpermittivity": 8.8541878128e-12,
+        # Electromagnetism
+        "mu0": 1.25663706212e-6,
+        "vacuumpermeability": 1.25663706212e-6,
+        "g": 9.80665,
+        "standardgravity": 9.80665,
+        # Gravitation
+        "G": 6.67430e-11,
+        "gravitationalconstant": 6.67430e-11,
+        # Spectroscopy
+        "rydberg": 10973731.568160,
+        "rydbergconstant": 10973731.568160,
+        # Thermodynamics
+        "stefan": 5.670374419e-8,
+        "stefanboltzmann": 5.670374419e-8,
+        "planckbar": 1.054571817e-34,
+        "hbar": 1.054571817e-34,
+        "reducedplanck": 1.054571817e-34,
+        # Atomic/particle physics
+        "me": 9.1093837015e-31,
+        "electronmass": 9.1093837015e-31,
+        "mp": 1.67262192369e-27,
+        "protonmass": 1.67262192369e-27,
+        "mn": 1.67493e-27,
+        "neutronmass": 1.67493e-27,
+        "re": 2.817952326e-15,
+        "electronradius": 2.817952326e-15,
+        "alpha": 7.2973525693e-3,
+        "finestructure": 7.2973525693e-3,
+        "wien": 2.897771955e-3,
+        "wienconstant": 2.897771955e-3,
+    }
+
+    # Safe mathematical functions
+    FUNCTIONS: dict[str, Any] = {
+        # Trigonometric (complex-aware)
+        "sin": _sin,
+        "cos": _cos,
+        "tan": _tan,
+        "asin": _asin,
+        "acos": _acos,
+        "atan": _atan,
+        "atan2": math.atan2,
+        # Hyperbolic (complex-aware)
+        "sinh": _sinh,
+        "cosh": _cosh,
+        "tanh": _tanh,
+        "asinh": _asinh,
+        "acosh": _acosh,
+        "atanh": _atanh,
+        # Logarithmic (complex-aware)
+        "log": _log,
+        "ln": _log,
+        "log10": _log10,
+        "log2": _log2,
+        "log1p": math.log1p,
+        "exp": _exp,
+        "expm1": math.expm1,
+        # Power and root (complex-aware)
+        "sqrt": _sqrt,
+        "pow": _safe_pow,
+        # Rounding and absolute
+        "abs": abs,
+        "floor": math.floor,
+        "ceil": math.ceil,
+        "trunc": math.trunc,
+        "round": _round,
+        "sign": _sign,
+        # Factorial and combinatorics
+        "factorial": _safe_factorial,
+        "fact": _safe_factorial,
+        "gcd": math.gcd,
+        "lcm": _lcm,
+        "perm": _perm,
+        "comb": _comb,
+        "nPr": _perm,
+        "nCr": _comb,
+        "cbrt": _cbrt,
+        # Angle conversion
+        "degrees": math.degrees,
+        "radians": math.radians,
+        # Statistical functions
+        "mean": _mean,
+        "median": _median,
+        "mode": _mode,
+        "std": _std,
+        "variance": _variance,
+        "var": _variance,
+        "variance_sample": _variance_sample,
+        "vars": _variance_sample,
+        "var_sample": _variance_sample,
+        "sum": _sum,
+        "max": _max,
+        "min": _min,
+        # Complex number functions
+        "real": _real,
+        "imag": _imag,
+        "conj": _conj,
+        "conjugate": _conj,
+        "phase": _phase,
+        "polar": _polar,
+        "rect": _rect,
+        # Base conversion
+        "bin": _to_bin,
+        "hex": _to_hex,
+        "oct": _to_oct,
+        # Bitwise operations
+        "bitand": _bitand,
+        "bitor": _bitor,
+        "bitxor": _bitxor,
+        "bitnot": _bitnot,
+        "bitlshift": _bitlshift,
+        "bitrshift": _bitrshift,
+        # Prime functions
+        "isprime": _is_prime,
+        "is_prime": _is_prime,
+        "primefactors": _prime_factors,
+        "prime_factors": _prime_factors,
+        "nextprime": _next_prime,
+        "next_prime": _next_prime,
+        "prevprime": _prev_prime,
+        "prev_prime": _prev_prime,
+        # Random functions
+        "random": _random,
+        "randint": _randint,
+        "randrange": _randrange,
+        "uniform": _uniform,
+        "randn": _randn,
+        "gauss": _gauss,
+        "seed": _seed,
+        # Percentage
+        "percentof": _percent_of,
+        "percent_of": _percent_of,
+        "aspercent": _as_percent,
+        "as_percent": _as_percent,
+        # Utility
+        "clamp": _clamp,
+        "hypot": _hypot,
+        # Temperature conversion
+        "temp": _temp,
+        # Unit conversion
+        "convert": _convert,
+        # Memory functions
+        "store": memory_store,
+        "recall": memory_recall,
+        "M": lambda: memory_recall("M"),
+        "Mplus": lambda x: memory_add(x, "M"),
+        "Mminus": lambda x: memory_subtract(x, "M"),
+        "MC": lambda: memory_clear("M"),
+        "MR": lambda: memory_recall("M"),
+        # Variable functions
+        "setvar": setvar,
+        "getvar": getvar,
+        "delvar": delvar,
+        "listvars": listvars,
+        "clearvars": clearvars,
+    }
+
+    # Safe binary operators
+    BINOPS: dict[type[ast.operator], Any] = {
+        ast.Add: (lambda a, b: a + b),
+        ast.Sub: (lambda a, b: a - b),
+        ast.Mult: (lambda a, b: a * b),
+        ast.Div: (lambda a, b: a / b),
+        ast.FloorDiv: (lambda a, b: a // b),
+        ast.Mod: (lambda a, b: a % b),
+        ast.Pow: (lambda a, b: a**b),
+        # Bitwise operators
+        ast.LShift: (lambda a, b: int(a) << int(b)),
+        ast.RShift: (lambda a, b: int(a) >> int(b)),
+        ast.BitOr: (lambda a, b: a | b),
+        ast.BitXor: (lambda a, b: a ^ b),
+        ast.BitAnd: (lambda a, b: a & b),
+    }
+
+    # Safe unary operators
+    UNARYOPS: dict[type[ast.unaryop], Any] = {
+        ast.UAdd: (lambda x: x),
+        ast.USub: (lambda x: -x),
+        ast.Invert: (lambda x: ~int(x)),
+    }
+
+    def __init__(self) -> None:
+        """Initialize evaluator with instance-level constants and functions.
+
+        Each evaluator instance has its own copy of constants and functions,
+        allowing for instance isolation in PyCalcApp.
+        """
+        self.CONSTANTS = self.__class__.CONSTANTS.copy()
+        self.FUNCTIONS = self.__class__.FUNCTIONS.copy()
+
+    def _parse_unit(self, text: str) -> tuple[float, str | None]:
+        """Parse a string that may contain a number and unit."""
+        text = text.strip()
+
+        # Check for unit suffix
+        for unit in sorted(UNIT_ALIASES.keys(), key=len, reverse=True):
+            if text.endswith(unit):
+                num_str = text[: -len(unit)].strip()
+                if num_str:
+                    try:
+                        num = float(num_str)
+                        return num, UNIT_ALIASES[unit]
+                    except ValueError:
+                        pass
+
+        # Check if it's just a unit
+        if text in UNIT_ALIASES:
+            return 1.0, UNIT_ALIASES[text]
+
+        # Try to parse as plain number
+        try:
+            return float(text), None
+        except ValueError:
+            raise EvaluationError(f"Cannot parse: '{text}'")
+
+    def _get_conversion_factor(self, from_unit: str, to_unit: str) -> float:
+        """Get conversion factor from one unit to another."""
+        from_unit = normalize_unit(from_unit)
+        to_unit = normalize_unit(to_unit)
+
+        if from_unit == to_unit:
+            return 1.0
+
+        key = (from_unit, to_unit)
+        if key in UNIT_CONVERSIONS:
+            return UNIT_CONVERSIONS[key]
+
+        raise EvaluationError(f"Cannot convert from '{from_unit}' to '{to_unit}'")
+
+    def visit_Constant(self, node: ast.Constant) -> Any:
+        """Visit a constant node."""
+        if isinstance(node.value, (int, float, complex)):
+            return node.value
+        if isinstance(node.value, str):
+            if node.value in self.CONSTANTS:
+                return self.CONSTANTS[node.value]
+            # Check if it looks like a number with unit
+            for unit in sorted(UNIT_ALIASES.keys(), key=len, reverse=True):
+                if node.value.endswith(unit) and len(node.value) > len(unit):
+                    num_part = node.value[: -len(unit)].strip()
+                    if num_part:
+                        try:
+                            num = float(num_part)
+                            return UnitValue(num, UNIT_ALIASES[unit])
+                        except ValueError:
+                            pass
+            # Return plain string as-is (for function arguments like setvar("x", 10))
+            return node.value
+        raise EvaluationError(f"Unsupported constant: '{node.value}'")
+
+    def visit_Name(self, node: ast.Name) -> Any:
+        """Visit a name node."""
+        if node.id in self.CONSTANTS:
+            return self.CONSTANTS[node.id]
+        if node.id in UNIT_ALIASES:
+            return UnitValue(1.0, UNIT_ALIASES[node.id])
+        if node.id in self.FUNCTIONS:
+            raise EvaluationError(f"Function '{node.id}' used without arguments")
+        # Check user variables (thread-safe access)
+        with _variables_lock:
+            if node.id in _user_variables:
+                return _user_variables[node.id]
+        raise EvaluationError(f"Unknown name: '{node.id}'")
+
+    def visit_BinOp(self, node: ast.BinOp) -> Any:
+        """Visit a binary operation node."""
+        left = self.visit(node.left)
+        right = self.visit(node.right)
+        op_class = type(node.op)
+
+        # Extract values and units
+        left_val = left.value if isinstance(left, UnitValue) else left
+        left_unit = normalize_unit(left.unit) if isinstance(left, UnitValue) and left.unit else None
+        right_val = right.value if isinstance(right, UnitValue) else right
+        right_unit = (
+            normalize_unit(right.unit) if isinstance(right, UnitValue) and right.unit else None
+        )
+
+        # Check if operation is addition/subtraction with incompatible units
+        is_add_sub = op_class in (ast.Add, ast.Sub)
+        if is_add_sub and not are_units_compatible(left_unit, right_unit):
+            raise EvaluationError(
+                f"Cannot add/subtract incompatible units: '{left_unit}' and '{right_unit}'"
+            )
+
+        # Handle unit conversion
+        if left_unit and right_unit and left_unit != right_unit:
+            try:
+                factor = self._get_conversion_factor(right_unit, left_unit)
+                right_val = right_val * factor
+                right_unit = left_unit
+            except EvaluationError:
+                try:
+                    factor = self._get_conversion_factor(left_unit, right_unit)
+                    left_val = left_val * factor
+                    left_unit = right_unit
+                except EvaluationError:
+                    pass
+
+        result_unit = left_unit or right_unit
+
+        is_bitwise = op_class in (ast.BitAnd, ast.BitOr, ast.BitXor, ast.LShift, ast.RShift)
+        if is_bitwise and (isinstance(left_val, float) or isinstance(right_val, float)):
+            raise EvaluationError("Bitwise operations require integer operands, not floats")
+
+        if op_class not in self.BINOPS:
+            raise EvaluationError(f"Unsupported binary operator: '{node.op.__class__.__name__}'")
+
+        result = self.BINOPS[op_class](left_val, right_val)
+        if result_unit is None:
+            return result
+        return UnitValue(result, result_unit)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        """Visit a unary operation node."""
+        operand = self.visit(node.operand)
+        op_class = type(node.op)
+
+        if op_class not in self.UNARYOPS:
+            raise EvaluationError(f"Unsupported unary operator: '{node.op.__class__.__name__}'")
+
+        if op_class is ast.Invert and not isinstance(operand, int):
+            raise EvaluationError("Bitwise NOT requires an integer operand")
+
+        result = self.UNARYOPS[op_class](operand)
+
+        if isinstance(operand, UnitValue):
+            return UnitValue(result, operand.unit)
+        return result
+
+    def visit_Call(self, node: ast.Call) -> Any:
+        """Visit a function call node."""
+        func_name = None
+        if isinstance(node.func, ast.Name):
+            func_name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            if isinstance(node.func.value, ast.Name) and node.func.value.id == "math":
+                func_name = node.func.attr
+
+        if func_name is None or func_name not in self.FUNCTIONS:
+            raise EvaluationError(f"Function '{func_name}' is not allowed")
+
+        # Special handling for temp function to preserve unit names
+        if func_name == "temp":
+            args = []
+            for i, arg in enumerate(node.args):
+                result = self.visit(arg)
+                if i > 0 and isinstance(result, UnitValue):
+                    args.append(result.unit or "K")
+                elif isinstance(result, str):
+                    args.append(result)
+                else:
+                    args.append(result)
+            return self.FUNCTIONS[func_name](*args)
+
+        # Special handling for convert function to preserve UnitValue arguments
+        if func_name == "convert":
+            args = []
+            for i, arg in enumerate(node.args):
+                result = self.visit(arg)
+                # Pass the full UnitValue, not just the value
+                args.append(result)
+            return self.FUNCTIONS[func_name](*args)
+
+        # Extract values from arguments, handling UnitValues
+        args = []
+        for arg in node.args:
+            result = self.visit(arg)
+            if isinstance(result, UnitValue):
+                args.append(result.value)
+            else:
+                args.append(result)
+
+        return self.FUNCTIONS[func_name](*args)
+
+    def _validate_node(self, node: ast.AST) -> None:
+        """Validate that a node is safe to evaluate."""
+        node_type = type(node)
+
+        # Allowed node types
+        if node_type in (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Name, ast.Call):
+            return
+
+        # Forbidden node types
+        forbidden = (
+            ast.Subscript,
+            ast.List,
+            ast.Dict,
+            ast.Set,
+            ast.ListComp,
+            ast.DictComp,
+            ast.SetComp,
+            ast.GeneratorExp,
+            ast.Lambda,
+            ast.IfExp,
+            ast.Compare,
+            ast.BoolOp,
+        )
+        if node_type in forbidden:
+            if node_type == ast.Compare:
+                raise EvaluationError("Comparison operators are not supported")
+            if node_type == ast.BoolOp:
+                raise EvaluationError("Boolean operators are not supported")
+            raise EvaluationError(f"Unsupported node type: '{node_type.__name__}'")
+
+        # Attribute access (for math.*)
+        if isinstance(node, ast.Attribute):
+            if not (isinstance(node.value, ast.Name) and node.value.id == "math"):
+                if node.attr not in ("real", "imag", "conjugate"):
+                    raise EvaluationError(f"Attribute access '{node.attr}' is not allowed")
+
+    def evaluate(self, expression: str) -> Any:
+        """Evaluate an expression and return the result."""
+        try:
+            tree = ast.parse(expression, mode="eval")
+        except SyntaxError as e:
+            raise EvaluationError(f"Invalid syntax: '{expression}'") from e
+
+        # Validate all nodes
+        for node in ast.walk(tree):
+            self._validate_node(node)
+
+        result = self.visit(tree.body)
+
+        # Handle result
+        if isinstance(result, UnitValue):
+            return result
+        if isinstance(result, str):
+            return result
+        if result is None:
+            return None  # Functions like seed() and clearvars() return None
+        if not isinstance(result, (int, float, complex)):
+            raise EvaluationError(f"Result must be a number, got '{type(result)}'")
+        return result
+
+
+def evaluate(expression: str) -> Any:
+    """Evaluate a pre-normalized expression (no spaces, no natural language).
+
+    For raw input with spaces or natural language, use evaluate_raw() instead.
+    """
+    _ensure_config_loaded()
+    return _default_evaluator.evaluate(expression)
+
+
+def evaluate_raw(expression: str) -> Any:
+    """Evaluate a raw expression with spaces and/or natural language.
+
+    This function processes the expression through the full normalization
+    pipeline, handling spaces inside parentheses and natural language conversion.
+
+    Args:
+        expression: A raw expression string (e.g., "(2 * 3)" or "five plus three")
+
+    Returns:
+        The result of the evaluation (int, float, str, or UnitValue).
+
+    Raises:
+        EvaluationError: If the expression is invalid or contains unsupported operations.
+    """
+    _ensure_config_loaded()
+
+    normalized, exit_code = normalize_expression(
+        expression, NORMALIZE, PATTERNS, skip_validation=True
+    )
+    if exit_code != 0:
+        raise EvaluationError(f"Invalid expression: {expression}")
+    return _default_evaluator.evaluate(normalized)
+
+
+class TimeoutError(Exception):
+    """Raised when expression evaluation times out."""
+
+    pass
+
+
+def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
+    """Evaluate an expression with a timeout for untrusted input.
+
+    This is the recommended function for evaluating expressions from
+    untrusted sources (web requests, user input, etc.).
+
+    Args:
+        expression: A raw expression string (with spaces, natural language, etc.)
+        timeout: Maximum time in seconds (default: 5.0)
+
+    Returns:
+        The result of the evaluation (int, float, str, or UnitValue).
+
+    Raises:
+        TimeoutError: If evaluation exceeds the timeout.
+        EvaluationError: If the expression is invalid or contains unsupported operations.
+
+    Note:
+        Expressions that exceed MAX_EXPONENT (10000) or MAX_FACTORIAL (1000)
+        will fail with EvaluationError before the timeout is reached.
+
+    Example:
+        >>> result = evaluate_with_timeout("sum([i**2 for i in range(100)])", timeout=1.0)
+        # May raise TimeoutError for slow expressions
+    """
+    import concurrent.futures
+
+    _ensure_config_loaded()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(evaluate_raw, expression)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
+
+
+_default_evaluator = Evaluator()
+
+
+def get_default_evaluator() -> Evaluator:
+    """Get the default evaluator instance.
+
+    Returns:
+        The default Evaluator instance used by module-level functions.
+    """
+    return _default_evaluator
+
+
+class PyCalcApp:
+    """Thread-safe wrapper for clicalc, optimized for webapp usage.
+
+    Provides caching, instance isolation, and async support for
+    long-running applications like web servers.
+
+    Each PyCalcApp instance has its own isolated evaluator with its own
+    constants and functions. Registering constants/functions on one instance
+    does not affect other instances.
+
+    Usage:
+        app = PyCalcApp()
+        result = app.calculate("5 + 3")
+        result = app.calculate("30m + 100ft")  # with units
+    """
+
+    def __init__(
+        self,
+        cache_size: int = DEFAULT_CACHE_SIZE,
+        enable_cache: bool = True,
+    ) -> None:
+        """Initialize PyCalcApp.
+
+        Args:
+            cache_size: LRU cache size (default 1000)
+            enable_cache: Whether to enable caching (default True)
+        """
+        self._evaluator = Evaluator()
+        self._enable_cache = enable_cache
+        self._cache: OrderedDict[str, Any] | None = OrderedDict() if enable_cache else None
+        self._lock = threading.Lock()
+        self._cache_max_size = cache_size
+
+    def calculate(self, expression: str) -> Any:
+        """Evaluate an expression (thread-safe).
+
+        Args:
+            expression: Math expression (e.g., "5 + 3" or "five plus two")
+
+        Returns:
+            Result (int, float, str, or UnitValue)
+
+        Raises:
+            EvaluationError: If expression is invalid
+        """
+        if self._cache is not None:
+            with self._lock:
+                if expression in self._cache:
+                    self._cache.move_to_end(expression)
+                    return self._cache[expression]
+
+        result = self._evaluate_internal(expression)
+
+        if self._cache is not None:
+            with self._lock:
+                if len(self._cache) >= self._cache_max_size:
+                    self._cache.popitem(last=False)
+                self._cache[expression] = result
+
+        return result
+
+    async def calculate_async(self, expression: str) -> Any:
+        """Evaluate an expression asynchronously (thread-safe).
+
+        Args:
+            expression: Math expression
+
+        Returns:
+            Result (int, float, str, or UnitValue)
+        """
+        import asyncio
+
+        def _eval() -> float:
+            return self.calculate(expression)
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _eval)
+
+    def _evaluate_internal(self, expression: str) -> Any:
+        """Internal evaluation that uses the instance's evaluator."""
+
+        normalized, exit_code = normalize_expression(
+            expression, NORMALIZE, PATTERNS, skip_validation=True
+        )
+        if exit_code != 0:
+            raise EvaluationError(f"Invalid expression: {expression}")
+
+        return self._evaluator.evaluate(normalized)
+
+    def register_constant(self, name: str, value: float) -> None:
+        """Register a custom constant on this instance (thread-safe).
+
+        Unlike the global register_constant function, this only affects
+        this PyCalcApp instance.
+        """
+        with self._lock:
+            self._evaluator.CONSTANTS[name] = value
+
+    def register_function(self, name: str, func: Any) -> None:
+        """Register a custom function on this instance (thread-safe).
+
+        Unlike the global register_function function, this only affects
+        this PyCalcApp instance.
+        """
+        with self._lock:
+            self._evaluator.FUNCTIONS[name] = func
+
+    def clear_cache(self) -> None:
+        """Clear the evaluation cache."""
+        if self._cache is not None:
+            with self._lock:
+                self._cache.clear()
+
+    @property
+    def cache_size(self) -> int:
+        """Return current cache size."""
+        if self._cache is None:
+            return 0
+        with self._lock:
+            return len(self._cache)
+
+# === normalize.py ===
+__all__ = [
+    "evaluate",
+    "EvaluationError",
+    "UnitValue",
+    "run",
+    "normalize",
+    "normalize_expression",
+    "main",
+    "print_help",
+    "NORMALIZE",
+    "PATTERNS",
+    "MAX_INPUT_LENGTH",
+    "MAX_NESTING_DEPTH",
+]
+
+MAX_INPUT_LENGTH = 10000
+MAX_NESTING_DEPTH = 100
+
+# Pre-computed sorted units list for performance (avoid re-sorting each call)
+_UNITS_BY_LENGTH: list[str] = sorted(UNIT_ALIASES.keys(), key=len, reverse=True)
+
+# Common unit prefixes for faster lookup (most frequently used units first)
+_COMMON_UNITS: list[str] = [
+    "m",
+    "km",
+    "cm",
+    "mm",
+    "s",
+    "ms",
+    "us",
+    "ns",
+    "min",
+    "h",
+    "d",
+    "g",
+    "kg",
+    "mg",
+    "lb",
+    "oz",
+    "L",
+    "mL",
+    "gal",
+    "J",
+    "kJ",
+    "W",
+    "kW",
+    "Pa",
+    "atm",
+    "N",
+    "V",
+    "A",
+    "Hz",
+    "B",
+    "KB",
+    "MB",
+    "GB",
+    "in",
+    "ft",
+    "yd",
+    "mi",
+    "yr",
+    "K",
+    "C",
+    "F",
+]
+
+# Build a prefix set for O(1) lookup of common unit starts
+_UNIT_PREFIXES: set[str] = set()
+for unit in _COMMON_UNITS:
+    for i in range(1, len(unit) + 1):
+        _UNIT_PREFIXES.add(unit[:i])
+
+
+# Operator conversions: operator -> list of word representations
+OPERATOR_CONVERSIONS: dict[str, list[str]] = {
+    "+": ["plus", "positive"],
+    "-": ["minus", "negative"],
+    "*": ["times", "multiplied by", "of"],  # "of" for "30% of 200"
+    "/": ["divided by", "over", "per", "divide"],
+    "**": ["^", "raised to", "raised to the power", "to the power of"],
+    ".": ["point"],
+    ",": [],
+    "&": ["AND", "and", "bitand", "bit and"],
+    "|": ["OR", "or", "bitor", "bit or"],
+    "^": ["XOR", "xor", "bitxor", "bit xor"],
+    "<<": ["left shift", "shift left", "lshift"],
+    ">>": ["right shift", "shift right", "rshift"],
+    "~": ["NOT", "not", "bitnot", "bit not"],
+    "%": ["mod", "modulo", "percent", "remainder"],
+    # Unit conversion words - these get split out as tokens
+    "IN": ["in", "into"],
+    "TO": ["to", "as"],
+}
+
+# Function name mappings (for function name normalization)
+# Maps common names/aliases to canonical function names
+FUNCTION_MAPPINGS: dict[str, str] = {
+    "square root": "sqrt",
+    "sqrt": "sqrt",
+    "sine": "sin",
+    "sin": "sin",
+    "cosine": "cos",
+    "cos": "cos",
+    "tangent": "tan",
+    "tan": "tan",
+    "arcsine": "asin",
+    "asin": "asin",
+    "inverse sine": "asin",
+    "arccos": "acos",
+    "acos": "acos",
+    "inverse cosine": "acos",
+    "arctan": "atan",
+    "atan": "atan",
+    "inverse tangent": "atan",
+    "absolute": "abs",
+    "abs": "abs",
+    "magnitude": "abs",
+    "ln": "log",
+    "log": "log",
+    "log10": "log10",
+    "log2": "log2",
+    "exp": "exp",
+    "temp": "temp",
+    "bin": "bin",
+    "hex": "hex",
+    "oct": "oct",
+    "mean": "mean",
+    "average": "mean",
+    "median": "median",
+    "mode": "mode",
+    "std": "std",
+    "stdev": "std",
+    "variance": "variance",
+    "var": "var",
+    "sum": "sum",
+    "max": "max",
+    "min": "min",
+    "gcd": "gcd",
+    "lcm": "lcm",
+    "perm": "perm",
+    "comb": "comb",
+    "nPr": "nPr",
+    "nCr": "nCr",
+    "factorial": "factorial",
+    "fact": "factorial",
+    "real": "real",
+    "imag": "imag",
+    "conj": "conj",
+    "conjugate": "conj",
+    "phase": "phase",
+    "polar": "polar",
+    "rect": "rect",
+    "bitand": "bitand",
+    "bitor": "bitor",
+    "bitxor": "bitxor",
+    "bitnot": "bitnot",
+    "isprime": "isprime",
+    "primefactors": "primefactors",
+    "prime_factors": "primefactors",
+    "nextprime": "nextprime",
+    "prevprime": "prevprime",
+    "random": "random",
+    "randint": "randint",
+    "randn": "randn",
+    "gauss": "gauss",
+    "seed": "seed",
+    "percentof": "percentof",
+    "percent_of": "percentof",
+    "aspercent": "aspercent",
+    "as_percent": "aspercent",
+    "clamp": "clamp",
+    "hypot": "hypot",
+    "round": "round",
+    "sign": "sign",
+    "cbrt": "cbrt",
+    "cube root": "cbrt",
+    "ceil": "ceil",
+    "ceiling": "ceil",
+    "floor": "floor",
+    "store": "store",
+    "recall": "recall",
+    "Mplus": "Mplus",
+    "Mminus": "Mminus",
+    "MC": "MC",
+    "MR": "MR",
+    "setvar": "setvar",
+    "getvar": "getvar",
+    "delvar": "delvar",
+    "listvars": "listvars",
+    "clearvars": "clearvars",
+}
+
+# Number words
+NUMBER_WORDS: dict[str, list[str]] = {
+    "0": ["zero"],
+    "1": ["one"],
+    "2": ["two"],
+    "3": ["three"],
+    "4": ["four"],
+    "5": ["five"],
+    "6": ["six"],
+    "7": ["seven"],
+    "8": ["eight"],
+    "9": ["nine"],
+    "10": ["teen", "ten"],
+    "11": ["eleven"],
+    "12": ["twelve"],
+    "13": ["thirteen"],
+    "14": ["fourteen"],
+    "15": ["fifteen"],
+    "16": ["sixteen"],
+    "17": ["seventeen"],
+    "18": ["eighteen"],
+    "19": ["nineteen"],
+    "20": ["twenty"],
+    "30": ["thirty"],
+    "40": ["forty"],
+    "50": ["fifty"],
+    "60": ["sixty"],
+    "70": ["seventy"],
+    "80": ["eighty"],
+    "90": ["ninety"],
+    "100": ["hundred"],
+    "1000": ["thousand"],
+    "1000000": ["million"],
+    "1000000000": ["billion"],
+    "1000000000000": ["trillion"],
+    "1000000000000000": ["quadrillion"],
+    "1000000000000000000": ["quintillion"],
+    "0.5": ["half"],
+    "0.25": ["quarter"],
+    "0.001": ["thousandth"],
+    "0.000001": ["millionth"],
+    "0.000000001": ["billionth"],
+}
+
+# Phrases to strip from input
+STRIPPED_PHRASES: list[str] = [
+    "what's",
+    "what is",
+    "a ",
+    r"\bof\b",
+    "?",
+    "calculate",
+    "compute",
+    "convert",
+    "tell me",
+    "give me",
+    "the ",
+]
+
+# Physical constants word mappings
+CONSTANT_WORDS: dict[str, list[str]] = {
+    "na": ["avogadro", "avogadros", "avogadro number"],
+    "r": ["gas constant", "ideal gas constant", "molar gas constant"],
+    "h": ["planck", "planck constant"],
+    "k": ["boltzmann", "boltzmann constant"],
+    "c": ["speed of light", "speed of light in vacuum", "c zero"],
+    "elementarycharge": ["elementary charge", "e charge"],
+    "f": ["faraday", "faraday constant"],
+    "u": ["atomic mass", "atomic mass unit", "amu"],
+    "epsilon0": ["vacuum permittivity", "permittivity of free space"],
+    "mu0": ["vacuum permeability", "permeability of free space", "magnetic constant"],
+    "g": ["gravity", "standard gravity", "earth gravity"],
+    "G": ["gravitational constant", "newton constant", "big g"],
+    "me": ["electron mass"],
+    "mp": ["proton mass"],
+    "mn": ["neutron mass"],
+    "re": ["electron radius", "classical electron radius"],
+    "alpha": ["fine structure constant", "sommerfeld"],
+    "rydberg": ["rydberg constant"],
+    "stefan": ["stefan boltzmann", "stefan-boltzmann constant"],
+    "wien": ["wien constant", "wien displacement"],
+}
+
+
+def _build_config() -> tuple[dict, dict]:
+    """Build normalization configuration."""
+    # Sort numbers by key descending for matching
+    sorted_numbers = {k: NUMBER_WORDS[k] for k in sorted(NUMBER_WORDS.keys(), reverse=True)}
+
+    # Build symbols list
+    symbols = ["(", ")"] + list(OPERATOR_CONVERSIONS.keys())
+
+    # Build word to operator mapping
+    word_to_operator: dict[str, str] = {}
+    for operator, words in OPERATOR_CONVERSIONS.items():
+        for word in words:
+            word_to_operator[word] = operator
+
+    # Build word to number mapping (sorted by length for correct replacement)
+    word_to_number: dict[str, str] = {}
+    for num_val, words in NUMBER_WORDS.items():
+        for word in words:
+            word_to_number[word] = num_val
+    sorted_word_to_number = dict(
+        sorted(word_to_number.items(), key=lambda x: len(x[0]), reverse=True)
+    )
+
+    # Build word to constant mapping
+    word_to_constant: dict[str, str] = {}
+    for const_key, words in CONSTANT_WORDS.items():
+        for word in words:
+            word_to_constant[word] = const_key
+    sorted_word_to_constant = dict(
+        sorted(word_to_constant.items(), key=lambda x: len(x[0]), reverse=True)
+    )
+
+    # Build combined word replacement regex for performance (constants + operators)
+    all_words = {}
+    all_words.update(sorted_word_to_constant)
+    all_words.update(sorted_word_to_number)
+    all_words.update(word_to_operator)
+
+    # Sort by length descending for correct matching
+    sorted_all_words = dict(sorted(all_words.items(), key=lambda x: len(x[0]), reverse=True))
+
+    # Build normalize config
+    normalize_config = {
+        "symbols": symbols,
+        "convert": OPERATOR_CONVERSIONS,
+        "word_to_operator": word_to_operator,
+        "word_to_number": sorted_word_to_number,
+        "word_to_constant": sorted_word_to_constant,
+        "word_to_all": sorted_all_words,
+        "numbers": sorted_numbers,
+        "functions": FUNCTION_MAPPINGS,
+    }
+
+    # Compile regex patterns
+    compiled_patterns: dict[str, re.Pattern[str]] = {
+        "space": re.compile(r"\s+"),
+        "point": re.compile(r"\."),
+        "negative": re.compile(r"\-"),
+        "thousands_separator": re.compile(r","),
+        "inline_negative": re.compile(r"^[a-zA-Z]+-[a-zA-Z]+$"),
+        "parenthesis": re.compile(r"\(|\)"),
+        "operators": re.compile(f"^({'|'.join([re.escape(s) for s in symbols])}){{1}}$"),
+        # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
+        "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in STRIPPED_PHRASES])})"),
+        "int": re.compile(r"^[-+]?[0-9]\d*$"),
+        "float": re.compile(r"^[-+]?[0-9]\d*\.\d+?$"),
+        "int_number_combine": re.compile(r"^[-+*]?[0-9]\d*$"),
+        "valid_operations": re.compile(
+            f"^({'|'.join([re.escape(s) for s in symbols] + [re.escape(f) for f in FUNCTION_MAPPINGS.values()] + [re.escape(c) for c in CONSTANT_WORDS.keys()])}){{1}}$"
+        ),
+    }
+
+    return normalize_config, compiled_patterns
+
+
+# Module-level config (computed once)
+NORMALIZE, PATTERNS = _build_config()
+
+
+def _rebuild_config() -> None:
+    """Rebuild NORMALIZE and PATTERNS after adding custom words."""
+    global NORMALIZE, PATTERNS
+    NORMALIZE, PATTERNS = _build_config()
+
+
+@lru_cache(maxsize=1024)
+def check_if_number(token: str) -> dict:
+    """Check if a token represents a number.
+
+    Returns a dict with:
+        bool: whether the token is a number
+        converted: the parsed number or original string
+        type: the original input type
+    """
+    patterns = PATTERNS
+    if len(token) == 0:
+        return {"bool": False, "converted": token, "type": type(token)}
+
+    # Remove thousands separator
+    cleaned = patterns["thousands_separator"].sub("", token)
+
+    # Check for percentage (e.g., "50%")
+    if cleaned.endswith("%"):
+        num_part = cleaned[:-1]
+        try:
+            val = float(num_part) / 100
+            return {"bool": True, "converted": val, "type": type(token)}
+        except ValueError:
+            pass
+
+    # Check for complex number suffix (e.g., "3i", "4j")
+    if cleaned.endswith(("i", "j")) and len(cleaned) > 1:
+        num_part = cleaned[:-1]
+        if num_part in ("+", "-"):
+            # Just "+i" or "-i"
+            return {
+                "bool": True,
+                "converted": complex(0, 1 if num_part == "+" else -1),
+                "type": type(token),
+            }
+        try:
+            val = float(num_part)
+            return {"bool": True, "converted": complex(0, val), "type": type(token)}
+        except ValueError:
+            pass
+
+    # Check for hex prefix (0x)
+    if cleaned.lower().startswith("0x"):
+        try:
+            val = int(cleaned, 16)
+            return {"bool": True, "converted": val, "type": int}
+        except ValueError:
+            pass
+
+    # Check for binary prefix (0b)
+    if cleaned.lower().startswith("0b"):
+        try:
+            val = int(cleaned, 2)
+            return {"bool": True, "converted": val, "type": int}
+        except ValueError:
+            pass
+
+    # Check for octal prefix (0o)
+    if cleaned.lower().startswith("0o"):
+        try:
+            val = int(cleaned, 8)
+            return {"bool": True, "converted": val, "type": int}
+        except ValueError:
+            pass
+
+    # Check if it's a plain number
+    if patterns["int"].match(cleaned):
+        return {"bool": True, "converted": int(cleaned), "type": type(token)}
+    if patterns["float"].match(cleaned):
+        return {"bool": True, "converted": float(cleaned), "type": type(token)}
+    if patterns["int_number_combine"].match(cleaned):
+        return {"bool": True, "converted": cleaned, "type": type(token)}
+
+    # Check if it's a number with unit (use pre-computed sorted list)
+    for unit in _UNITS_BY_LENGTH:
+        if cleaned.endswith(unit):
+            num_part = cleaned[: -len(unit)]
+            if num_part:
+                try:
+                    val = float(num_part)
+                    return {"bool": True, "converted": val, "type": type(token)}
+                except ValueError:
+                    pass
+
+    return {"bool": False, "converted": token, "type": type(token)}
+
+
+def validate_for_eval(tokens: list, patterns: Mapping[str, Pattern[str]]) -> bool:
+    """Validate that all tokens are either numbers, valid operations, units, or known constants."""
+
+    known_constants = set(_default_evaluator.CONSTANTS.keys())
+
+    for token in tokens:
+        # Skip tokens that look like function calls (contain parentheses)
+        if "(" in token or ")" in token:
+            continue
+        if not check_if_number(token)["bool"]:
+            if not patterns["valid_operations"].match(token):
+                if not is_unit(token):
+                    if token not in known_constants:
+                        raise ValueError(f"Invalid token: {token}")
+    return True
+
+
+def combine_number_parts(
+    number_parts: list, patterns: Mapping[str, Pattern[str]], split_tokens: list
+) -> list:
+    """Combine number parts into a single mathematical expression.
+
+    Rules:
+    - Consecutive small numbers (tens + ones) combine: [20, 2] -> [22], [30, 5] -> [35]
+    - Hundreds chain with multiplication: [3, 100, 20, 2] -> [3, '*', 100, '+', 20, '+', 2]
+    """
+    if not number_parts:
+        return []
+
+    result = []
+    skip_next = False
+
+    for i, part in enumerate(number_parts):
+        if skip_next:
+            skip_next = False
+            continue
+
+        if i == len(number_parts) - 1:
+            result.append(str(part))
+            continue
+
+        next_part = number_parts[i + 1]
+
+        if i == 0:
+            if part < 10 and next_part == 10:
+                result.append(str(part + next_part))
+                skip_next = True
+            elif part == 10 and next_part < 10:
+                result.append(str(part + next_part))
+                skip_next = True
+            elif _is_tens(part) and next_part < 10:
+                result.append(str(part + next_part))
+                skip_next = True
+            elif part != 10:
+                result.append(str(part))
+            else:
+                result.append(str(part))
+        else:
+            if part == 10 and number_parts[i - 1] < 10:
+                pass
+            elif _is_tens(part) and next_part < 10:
+                result.append(f"+{part + next_part}")
+                skip_next = True
+            elif part < 10:
+                result.append(f"+{part}")
+            elif number_parts[i - 1] < 10 and part < 100:
+                result.append(f"+{part}")
+            elif number_parts[i - 1] < 100:
+                result.append(f"*{part}")
+            else:
+                result.append(f"+{part}")
+
+    if split_tokens and patterns["negative"].match(split_tokens[0]):
+        result.insert(0, "-")
+
+    return result
+
+
+def _is_tens(value: int) -> bool:
+    """Check if value is a tens (20, 30, 40, etc.)"""
+    return 20 <= value < 100 and value % 10 == 0
+
+
+def convert_numbers(number_info: list, patterns: Mapping[str, Pattern[str]]) -> str:
+    """Convert a token that may contain number words to a numeric expression."""
+    if number_info[1]["bool"]:
+        return number_info[0]
+
+    split_tokens = number_info[0].split("@")
+    number_parts = []
+
+    for token in split_tokens:
+        check_result = check_if_number(token)
+        if check_result["bool"]:
+            number_parts.append(check_result["converted"])
+
+    combined = combine_number_parts(number_parts, patterns, split_tokens)
+
+    if validate_for_eval(combined, patterns):
+        joined = "".join(combined)
+        if joined:
+            try:
+                result = evaluate(joined)
+                if isinstance(result, UnitValue):
+                    return str(result.value)
+                return str(result)
+            except EvaluationError:
+                return number_info[0]
+        return number_info[0]
+
+    return ""
+
+
+def apply_math_functions(
+    tokens: list, operators: dict, patterns: Mapping[str, Pattern[str]]
+) -> list:
+    """Convert function names to math function calls.
+
+    Rules:
+    - sin40 + 2 -> math.sin(40) + 2 (no paren means only first number is args)
+    - sin(40+2) -> math.sin(40+2) (user's parens preserved)
+    - sin of 40 -> math.sin(40)
+    """
+    output_tokens = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+
+        if token in operators["functions"]:
+            output_tokens.append(operators["functions"][token])
+            next_token = tokens[i + 1] if i + 1 < len(tokens) else None
+
+            if next_token is not None and next_token == "(":
+                pass
+            else:
+                output_tokens.append("(")
+
+                while i + 1 < len(tokens):
+                    next_token = tokens[i + 1]
+                    is_operator = patterns["operators"].match(next_token) is not None
+
+                    if is_operator and next_token != ".":
+                        break
+                    if next_token == ")":
+                        break
+
+                    output_tokens.append(next_token)
+                    i += 1
+
+                    if next_token == ".":
+                        continue
+
+                output_tokens.append(")")
+        else:
+            output_tokens.append(token)
+
+        i += 1
+
+    return output_tokens
+
+
+def error_message(original: str, exception: BaseException, verbose: bool = False) -> None:
+    """Print an error message based on the exception type."""
+    exc_type = type(exception)
+    if exc_type is ValueError:
+        print(f"Unrecognized command: '{original}'", file=sys.stderr)
+    elif exc_type is ZeroDivisionError:
+        print(f"Can't divide by 0: '{original}'", file=sys.stderr)
+    elif exc_type is EvaluationError:
+        print(f"Evaluation error: {exception}", file=sys.stderr)
+    else:
+        if verbose:
+            traceback.print_exc()
+        else:
+            print(f"Error: {exception}", file=sys.stderr)
+
+
+def convert_from_human_handler(
+    tokens: list,
+    operators: dict,
+    patterns: Mapping[str, Pattern[str]],
+    original: str,
+) -> tuple[list, bool]:
+    """Convert human-readable number words to numeric values."""
+    is_valid = False
+
+    for i in range(len(tokens)):
+        is_number = check_if_number(tokens[i])
+
+        if not is_number["bool"]:
+            replaced = tokens[i]
+            word_to_number = operators.get("word_to_number", {})
+            for word, num_val in word_to_number.items():
+                replaced = replaced.replace(word, f"@{num_val}")
+            tokens[i] = {0: replaced, 1: is_number}
+        else:
+            tokens[i] = {0: tokens[i], 1: is_number}
+
+        try:
+            tokens[i] = convert_numbers(tokens[i], patterns)
+            is_valid = True
+        except ValueError:
+            tokens[i] = tokens[i][0] if isinstance(tokens[i], dict) else tokens[i]
+            error_message(original, ValueError())
+            break
+
+    return tokens, is_valid
+
+
+def _handle_negative_token(
+    tokens: list,
+    index: int,
+    patterns: Mapping[str, Pattern[str]],
+) -> tuple[list, list]:
+    """Handle negative token patterns like 'five-six' or '5.-2'."""
+    if index < 2 or index >= len(tokens) or (index - 1) >= len(tokens) or (index - 2) >= len(tokens):
+        return tokens, []
+    temp = tokens[index].split("-")
+    tokens[index - 2] = f"{tokens[index - 2]}.{temp[0]}"
+    tokens[index - 1] = ""
+    tokens[index] = f"-{temp[1]}"
+    return tokens, [index - 1]
+
+
+def _should_split_number_minus(token: str) -> bool:
+    """Check if token matches pattern: digit-sequence minus digit-sequence."""
+    return bool(re.match(r"^\d+-\d+$", token))
+
+
+def _should_split_double_minus(token: str) -> bool:
+    """Check if token matches pattern: digit-sequence -- digit-sequence."""
+    return bool(re.match(r"^\d+--\d+$", token))
+
+
+def _should_handle_inline_negative(
+    tokens: list, index: int, patterns: Mapping[str, Pattern[str]]
+) -> bool:
+    """Check if token should be handled as inline negative."""
+    return bool(
+        index >= 2
+        and patterns["inline_negative"].match(tokens[index])
+        and patterns["point"].match(tokens[index - 1])
+        and not check_if_number(tokens[index - 2])["bool"]
+    )
+
+
+def _should_handle_decimal_negative(
+    tokens: list, index: int, patterns: Mapping[str, Pattern[str]]
+) -> bool:
+    """Check if token should be handled as decimal negative."""
+    return bool(
+        index >= 2
+        and patterns["negative"].search(tokens[index])
+        and patterns["point"].match(tokens[index - 1])
+        and check_if_number(tokens[index - 2])["bool"]
+    )
+
+
+def split_at_operators(
+    expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]
+) -> list:
+    """Split an expression string at operator boundaries."""
+    # Escape operators for splitting
+    for symbol in operators["symbols"]:
+        if symbol != "-":
+            expression = expression.replace(symbol, f"\\{symbol}\\")
+
+    tokens = [t.strip() for t in expression.split("\\") if t.strip()]
+
+    indices_to_remove = []
+
+    for i in range(len(tokens)):
+        is_num = check_if_number(tokens[i])["bool"]
+        is_op = patterns["operators"].match(tokens[i]) is not None
+
+        if not is_num and not is_op:
+            if _should_handle_inline_negative(tokens, i, patterns):
+                tokens, removed = _handle_negative_token(tokens, i, patterns)
+                indices_to_remove.extend(removed)
+            elif _should_handle_decimal_negative(tokens, i, patterns):
+                tokens, removed = _handle_negative_token(tokens, i, patterns)
+                indices_to_remove.extend(removed)
+            elif _should_split_number_minus(tokens[i]):
+                token = tokens[i]
+                parts = token.split("-", 1)
+                tokens[i] = parts[0]
+                tokens.insert(i + 1, "-")
+                tokens.insert(i + 2, parts[1])
+            elif _should_split_double_minus(tokens[i]):
+                token = tokens[i]
+                parts = token.split("--", 1)
+                tokens[i] = parts[0]
+                tokens.insert(i + 1, "-")
+                tokens.insert(i + 2, f"-{parts[1]}")
+            elif _should_split_number_sequence(tokens[i]):
+                parts = tokens[i].split()
+                tokens[i:i+1] = parts
+            elif i > 0 and tokens[i][:1] != "-" and tokens[i - 1] != ".":
+                tokens[i] = tokens[i].replace("-", "")
+            elif patterns["negative"].match(tokens[i][:1]):
+                tokens[i] = f"-{tokens[i][1:].replace('-', '')}"
+
+    if indices_to_remove:
+        for idx in reversed(indices_to_remove):
+            tokens.pop(idx)
+
+    return tokens
+
+
+def _finish_number_group(group: list, patterns: Mapping[str, Pattern[str]]) -> list:
+    """Convert a number group to final tokens.
+
+    For compound numbers like [3, 100, 20, 2], combine_number_parts handles
+    the multiplication (3*100) and addition (20+2=22) correctly.
+
+    For simple additions like [5, 3], we just return them with '+' between.
+    """
+    numbers_only = [x for x in group if x != "+"]
+    if not numbers_only:
+        return []
+
+    # Only use combine_number_parts for real numbers (int or float), not complex
+    def is_real(n) -> bool:
+        return isinstance(n, (int, float)) and not isinstance(n, complex)
+
+    def is_compound_real(n) -> bool:
+        return is_real(n) and (n >= 100 or (20 <= n < 100))
+
+    has_compound = any(is_compound_real(n) for n in numbers_only)
+
+    if has_compound and len(numbers_only) > 1:
+        combined = combine_number_parts(numbers_only, patterns, [])
+        return combined
+    else:
+        # Simple addition: 5 + 3 should stay as ['5', '+', '3']
+        result = []
+        for i, n in enumerate(numbers_only):
+            if i > 0:
+                result.append("+")
+            result.append(str(n))
+        return result
+
+
+def _combine_consecutive_numbers(
+    tokens: list,
+    operators: dict,
+    patterns: Mapping[str, Pattern[str]],
+) -> list:
+    """Combine consecutive number tokens separated by + into compound numbers.
+
+    After convert_from_human_handler, tokens like ['5', '+', '3', '+', '100', '+', '20', '+', '2']
+    need to have the numbers 3, 100, 20, 2 combined as 322 using combine_number_parts.
+
+    Only combines pure numeric tokens (no units or other letters attached).
+
+    The algorithm:
+    1. Look for numbers followed by '+' and another pure number
+    2. Collect the full sequence of number + number + number...
+    3. Use combine_number_parts to properly combine them
+    4. Output any non-number or unit-having tokens as-is
+    """
+    if not tokens:
+        return tokens
+
+    def _is_pure_number(token: str) -> bool:
+        stripped = token.strip("+-")
+        return stripped.isdigit() and not any(c.isalpha() for c in stripped)
+
+    result = []
+    i = 0
+
+    while i < len(tokens):
+        token = tokens[i]
+        num_info = check_if_number(token)
+
+        if not num_info["bool"] or not _is_pure_number(token):
+            result.append(token)
+            i += 1
+            continue
+
+        number_parts = [num_info["converted"]]
+
+        while True:
+            if i + 2 < len(tokens) and tokens[i + 1] == "+":
+                next_token = tokens[i + 2]
+                next_num_info = check_if_number(next_token)
+                if next_num_info["bool"] and _is_pure_number(next_token):
+                    number_parts.append(next_num_info["converted"])
+                    i += 2
+                else:
+                    break
+            else:
+                break
+
+        if len(number_parts) > 1:
+            combined = _finish_number_group(number_parts, patterns)
+            result.extend(combined)
+        else:
+            result.append(str(number_parts[0]))
+
+        i += 1
+
+    return result
+
+
+def _should_split_number_sequence(token: str) -> bool:
+    """Check if token is a space-separated number sequence that should be split.
+
+    For example, "3 100 20 2" should be split into ['3', '100', '20', '2']
+    so each can be properly converted as a number word.
+    """
+    if ' ' not in token:
+        return False
+    parts = token.split()
+    if len(parts) < 2:
+        return False
+    for part in parts:
+        stripped = part.strip('+-')
+        if not stripped.replace('.', '').replace('e', '').replace('E', '').isdigit():
+            return False
+    return True
+
+
+def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str:
+    """Normalize an expression by removing filler words and applying conversions."""
+    # Handle "N percent" -> "N/100" BEFORE word_to_all substitutions
+    # This must come first so we get "0.2 of 150" then word_to_all converts "of" to "*"
+    expression = re.sub(r"(\d+(?:\.\d+)?)\s+percent\b", lambda m: str(float(m.group(1)) / 100), expression, flags=re.IGNORECASE)
+
+    # Use combined word replacement for efficiency (single pass)
+    # Use word boundaries to avoid replacing parts of words
+    word_to_all = operators.get("word_to_all", {})
+    for word, replacement in sorted(word_to_all.items(), key=lambda x: len(x[0]), reverse=True):
+        # Use regex with word boundaries to only match whole words
+        expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression)
+
+    # Strip phrases
+    expression = patterns["stripped_chars"].sub("", expression)
+
+    # Convert percentages (e.g., 50% -> 0.5)
+    expression = re.sub(r"(\d+(?:\.\d+)?)%", lambda m: str(float(m.group(1)) / 100), expression)
+
+    # Convert 'i' suffix to 'j' for complex numbers (e.g., 3+4i -> 3+4j)
+    # Match: number followed by 'i' (not preceded by another letter)
+    expression = re.sub(r"(\d)i\b", r"\1j", expression)
+    # Handle standalone 'i' preceded by operators or at start
+    expression = re.sub(r"(^|[+\-*/(])i\b", r"\g<1>1j", expression)
+
+    # Join space-separated number sequences with + for proper evaluation
+    # This must happen BEFORE whitespace removal so we get "3+100+20+2" instead of "3100202"
+    expression = _join_number_parts(expression)
+
+    # Replace whitespace outside parentheses with nothing
+    # Preserve whitespace inside parentheses to separate function args
+    result = []
+    depth = 0
+    for char in expression:
+        if char == "(":
+            depth += 1
+            if depth > MAX_NESTING_DEPTH:
+                raise ValueError(f"Expression nesting too deep (max {MAX_NESTING_DEPTH})")
+            result.append(char)
+        elif char == ")":
+            depth -= 1
+            result.append(char)
+        elif char.isspace():
+            if depth > 0:
+                result.append(char)  # Keep space inside parentheses
+            # Skip space outside parentheses
+        else:
+            result.append(char)
+
+    expression = "".join(result)
+
+    return expression
+
+
+def _join_number_parts(expression: str) -> str:
+    """Join space-separated number parts with + operators.
+
+    Detects sequences of space-separated tokens that are all numbers
+    (or simple expressions evaluating to numbers) and joins them with +.
+    This ensures "three hundred twenty two" -> 3+100+20+2 -> 125,
+    not 3100202.
+    """
+    tokens = expression.split()
+    if len(tokens) <= 1:
+        return expression
+
+    result = []
+    current_number_seq: list[str] = []
+
+    for token in tokens:
+        if token in ('+', '-'):
+            if current_number_seq:
+                if len(current_number_seq) == 1:
+                    result.append(current_number_seq[0])
+                else:
+                    result.append('+'.join(current_number_seq))
+                current_number_seq = []
+            result.append(token)
+        else:
+            stripped = token.strip('+-')
+            if stripped.replace('.', '').replace('e', '').replace('E', '').isdigit():
+                current_number_seq.append(token)
+            else:
+                if current_number_seq:
+                    if len(current_number_seq) == 1:
+                        result.append(current_number_seq[0])
+                    else:
+                        result.append('+'.join(current_number_seq))
+                    current_number_seq = []
+                result.append(token)
+
+    if current_number_seq:
+        if len(current_number_seq) == 1:
+            result.append(current_number_seq[0])
+        else:
+            result.append('+'.join(current_number_seq))
+
+    return ''.join(result)
+
+
+def _preprocess_units(expression: str) -> str:
+    """Preprocess expression to add multiplication before units."""
+    result = []
+    i = 0
+    depth = 0
+    units = _UNITS_BY_LENGTH  # Use pre-computed list
+    prefixes = _UNIT_PREFIXES  # Use pre-computed prefix set
+
+    while i < len(expression):
+        char = expression[i]
+
+        if char == "(":
+            depth += 1
+            result.append(char)
+            i += 1
+        elif char == ")":
+            depth -= 1
+            result.append(char)
+            i += 1
+        elif char.isdigit():
+            # Look for number followed by optional whitespace and unit
+            num_start = i
+            while i < len(expression) and (expression[i].isdigit() or expression[i] == "."):
+                i += 1
+            num = expression[num_start:i]
+
+            # Skip whitespace between number and unit
+            while i < len(expression) and expression[i].isspace():
+                i += 1
+
+            if i < len(expression):
+                # Quick check: does the remaining start with a potential unit prefix?
+                remaining = expression[i:]
+                if remaining and remaining[0] not in prefixes:
+                    # No unit possible, skip unit search
+                    result.append(num)
+                else:
+                    # Check for unit using pre-computed sorted list
+                    found_unit = False
+                    for unit in units:
+                        if remaining.startswith(unit):
+                            result.append(num)
+                            result.append("*")
+                            result.append(unit)
+                            i += len(unit)
+                            found_unit = True
+                            break
+                    if not found_unit:
+                        result.append(num)
+            else:
+                result.append(num)
+        else:
+            result.append(char)
+            i += 1
+
+    return "".join(result)
+
+
+def _handle_unit_conversion_from_tokens(tokens: list) -> list:
+    """Handle unit conversion patterns from tokens like ['2 meters', 'in', 'feet'].
+
+    Detects patterns like: [number+unit, 'in'/'to'/'into'/'as', target_unit]
+    Converts to: ['convert(number*unit,target_unit)']
+    """
+    if len(tokens) < 3:
+        return tokens
+
+    # Look for pattern: token with number+unit followed by conversion word followed by unit
+    conversion_words = {"in", "to", "into", "as"}
+
+    for i in range(len(tokens) - 2):
+        # Check if tokens[i] ends with a unit (has number prefix)
+        token = tokens[i]
+        for unit in _UNITS_BY_LENGTH:
+            if token.endswith(unit):
+                num_part = token[: -len(unit)]
+                if num_part and num_part[-1].isdigit():
+                    # Found number+unit pattern
+                    from_unit = unit
+                    from_unit_normalized = UNIT_ALIASES.get(from_unit, from_unit)
+
+                    # Check conversion word (uppercase from operator split)
+                    conv_word = tokens[i + 1].upper()
+                    if conv_word in {"IN", "TO"}:
+                        # Check target unit
+                        to_token = tokens[i + 2]
+                        to_unit_normalized = None
+
+                        for unit2 in _UNITS_BY_LENGTH:
+                            if to_token == unit2 or to_token.endswith(unit2):
+                                to_unit_normalized = UNIT_ALIASES.get(unit2, unit2)
+                                break
+
+                        if to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
+
+                            cat1 = get_unit_category(from_unit_normalized)
+                            cat2 = get_unit_category(to_unit_normalized)
+
+                            if (
+                                cat1
+                                and cat2
+                                and are_units_compatible(from_unit_normalized, to_unit_normalized)
+                            ):
+                                # Replace the three tokens with the convert function
+                                new_tokens = (
+                                    tokens[:i]
+                                    + [
+                                        f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
+                                    ]
+                                    + tokens[i + 3 :]
+                                )
+                                return new_tokens
+
+    return tokens
+
+
+def normalize_expression(
+    expression: str,
+    operators: dict,
+    patterns: Mapping[str, Pattern[str]],
+    skip_validation: bool = False,
+) -> tuple[str, int]:
+    """Normalize an expression without evaluating it.
+
+    This is useful when you want to use a custom evaluator.
+
+    Args:
+        expression: The raw expression to normalize
+        operators: The operators configuration dict
+        patterns: The compiled regex patterns dict
+        skip_validation: If True, skip token validation (for custom evaluators)
+
+    Returns:
+        tuple: (normalized_expression, exit_code) - normalized_expression is the
+               normalized string, exit_code is 0 on success, non-zero on error
+    """
+    if len(expression) > MAX_INPUT_LENGTH:
+        return f"Error: Input too long (max {MAX_INPUT_LENGTH} characters)", 2
+
+    expression = normalize(expression, operators, patterns)
+    tokens = split_at_operators(expression, operators, patterns)
+    tokens, is_valid = convert_from_human_handler(tokens, operators, patterns, expression)
+
+    if not is_valid:
+        return "", 1
+
+    tokens = _combine_consecutive_numbers(tokens, operators, patterns)
+    tokens = apply_math_functions(tokens, operators, patterns)
+
+    # Handle unit conversion patterns from tokens (e.g., "2m in feet" -> tokens ['2m', 'in', 'feet'])
+    tokens = _handle_unit_conversion_from_tokens(tokens)
+    joined = "".join(tokens)
+
+    joined = _preprocess_units(joined)
+
+    if not skip_validation:
+        try:
+            validate_for_eval(tokens, patterns)
+        except ValueError:
+            return "", 1
+
+    return joined, 0
+
+
+def run(
+    expression: str,
+    operators: dict,
+    patterns: Mapping[str, Pattern[str]],
+    output_format: str = "plain",
+    show_expression: bool = True,
+) -> tuple[Any, int]:
+    """Process a single expression: normalize, convert, evaluate, and print result.
+
+    Returns:
+        tuple: (result, exit_code) - result is the evaluated value or None on error
+    """
+    original = expression
+    joined, exit_code = normalize_expression(expression, operators, patterns)
+
+    if exit_code != 0:
+        if exit_code == 2:
+            print(joined, file=sys.stderr)
+        return None, exit_code
+
+    try:
+        result = evaluate(joined)
+        if output_format == "json":
+            import json
+
+            print(json.dumps({"expression": joined, "result": str(result)}))
+        else:
+            if show_expression:
+                print(f"{joined} -> {result}")
+            else:
+                print(result)
+        return result, 0
+    except ZeroDivisionError as e:
+        error_message(original, e)
+        return None, 1
+    except EvaluationError as e:
+        error_message(original, e)
+        return None, 1
+
+
+def _run_repl(show_expression: bool = True) -> int:
+    """Run interactive REPL mode."""
+
+    print("nl-calc interactive mode. Type 'help' for available commands, 'quit' or 'exit' to exit.")
+    print()
+
+    history: list[tuple[str, Any]] = []
+
+    while True:
+        try:
+            line = input(">>> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if not line:
+            continue
+
+        if line.lower() in ("quit", "exit", "exit()"):
+            break
+
+        if line.lower() == "help":
+            print_help()
+            continue
+
+        if line.lower() == "history":
+            for expr, result in history:
+                print(f"{expr} -> {result}")
+            continue
+
+        if line.lower() == "clear":
+            history.clear()
+            continue
+
+        result, exit_code = run(line, NORMALIZE, PATTERNS, "plain", show_expression)
+
+        if exit_code == 0 and result is not None:
+            history.append((line, result))
+
+    return 0
+
+
+def _get_units_by_category() -> dict[str, list[str]]:
+    """Get units organized by category from UNIT_CATEGORIES."""
+    categories: dict[str, set[str]] = {}
+    for unit, category in UNIT_CATEGORIES.items():
+        if category not in categories:
+            categories[category] = set()
+        categories[category].add(unit)
+    # Sort units within each category
+    result = {}
+    for cat in sorted(categories.keys()):
+        result[cat] = sorted(categories[cat])
+    return result
+
+
+def print_help() -> None:
+    """Print available operators, functions, and units."""
+    # Get units by category programmatically
+    units_by_cat = _get_units_by_category()
+
+    lines = [
+        "Usage:",
+        "  calc <expression>          Evaluate math expression",
+        "  calc inspect <text>       Check for hidden characters/confusables",
+        "  calc count <text>         Count characters (or count <text> <char>)",
+        "  calc regex <pat> <text>  Test regex pattern against text",
+        "",
+        "Text tools:",
+        "  calc replace-check <old> ||| <new> ||| <text>",
+        "  calc lines <start[-end]> <text>",
+        "  calc patch-check <original> ||| <patch>",
+        "  calc shell-split <command>",
+        "  calc md-structure <text>",
+        "  calc dotenv-check <text>",
+        "",
+        "Flags:",
+        "  --json                    Output result as JSON",
+        "",
+        "Operators:",
+        "  Arithmetic: +  -  *  /  **",
+        "  Words: plus, minus, times, divided by, over, raised to",
+        "",
+        "Functions:",
+        "  Trigonometry: sin, cos, tan, asin, acos, atan, atan2",
+        "  Hyperbolic: sinh, cosh, tanh, asinh, acosh, atanh",
+        "  Logarithmic: log, log10, log2, log1p, exp, expm1",
+        "  Rounding: abs, floor, ceil, trunc, round, sign",
+        "  Other: sqrt, pow, factorial, gcd, lcm, mean, median",
+        "",
+        "Constants:",
+        "  pi, e, tau, inf, nan",
+        "  avogadro, gasconstant, planck, boltzmann",
+        "  c (speed of light), elementarycharge, faraday, amu",
+        "",
+        "Units:",
+    ]
+
+    unit_lines = []
+    for category, units in units_by_cat.items():
+        if len(units) > 15:
+            display_units = units[:12] + ["..."]
+        else:
+            display_units = units
+        unit_lines.append(f"  {category.capitalize()}: {', '.join(display_units)}")
+
+    lines += unit_lines + [
+        "",
+        "Unit conversion examples:",
+        "  calc 30m + 100ft",
+        "  calc 1km in miles",
+        "  calc 100F to C",
+        "  calc 1kg in lb",
+        "",
+        "Text tools examples:",
+        '  calc inspect "hello"',
+        "  calc inspect \"p\u0430ypal\"  ( Cyrillic 'a' instead of Latin)",
+        '  calc count "hello world"',
+        '  calc count "hello" l',
+        '  calc regex "^\\d+$" "12345"',
+        '  calc replace-check "foo" ||| "bar" ||| "foo baz foo"',
+        '  calc lines 2-4 "line1\\nline2\\nline3\\nline4\\nline5"',
+        '  calc shell-split "git commit -m \\"fix\\""',
+        '  calc md-structure "# Hello\\n\\nA [link](http://x.com)"',
+        '  calc dotenv-check "DB_HOST=localhost\\nDB_PORT=5432"',
+        "",
+        "All text commands support --json for machine-readable output.",
+    ]
+
+    for line in lines:
+        print(line)
+
+
+_DELIM = "|||"
+
+
+def _cli_text_command(expression: str, json_output: bool = False) -> int:
+    """Handle text commands before math evaluation.
+
+    Returns:
+        0 if command was handled, 1 if expression should continue to math eval
+    """
+    parts = expression.strip().split()
+    if not parts:
+        return 1
+
+    cmd = parts[0].lower()
+
+    if cmd == "inspect":
+        if len(parts) < 2:
+            print("Usage: calc inspect <text>", file=sys.stderr)
+            return 1
+        text = " ".join(parts[1:])
+        try:
+            result = inspect_text(text, include_codepoints=False, include_confusables=True)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        if result["warnings"]:
+            for w in result["warnings"]:
+                kind = w["kind"].upper()
+                print(f"\u2717 {kind}: {w['message']}")
+        else:
+            print("\u2713 No hidden characters")
+
+        if result["confusables"]:
+            print(f"\nConfusables found: {len(result['confusables'])}")
+            for c in result["confusables"][:5]:
+                print(f"  '{c['char']}' (looks like '{c['confusable_with']}') at {c['index']}")
+        return 0
+
+    if cmd == "count":
+        if len(parts) < 2:
+            print("Usage: calc count <text> [char]", file=sys.stderr)
+            return 1
+        text = " ".join(parts[1:])
+
+        # Check if last part is a single char to count
+        if len(parts) >= 3 and len(parts[-1]) == 1:
+            char = parts[-1]
+            text = " ".join(parts[1:-1])
+            try:
+                result = count_chars(text, target=char)
+            except ValueError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 1
+            if json_output:
+                import json
+                print(json.dumps(result))
+                return 0
+            print(f"'{char}' appears {result['count']} time(s) in \"{text}\"")
+            return 0
+
+        # Default: show frequency table for multi-word, simple count for single
+        try:
+            if " " in text:
+                result = count_chars(text)
+                if json_output:
+                    import json
+                    print(json.dumps(result))
+                    return 0
+                if isinstance(result, dict):
+                    print(f"\"{text}\":")
+                    print(f"  {len(text)} characters")
+                    sorted_chars = sorted(result.items(), key=lambda x: (-x[1], x[0]))
+                    for char, count in sorted_chars[:10]:
+                        display = repr(char) if char != " " else "(space)"
+                        print(f"  {display}: {count}")
+                    if len(result) > 10:
+                        print(f"  ... and {len(result) - 10} more unique chars")
+                return 0
+            else:
+                result = count_chars(text)
+                if json_output:
+                    import json
+                    print(json.dumps(result))
+                    return 0
+                print(f"\"{text}\": {len(text)} character(s)")
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        return 0
+
+    if cmd == "regex":
+        if len(parts) < 3:
+            print("Usage: calc regex <pattern> <text>", file=sys.stderr)
+            return 1
+        pattern = parts[1]
+        text = " ".join(parts[2:])
+        try:
+            result = regex_test(pattern, [text])
+        except re.error as e:
+            print(f"Error: Invalid regex pattern: {e}", file=sys.stderr)
+            return 1
+
+        if not result["valid_pattern"]:
+            print(f"\u2717 Invalid regex pattern: {pattern}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        if result["results"]:
+            r = result["results"][0]
+            if r["matches"]:
+                print(f"\u2713 Match: '{r['sample']}'")
+                if r["groups"]:
+                    print(f"  Groups: {r['groups']}")
+                if r["groupdict"]:
+                    print(f"  Named groups: {r['groupdict']}")
+            else:
+                print("\u2717 No match")
+        else:
+            print("\u2717 No match")
+        return 0
+
+    if cmd == "replace-check":
+        if _DELIM not in expression:
+            print(f"Usage: calc replace-check <old> {_DELIM} <new> {_DELIM} <text>", file=sys.stderr)
+            return 1
+        raw = expression[len(cmd):].strip()
+        segments = raw.split(_DELIM)
+        if len(segments) < 3:
+            print(f"Usage: calc replace-check <old> {_DELIM} <new> {_DELIM} <text>", file=sys.stderr)
+            return 1
+        old = segments[0].strip()
+        new = segments[1].strip()
+        text = segments[2].strip()
+        try:
+            result = text_replace_check(text, old, new, return_preview=True)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        count = result["match_count"]
+        if count == 0:
+            print("\u2717 No match for replacement.")
+        elif count == 1:
+            print("\u2713 Replacement would apply cleanly to 1 match.")
+        else:
+            print(f"\u221d Replacement is ambiguous: {count} matches found.")
+        for f in result["findings"]:
+            print(f"  {f['kind']}: {f['message']}")
+        return 0
+
+    if cmd == "lines":
+        # Split into at most 3 parts to preserve text content (including newlines)
+        split_parts = expression.strip().split(None, 2)
+        if len(split_parts) < 3:
+            print("Usage: calc lines <start[-end]> <text>", file=sys.stderr)
+            return 1
+        range_str = split_parts[1]
+        text = split_parts[2]
+        # Parse range: "1-5" or just "3" (single line)
+        if "-" in range_str:
+            try:
+                start_str, end_str = range_str.split("-", 1)
+                start_line = int(start_str)
+                end_line = int(end_str)
+            except ValueError:
+                print(f"Error: Invalid line range '{range_str}'", file=sys.stderr)
+                return 1
+        else:
+            try:
+                start_line = int(range_str)
+                end_line = start_line
+            except ValueError:
+                print(f"Error: Invalid line number '{range_str}'", file=sys.stderr)
+                return 1
+        try:
+            result = line_range_extract(text, start_line, end_line, include_line_numbers=True)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        if not result["valid_range"]:
+            for f in result["findings"]:
+                print(f"  {f['kind']}: {f['message']}")
+            return 1
+        for line_info in result["lines"]:
+            num = line_info.get("line", "")
+            content = line_info.get("text", "")
+            print(f"{num}: {content}")
+        return 0
+
+    if cmd == "patch-check":
+        if _DELIM not in expression:
+            print(f"Usage: calc patch-check <original> {_DELIM} <patch>", file=sys.stderr)
+            return 1
+        raw = expression[len(cmd):].strip()
+        segments = raw.split(_DELIM, 1)
+        if len(segments) < 2:
+            print(f"Usage: calc patch-check <original> {_DELIM} <patch>", file=sys.stderr)
+            return 1
+        original = segments[0].strip()
+        patch_text = segments[1].strip()
+        try:
+            result = patch_apply_check(original, patch_text)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        if not result["patch_parse_ok"]:
+            print("\u2717 Failed to parse patch.")
+            for f in result["findings"]:
+                print(f"  {f}")
+            return 1
+        total = result["hunks_total"]
+        applied = result["hunks_applied"]
+        failed = result["hunks_failed"]
+        if result["applies"]:
+            print(f"\u2713 Patch applies cleanly. {applied}/{total} hunks applied.")
+        else:
+            print(f"\u2717 Patch fails: {failed}/{total} hunks failed.")
+        for f in result["findings"]:
+            print(f"  {f}")
+        return 0
+
+    if cmd == "shell-split":
+        if len(parts) < 2:
+            print("Usage: calc shell-split <command>", file=sys.stderr)
+            return 1
+        command = " ".join(parts[1:])
+        try:
+            result = shell_split(command)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        if not result["parse_ok"]:
+            print("\u2717 Parse failed.")
+            for f in result["findings"]:
+                print(f"  {f}")
+            return 1
+        argv = result["argv"]
+        print(f"Parsed {result['argc']} token(s): {argv}")
+        features = result["features"]
+        active = [k.replace("has_", "") for k, v in features.items() if v]
+        if active:
+            print(f"Contains: {', '.join(active)}")
+        for f in result["findings"]:
+            print(f"  {f}")
+        return 0
+
+    if cmd == "md-structure":
+        # Split into at most 2 parts to preserve text content (including newlines)
+        split_parts = expression.strip().split(None, 1)
+        if len(split_parts) < 2:
+            print("Usage: calc md-structure <text>", file=sys.stderr)
+            return 1
+        text = split_parts[1]
+        try:
+            result = markdown_structure(text)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        headings = result["headings"]
+        fences = result["code_fences"]
+        links = result["links"]
+        unclosed = [f for f in fences if not f["closed"]]
+        parts_out = []
+        if headings:
+            parts_out.append(f"{len(headings)} heading(s)")
+        if fences:
+            label = "code fence(s)" if len(fences) != 1 else "code fence"
+            if unclosed:
+                parts_out.append(f"{len(fences)} {label} ({len(unclosed)} unclosed)")
+            else:
+                parts_out.append(f"{len(fences)} {label}")
+        if links:
+            parts_out.append(f"{len(links)} link(s)")
+        if result["frontmatter"]["present"]:
+            parts_out.append(f"frontmatter ({result['frontmatter']['format']})")
+        if result["tables_detected"]:
+            parts_out.append("table(s)")
+        if parts_out:
+            print(f"Markdown contains: {', '.join(parts_out)}.")
+        else:
+            print("Markdown is empty or has no structural elements.")
+        for f in result["findings"]:
+            print(f"  {f}")
+        return 0
+
+    if cmd == "dotenv-check":
+        if len(parts) < 2:
+            print("Usage: calc dotenv-check <text>", file=sys.stderr)
+            return 1
+        text = " ".join(parts[1:])
+        try:
+            result = dotenv_validate(text)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        entries = result["entries"]
+        if result["parse_ok"] and not result["invalid_lines"]:
+            print(f"\u2713 Valid .env: {len(entries)} entry/entries.")
+        else:
+            print(f"\u2717 Invalid .env: {len(result['invalid_lines'])} invalid line(s).")
+        for f in result["findings"]:
+            print(f"  {f}")
+        return 0
+
+    return 1  # Not a text command, continue to math eval
+
+
+def normalize_main() -> int:
+    """Main entry point for CLI."""
+    import os
+
+    parser = argparse.ArgumentParser(
+        description="Natural language math expression calculator",
+        add_help=False,
+    )
+    parser.add_argument(
+        "expression", nargs="*", help="Expression to evaluate (e.g., 'five plus two')"
+    )
+    parser.add_argument(
+        "-h", "--help", action="store_true", help="Show help and available operators"
+    )
+    parser.add_argument(
+        "--usage", action="store_true", help="Show full usage information and examples"
+    )
+    parser.add_argument("-v", "--version", action="store_true", help="Show version information")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Suppress expression in output")
+    parser.add_argument("--verbose", action="store_true", help="Show expression in output")
+    parser.add_argument("--json", action="store_true", help="Output result as JSON")
+    parser.add_argument(
+        "-e",
+        "--expression",
+        dest="single_expr",
+        metavar="<expr>",
+        help="Evaluate a single expression (useful for piping)",
+    )
+    parser.add_argument(
+        "-i", "--interactive", action="store_true", help="Start interactive REPL mode"
+    )
+    parser.add_argument(
+        "-s",
+        "--show",
+        action="store_true",
+        help="Show expression in output (default for interactive)",
+    )
+    parser.add_argument(
+        "--mcp", action="store_true", help="Run as MCP server for exact text tools"
+    )
+
+    args = parser.parse_args()
+
+    if args.mcp:
+        return mcp_main()
+
+    if args.version:
+        print(f"eggcalc {__version__}")
+        return 0
+
+    if args.usage:
+        print_help()
+        return 0
+
+    if args.help or (not args.expression and not args.single_expr and not args.interactive):
+        parser.print_help()
+        return 0
+
+    if args.interactive:
+        return _run_repl(show_expression=True)
+
+    if args.single_expr:
+        expression = args.single_expr
+        quiet_by_default = True
+    else:
+        expression = " ".join(args.expression)
+        quiet_by_default = False
+
+    # Detect shell glob expansion (e.g., "python eggcalc.py 30 * 3" expands "*" to files)
+    if args.expression and len(args.expression) > 1:
+        # Check if any argument is a file or directory that exists (likely from glob expansion)
+        cwd = os.getcwd()
+        glob_indicators = []
+        for arg in args.expression:
+            path = os.path.join(cwd, arg)
+            if os.path.exists(path) and arg not in (".", "..") and not arg.startswith("./") and not arg.startswith("../"):
+                glob_indicators.append(arg)
+
+        if glob_indicators:
+            error_lines = [
+                "Error: Possible shell glob expansion detected.",
+                f"The '*' character was expanded to file(s): {glob_indicators[:5]}{'...' if len(glob_indicators) > 5 else ''}",
+                "Please quote your expression:",
+                f'  calc "{" ".join(args.expression)}"',
+                "Or use -e flag:",
+                f'  calc -e "{" ".join(args.expression)}"',
+            ]
+            for line in error_lines:
+                print(line, file=sys.stderr)
+            return 1
+
+    # Try text commands first (inspect, count, regex, etc.)
+    cmd_result = _cli_text_command(expression, json_output=args.json)
+    if cmd_result == 0:
+        return 0  # Command was handled
+
+    output_format = "json" if args.json else "plain"
+    show_expression = not args.quiet and ((args.verbose or args.show) or not quiet_by_default)
+
+    _, exit_code = run(expression, NORMALIZE, PATTERNS, output_format, show_expression)
+    return exit_code
+
+
+
+# === Exact text tools ===
+
+# === exact/primitives.py ===
+class CodepointInfo(NamedTuple):
+    """Information about a single codepoint."""
+    index: int
+    char: str
+    codepoint: str
+    name: str
+    category: str
+
+
+class MeasureBasic(TypedDict):
+    """Basic text measurements."""
+    bytes_utf8: int
+    codepoints: int
+    graphemes_estimate: int
+    chars_no_whitespace: int
+    ascii: int
+    non_ascii: int
+
+
+class InvisibleCharInfo(TypedDict):
+    """Information about an invisible character."""
+    index: int
+    char: str
+    codepoint: str
+    name: str
+    category: str
+    display: str
+
+
+# Invisible characters to detect
+_INVISIBLE_CHARS: dict[str, tuple[str, str]] = {
+    "\u200b": ("ZERO WIDTH SPACE", "ZWSP"),
+    "\u200c": ("ZERO WIDTH NON-JOINER", "ZWNJ"),
+    "\u200d": ("ZERO WIDTH JOINER", "ZWJ"),
+    "\u200e": ("LEFT-TO-RIGHT MARK", "LRM"),
+    "\u200f": ("RIGHT-TO-LEFT MARK", "RLM"),
+    "\ufeff": ("ZERO WIDTH NO-BREAK SPACE", "BOM"),
+    "\u00a0": ("NO-BREAK SPACE", "NBSP"),
+    "\u2028": ("LINE SEPARATOR", "LINE SEP"),
+    "\u2029": ("PARAGRAPH SEPARATOR", "PARA SEP"),
+    "\u202a": ("LEFT-TO-RIGHT EMBEDDING", "LRE"),
+    "\u202b": ("RIGHT-TO-LEFT EMBEDDING", "RLE"),
+    "\u202c": ("POP DIRECTIONAL FORMATTING", "PDF"),
+    "\u202d": ("LEFT-TO-RIGHT OVERRIDE", "LRO"),
+    "\u202e": ("RIGHT-TO-LEFT OVERRIDE", "RLO"),
+    "\u2066": ("LEFT-TO-RIGHT ISOLATE", "LRI"),
+    "\u2067": ("RIGHT-TO-LEFT ISOLATE", "RLI"),
+    "\u2068": ("FIRST STRONG ISOLATE", "FSI"),
+    "\u2069": ("POP DIRECTIONAL ISOLATE", "PDI"),
+    "\u2060": ("WORD JOINER", "WORD JOINER"),
+    "\u00ad": ("SOFT HYPHEN", "SHY"),
+    "\u180e": ("MONGOLIAN VOWEL SEPARATOR", "MVS"),
+    "\u034f": ("COMBINING GRAPHEME JOINER", "CGJ"),
+}
+
+# Variation selectors (U+FE00 to U+FE0F)
+_VARIATION_SELECTORS = set(range(0xfe00, 0xfe10))
+
+
+def utf8_bytes(s: str) -> bytes:
+    """Return raw UTF-8 bytes of the string.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        UTF-8 encoded bytes.
+    """
+    return s.encode("utf-8")
+
+
+def codepoints(s: str) -> list[CodepointInfo]:
+    """Return detailed information about each codepoint in the string.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        List of CodepointInfo namedtuples with index, char, codepoint (U+XXXX),
+        Unicode name, and category.
+    """
+    result: list[CodepointInfo] = []
+    for index, char in enumerate(s):
+        codepoint_str = f"U+{ord(char):04X}"
+        name = unicodedata.name(char, "<unknown>")
+        category = unicodedata.category(char)
+        result.append(CodepointInfo(index, char, codepoint_str, name, category))
+    return result
+
+
+def normalize_unicode(s: str, form: str) -> str:
+    """Normalize Unicode string to the specified form.
+
+    Args:
+        s: Input string.
+        form: Normalization form - one of NFC, NFD, NFKC, NFKD.
+
+    Returns:
+        Normalized string.
+
+    Raises:
+        ValueError: If form is not a recognized normalization form.
+    """
+    valid_forms = {"NFC", "NFD", "NFKC", "NFKD"}
+    form_upper = form.upper()
+    if form_upper not in valid_forms:
+        raise ValueError(f"Unsupported normalization form: {form}. Use one of: {', '.join(valid_forms)}")
+    return unicodedata.normalize(form_upper, s)
+
+
+def casefold_text(s: str) -> str:
+    """Return casefolded version of the string for case-insensitive comparison.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        Casefolded string using str.casefold().
+    """
+    return s.casefold()
+
+
+def raw_equal(a: str, b: str) -> bool:
+    """Check if two strings are exactly equal (byte identity).
+
+    Args:
+        a: First string.
+        b: Second string.
+
+    Returns:
+        True if strings are identical, False otherwise.
+    """
+    return a == b
+
+
+def normalized_equal(a: str, b: str, form: str = "NFC") -> bool:
+    """Check if two strings are equal after Unicode normalization.
+
+    Args:
+        a: First string.
+        b: Second string.
+        form: Normalization form - one of NFC, NFD, NFKC, NFKD.
+
+    Returns:
+        True if strings are equal after normalization.
+    """
+    return normalize_unicode(a, form) == normalize_unicode(b, form)
+
+
+def measure_basic(s: str) -> MeasureBasic:
+    """Return basic text measurements.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        Dictionary with bytes_utf8, codepoints, graphemes_estimate,
+        chars_no_whitespace, ascii, and non_ascii counts.
+    """
+    bytes_utf8 = len(s.encode("utf-8"))
+    codepoints_count = len(s)
+    grapheme_count = count_graphemes(s)
+    chars_no_whitespace = sum(1 for c in s if not c.isspace())
+    ascii_count = sum(1 for c in s if ord(c) < 128)
+    non_ascii = codepoints_count - ascii_count
+
+    return MeasureBasic(
+        bytes_utf8=bytes_utf8,
+        codepoints=codepoints_count,
+        graphemes_estimate=grapheme_count,
+        chars_no_whitespace=chars_no_whitespace,
+        ascii=ascii_count,
+        non_ascii=non_ascii,
+    )
+
+
+def find_invisibles(s: str) -> list[InvisibleCharInfo]:
+    """Find all invisible or control characters in the string.
+
+    Detects zero-width spaces, joiners, BOM, word joiner, soft hyphen,
+    variation selectors, bidi controls, and combining marks.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        List of InvisibleCharInfo dicts with position, char, codepoint,
+        name, category, and display marker.
+    """
+    result: list[InvisibleCharInfo] = []
+
+    for index, char in enumerate(s):
+        codepoint_val = ord(char)
+        display = None
+        name = None
+
+        # Check known invisible chars
+        if char in _INVISIBLE_CHARS:
+            name, display = _INVISIBLE_CHARS[char]
+        # Check variation selectors
+        elif codepoint_val in _VARIATION_SELECTORS:
+            name = "VARIATION SELECTOR"
+            display = "VS"
+        # Check bidi control characters (U+2060 to U+206F)
+        elif 0x2060 <= codepoint_val <= 0x206f:
+            name = unicodedata.name(char, "<unknown>")
+            display = f"BIDI:{name.split()[-1]}" if name else "BIDI"
+        # Check combining marks (category M*)
+        elif unicodedata.category(char).startswith("M"):
+            name = unicodedata.name(char, "<unknown>")
+            display = "CM"
+        # Check other control characters (category C*) but exclude newlines
+        elif unicodedata.category(char).startswith("C") and char not in "\n\t\r":
+            name = unicodedata.name(char, "<unknown>") if unicodedata.name(char, None) else "CONTROL"
+            display = "CTRL"
+
+        if display:
+            codepoint_str = f"U+{codepoint_val:04X}"
+            category = unicodedata.category(char)
+            result.append(InvisibleCharInfo(
+                index=index,
+                char=char,
+                codepoint=codepoint_str,
+                name=name or "<unknown>",
+                category=category,
+                display=display,
+            ))
+
+    return result
+
+
+def visible_repr(s: str) -> str:
+    """Return a display-safe representation of the string.
+
+    Maps invisible or ambiguous characters to display-safe markers.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        String with invisible chars replaced by markers like ␠ (space),
+        ␉ (tab), ⟦ZWSP⟧, etc.
+    """
+    result: list[str] = []
+
+    for char in s:
+        if char == " ":
+            result.append("␠")
+        elif char == "\t":
+            result.append("␉")
+        elif char == "\n":
+            result.append("␊")
+        elif char == "\r":
+            result.append("␍")
+        elif char in _INVISIBLE_CHARS:
+            _, display = _INVISIBLE_CHARS[char]
+            result.append(f"⟦{display}⟧")
+        elif 0xfe00 <= ord(char) <= 0xfe0f:
+            result.append("⟦VS⟧")
+        elif unicodedata.category(char).startswith("M"):
+            result.append(f"◌{char}")
+        elif 0x2060 <= ord(char) <= 0x206f:
+            bidi_names = {
+                0x2066: "LRI", 0x2067: "RLI", 0x2068: "FSI", 0x2069: "PDI",
+                0x202a: "LRE", 0x202b: "RLE", 0x202c: "PDF",
+                0x202d: "LRO", 0x202e: "RLO",
+            }
+            name = bidi_names.get(ord(char), "BIDI")
+            result.append(f"⟦{name}⟧")
+        else:
+            result.append(char)
+
+    return "".join(result)
+
+
+def count_graphemes(s: str) -> int:
+    """Count extended grapheme clusters in a string.
+
+    Implements Unicode UAX #29 grapheme cluster boundary rules.
+    A grapheme cluster is what a user would perceive as a single character.
+    For example, 'é' as precomposed (U+00E9) or decomposed ('e' + combining
+    acute) both count as 1 grapheme. Emoji sequences like '🏳️' or '👨‍👩‍👧‍👦'
+    each count as 1 grapheme.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        Number of grapheme clusters in the string.
+    """
+    count = 0
+    i = 0
+    n = len(s)
+
+    while i < n:
+        count += 1
+        i += 1  # Move past base character
+
+        # Process all Extend characters and ZWJ sequences
+        while i < n:
+            cp = ord(s[i])
+
+            # GB9: Extend characters (combining marks, ZWNJ, VS)
+            if _is_extend_char(s[i]):
+                i += 1
+                continue
+
+            # GB11: Emoji ZWJ sequences
+            # Pattern: Extended_Pictographic (ZWJ Extend*)* ZWJ Extended_Pictographic
+            if cp == 0x200D:  # ZWJ
+                i += 1  # Skip ZWJ
+                # If next is pictographic, consume it as part of this grapheme
+                if i < n and _is_extended_pictographic(s[i]):
+                    i += 1
+                    # After pictographic, continue checking for more extends/ZWJ
+                    continue
+                # No pictographic after ZWJ, break and let main loop handle
+                break
+
+            # GB12/GB13: Regional Indicator pairs for flags
+            # Two consecutive RIs form one grapheme
+            if 0x1F1E6 <= cp <= 0x1F1FF:
+                # Check if next is also RI
+                if i + 1 < n and 0x1F1E6 <= ord(s[i + 1]) <= 0x1F1FF:
+                    i += 2  # Skip both RIs
+                    continue
+                i += 1
+                continue
+
+            # Not an extend or ZWJ or RI pair, this is the start of next grapheme
+            break
+
+    return count
+
+
+def _is_extend_char(char: str) -> bool:
+    """Check if char is an Extend-class character per UAX #29 GB9.
+
+    Note: ZWJ (U+200D) is NOT included here because it's part of emoji
+    ZWJ sequences (GB11) and must be handled specially in grapheme
+    boundary detection.
+    """
+    cat = unicodedata.category(char)
+    cp = ord(char)
+
+    # Extend: Mn (nonspacing mark), Me (enclosing mark), Mc (spacing combining mark)
+    # Also: ZWNJ (U+200C), Variation Selectors (U+FE00-U+FE0F)
+    if cat.startswith('M'):
+        return True
+    if cp == 0x200C or cp == 0x200B:  # ZWNJ and ZWSP
+        return True
+    if 0xFE00 <= cp <= 0xFE0F:  # Variation selectors
+        return True
+    return False
+
+
+def _is_extended_pictographic(char: str) -> bool:
+    """Check if char is an Extended Pictographic (for emoji ZWJ sequences).
+
+    Uses codepoint ranges for common emoji blocks.
+    """
+    cp = ord(char)
+    if (0x1F300 <= cp <= 0x1F9FF or  # Emoticons, Transport, Symbols and Pictographs Extended-A
+        0x2600 <= cp <= 0x26FF or    # Misc symbols
+        0x2700 <= cp <= 0x27BF):     # Dingbats
+        return True
+    # Check if it's an emoji via category and name patterns
+    cat = unicodedata.category(char)
+    if cat == 'So':
+        name = unicodedata.name(char, '')
+        if 'EMOJI' in name or 'FACE' in name or 'SYMBOL' in name or 'SIGN' in name:
+            return True
+    return False
+
+
+def truncate_to_grapheme(s: str, max_graphemes: int) -> str:
+    """Truncate a string to at most max_grapheme grapheme clusters.
+
+    This ensures the result doesn't cut mid-grapheme, preserving emoji,
+    combining sequences, and flag sequences intact.
+
+    Args:
+        s: Input string.
+        max_graphemes: Maximum number of grapheme clusters to return.
+
+    Returns:
+        Truncated string with at most max_graphemes grapheme clusters.
+    """
+    if max_graphemes <= 0:
+        return ""
+
+    if len(s) == 0:
+        return s
+
+    result: list[str] = []
+    grapheme_count = 0
+    i = 0
+    n = len(s)
+
+    while i < n and grapheme_count < max_graphemes:
+        result.append(s[i])
+        grapheme_count += 1
+        i += 1  # Move past base character
+
+        while i < n:
+            cp = ord(s[i])
+
+            if _is_extend_char(s[i]):
+                result.append(s[i])
+                i += 1
+                continue
+
+            if cp == 0x200D:
+                result.append(s[i])
+                i += 1
+                if i < n and _is_extended_pictographic(s[i]):
+                    result.append(s[i])
+                    i += 1
+                    continue
+                break
+
+            if 0x1F1E6 <= cp <= 0x1F1FF:
+                if i + 1 < n and 0x1F1E6 <= ord(s[i + 1]) <= 0x1F1FF:
+                    result.append(s[i])
+                    result.append(s[i + 1])
+                    i += 2
+                    continue
+                result.append(s[i])
+                i += 1
+                continue
+
+            break
+
+    return "".join(result)
+
+
+def byte_offset_to_codepoint_index(s: str, byte_offset: int) -> int:
+    """Convert a UTF-8 byte offset to a codepoint index.
+
+    Args:
+        s: Input string.
+        byte_offset: UTF-8 byte offset (0-based).
+
+    Returns:
+        Codepoint index (0-based).
+
+    Raises:
+        ValueError: If byte_offset is inside a multi-byte character.
+    """
+    encoded = s.encode("utf-8")
+    if byte_offset < 0 or byte_offset > len(encoded):
+        raise ValueError(f"Byte offset {byte_offset} out of range (0-{len(encoded)})")
+
+    if byte_offset == len(encoded):
+        return len(s)
+
+    decoded_pos = 0
+    byte_pos = 0
+    while byte_pos < byte_offset:
+        if byte_pos >= len(encoded):
+            break
+        b = encoded[byte_pos]
+        if b < 0x80:
+            byte_pos += 1
+        elif b < 0xE0:
+            if byte_pos + 1 >= len(encoded):
+                raise ValueError(f"Byte offset {byte_offset} falls inside multi-byte character")
+            byte_pos += 2
+        elif b < 0xF0:
+            if byte_pos + 2 >= len(encoded):
+                raise ValueError(f"Byte offset {byte_offset} falls inside multi-byte character")
+            byte_pos += 3
+        else:
+            if byte_pos + 3 >= len(encoded):
+                raise ValueError(f"Byte offset {byte_offset} falls inside multi-byte character")
+            byte_pos += 4
+        decoded_pos += 1
+
+    if byte_pos != byte_offset:
+        raise ValueError(f"Byte offset {byte_offset} falls inside multi-byte character")
+
+    return decoded_pos
+
+
+def codepoint_index_to_byte_offset(s: str, codepoint_index: int) -> int:
+    """Convert a codepoint index to a UTF-8 byte offset.
+
+    Args:
+        s: Input string.
+        codepoint_index: Codepoint index (0-based).
+
+    Returns:
+        UTF-8 byte offset (0-based).
+
+    Raises:
+        ValueError: If codepoint_index is out of range.
+    """
+    if codepoint_index < 0 or codepoint_index > len(s):
+        raise ValueError(f"Codepoint index {codepoint_index} out of range (0-{len(s)})")
+
+    encoded = s.encode("utf-8")
+    decoded_pos = 0
+    byte_pos = 0
+    for char in s:
+        if decoded_pos >= codepoint_index:
+            break
+        char_bytes = len(char.encode("utf-8"))
+        byte_pos += char_bytes
+        decoded_pos += 1
+
+    return byte_pos
+
+
+def codepoint_index_to_line_column(s: str, codepoint_index: int, line_base: int = 1, column_base: int = 1) -> tuple[int, int]:
+    """Convert a codepoint index to line and column (1-based by default).
+
+    Args:
+        s: Input string.
+        codepoint_index: Codepoint index (0-based).
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+        column_base: Base for column numbers (1 for 1-based, 0 for 0-based).
+
+    Returns:
+        Tuple of (line, column), both integers according to bases.
+
+    Raises:
+        ValueError: If codepoint_index is out of range.
+    """
+    if codepoint_index < 0 or codepoint_index > len(s):
+        raise ValueError(f"Codepoint index {codepoint_index} out of range (0-{len(s)})")
+
+    line = line_base
+    column = column_base
+
+    for i in range(codepoint_index):
+        if s[i] == "\n":
+            line += 1
+            column = column_base
+        else:
+            column += 1
+
+    return line, column
+
+
+def line_column_to_codepoint_index(s: str, line: int, column: int, line_base: int = 1, column_base: int = 1) -> int:
+    """Convert line and column to a codepoint index.
+
+    Args:
+        s: Input string.
+        line: Line number (1-based by default).
+        column: Column number (1-based by default).
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+        column_base: Base for column numbers (1 for 1-based, 0 for 0-based).
+
+    Returns:
+        Codepoint index (0-based).
+
+    Raises:
+        ValueError: If line or column is out of range.
+    """
+    target_line = line + (line_base - 1)
+    target_column = column + (column_base - 1)
+
+    current_line = 1
+    current_column = 1
+    codepoint_index = 0
+
+    for i, char in enumerate(s):
+        if current_line == target_line:
+            if current_column == target_column:
+                return i
+            if current_column > target_column:
+                raise ValueError(f"Column {column} out of range for line {line}")
+        elif current_line > target_line:
+            raise ValueError(f"Line {line} out of range ({current_line} lines in text)")
+
+        if char == "\n":
+            current_line += 1
+            current_column = 1
+        else:
+            current_column += 1
+
+    if current_line < target_line:
+        raise ValueError(f"Line {line} out of range ({current_line - 1} lines in text)")
+    if current_line == target_line and current_column < target_column:
+        raise ValueError(f"Column {column} out of range for line {line}")
+
+    return len(s)
+
+
+def get_line_text(s: str, line: int, line_base: int = 1) -> str:
+    """Extract the text of a specific line.
+
+    Args:
+        s: Input string.
+        line: Line number (1-based by default).
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+
+    Returns:
+        The text of the line (without newline), or empty string if line doesn't exist.
+    """
+    target_line = line + (line_base - 1)
+    current_line = 1
+    start = 0
+    i = 0
+
+    while i < len(s):
+        if current_line == target_line:
+            start = i
+            break
+        if s[i] == "\n":
+            current_line += 1
+        i += 1
+
+    if current_line < target_line:
+        return ""
+
+    end = start
+    while end < len(s) and s[end] != "\n":
+        end += 1
+
+    return s[start:end]
+
+
+def get_surrounding_lines(s: str, line: int, context_lines: int, line_base: int = 1) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
+    """Get lines before and after a given line.
+
+    Args:
+        s: Input string.
+        line: Target line number (1-based by default).
+        context_lines: Number of context lines to return.
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+
+    Returns:
+        Tuple of (before_lines, after_lines), each a list of (line_number, text) tuples.
+    """
+    target_line = line + (line_base - 1)
+
+    lines_data: list[tuple[int, str]] = []
+    current_line = 1
+    line_start = 0
+
+    for i, char in enumerate(s):
+        if char == "\n":
+            lines_data.append((current_line, s[line_start:i]))
+            line_start = i + 1
+            current_line += 1
+
+    if line_start < len(s):
+        lines_data.append((current_line, s[line_start:]))
+
+    before: list[tuple[int, str]] = []
+    after: list[tuple[int, str]] = []
+
+    for ln, text in lines_data:
+        if ln < target_line:
+            if ln >= target_line - context_lines:
+                before.append((ln, text))
+        elif ln > target_line:
+            if ln <= target_line + context_lines:
+                after.append((ln, text))
+
+    return before, after
+
+
+def detect_newline_style(s: str) -> str:
+    """Detect the newline style of a string.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        "CRLF", "LF", "CR", or "mixed" if multiple styles found.
+    """
+    has_crlf = "\r\n" in s
+    has_lf = "\n" in s and not has_crlf
+    has_cr = "\r" in s and not has_crlf and not has_lf
+
+    if has_crlf and (has_lf or has_cr):
+        return "mixed"
+    if has_crlf:
+        return "CRLF"
+    if has_lf:
+        return "LF"
+    if has_cr:
+        return "CR"
+    return "LF"
+
+# === exact/diff.py ===
+__all__ = [
+    "FirstDiff",
+    "CommonPrefixSuffix",
+    "DiffSpan",
+    "MAX_LEVENSHTEIN_LEN",
+    "first_diff",
+    "common_prefix_suffix",
+    "levenshtein_distance",
+    "longest_common_subsequence",
+    "diff_spans",
+]
+
+
+class FirstDiff(TypedDict):
+    """Information about the first difference between two strings."""
+    a_index: int
+    b_index: int
+    a_char: str
+    b_char: str
+    a_codepoint: str
+    b_codepoint: str
+
+
+class CommonPrefixSuffix(TypedDict):
+    """Common prefix and suffix lengths."""
+    common_prefix_len: int
+    common_suffix_len: int
+
+
+class DiffSpan(TypedDict):
+    """A span of difference between two strings."""
+    kind: str
+    a_span: list[int]
+    b_span: list[int]
+    a_text: str
+    b_text: str
+
+
+MAX_LEVENSHTEIN_LEN = 10000
+
+
+def first_diff(a: str, b: str) -> FirstDiff | None:
+    """Find the first difference between two strings.
+
+    Args:
+        a: First string.
+        b: Second string.
+
+    Returns:
+        FirstDiff dict with indices, chars, and codepoints, or None if equal.
+    """
+    min_len = min(len(a), len(b))
+
+    for i in range(min_len):
+        if a[i] != b[i]:
+            return FirstDiff(
+                a_index=i,
+                b_index=i,
+                a_char=a[i],
+                b_char=b[i],
+                a_codepoint=f"U+{ord(a[i]):04X}",
+                b_codepoint=f"U+{ord(b[i]):04X}",
+            )
+
+    if len(a) != len(b):
+        return FirstDiff(
+            a_index=min_len,
+            b_index=min_len,
+            a_char=a[min_len] if len(a) > min_len else "",
+            b_char=b[min_len] if len(b) > min_len else "",
+            a_codepoint=f"U+{ord(a[min_len]):04X}" if len(a) > min_len else "",
+            b_codepoint=f"U+{ord(b[min_len]):04X}" if len(b) > min_len else "",
+        )
+
+    return None
+
+
+def common_prefix_suffix(a: str, b: str) -> CommonPrefixSuffix:
+    """Find common prefix and suffix lengths of two strings.
+
+    Avoids overlapping prefix/suffix. If the entire string would be
+    overlapped, both prefix and suffix are zero.
+
+    Args:
+        a: First string.
+        b: Second string.
+
+    Returns:
+        Dictionary with common_prefix_len and common_suffix_len.
+
+    Example:
+        >>> common_prefix_suffix("prefix_middle_suffix", "xxx_middle_yyy")
+        {'common_prefix_len': 0, 'common_suffix_len': 0}
+        >>> common_prefix_suffix("hello world", "hello there")
+        {'common_prefix_len': 6, 'common_suffix_len': 0}
+        >>> common_prefix_suffix("testing", "ing")
+        {'common_prefix_len': 0, 'common_suffix_len': 0}
+    """
+    # Find common prefix
+    prefix_len = 0
+    min_len = min(len(a), len(b))
+    while prefix_len < min_len and a[prefix_len] == b[prefix_len]:
+        prefix_len += 1
+
+    # Find common suffix (working backwards from end)
+    suffix_len = 0
+    while (suffix_len < min_len - prefix_len and
+           a[len(a) - 1 - suffix_len] == b[len(b) - 1 - suffix_len]):
+        suffix_len += 1
+
+    return CommonPrefixSuffix(
+        common_prefix_len=prefix_len,
+        common_suffix_len=suffix_len,
+    )
+
+
+def levenshtein_distance(a: str, b: str, max_len: int = MAX_LEVENSHTEIN_LEN) -> int:
+    """Calculate Levenshtein (edit) distance between two strings.
+
+    Uses dynamic programming with memory optimization. Bounds input size.
+
+    Args:
+        a: First string.
+        b: Second string.
+        max_len: Maximum string length to process (default 10000).
+
+    Returns:
+        Edit distance as integer.
+
+    Raises:
+        ValueError: If either string exceeds max_len.
+    """
+    if len(a) > max_len or len(b) > max_len:
+        raise ValueError(f"Input string exceeds max length {max_len}")
+
+    # If one string is empty, distance is length of the other
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+
+    # Optimize memory by using two rows instead of full matrix
+    # dp[j] = edit distance for a[:i] and b[:j]
+    prev_row = list(range(len(b) + 1))
+    curr_row = [0] * (len(b) + 1)
+
+    for i in range(1, len(a) + 1):
+        curr_row[0] = i
+        for j in range(1, len(b) + 1):
+            if a[i - 1] == b[j - 1]:
+                curr_row[j] = prev_row[j - 1]
+            else:
+                curr_row[j] = 1 + min(
+                    prev_row[j],      # deletion
+                    curr_row[j - 1], # insertion
+                    prev_row[j - 1], # substitution
+                )
+        prev_row, curr_row = curr_row, prev_row
+
+    return prev_row[len(b)]
+
+
+def longest_common_subsequence(a: str, b: str) -> str:
+    """Find the longest common subsequence of two strings.
+
+    Args:
+        a: First string.
+        b: Second string.
+
+    Returns:
+        The longest common subsequence as a string.
+    """
+    if not a or not b:
+        return ""
+
+    m, n = len(a), len(b)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if a[i - 1] == b[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    lcs_len = dp[m][n]
+    result = []
+    i, j = m, n
+    while i > 0 and j > 0:
+        if a[i - 1] == b[j - 1]:
+            result.append(a[i - 1])
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] > dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+
+    return "".join(reversed(result))
+
+
+def diff_spans(a: str, b: str, max_diffs: int = 50) -> list[DiffSpan]:
+    """Find diff spans between two strings using SequenceMatcher.
+
+    Args:
+        a: First string.
+        b: Second string.
+        max_diffs: Maximum number of diff spans to return (default 50).
+        Larger strings will have diffs truncated to this limit.
+
+    Returns:
+        List of DiffSpan dicts with kind (replace/insert/delete),
+        a_span, b_span, a_text, b_text.
+    """
+    matcher = difflib.SequenceMatcher(None, a, b)
+    spans: list[DiffSpan] = []
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+
+        kind = tag  # 'replace', 'insert', or 'delete'
+        spans.append(DiffSpan(
+            kind=kind,
+            a_span=[i1, i2],
+            b_span=[j1, j2],
+            a_text=a[i1:i2],
+            b_text=b[j1:j2],
+        ))
+
+        if len(spans) >= max_diffs:
+            break
+
+    return spans
+
+# === exact/validate.py ===
+MAX_INPUT_LENGTH = 100_000
+MAX_PATTERN_LENGTH = 1000
+MAX_PATTERN_NESTING = 5
+MAX_SAMPLE_LENGTH = 10_000
+
+
+class BracketError(TypedDict):
+    """Information about an unmatched bracket."""
+    char: str
+    index: int
+    line: int
+    column: int
+
+
+class CheckBracketsResult(TypedDict):
+    """Result of bracket checking."""
+    balanced: bool
+    unmatched_openers: list[BracketError]
+    unmatched_closers: list[BracketError]
+
+
+class ValidateJsonResult(TypedDict):
+    """Result of JSON validation."""
+    valid: bool
+    error: str | None
+    line: int | None
+    column: int | None
+    position: int | None
+    type: str | None
+    top_level_keys: list[str] | None
+
+
+class ValidateTomlResult(TypedDict):
+    """Result of TOML validation."""
+    valid: bool
+    error: str | None
+    line: int | None
+    column: int | None
+    position: int | None
+    type: str | None
+    top_level_keys: list[str] | None
+    tables: list[str] | None
+
+
+class RegexMatchPreview(TypedDict):
+    """Preview of a regex replacement."""
+    sample: str
+    original: str
+    replacement: str
+    changed: bool
+
+
+class RegexFlags(TypedDict):
+    """Structured regex flags."""
+    ignore_case: bool
+    multiline: bool
+    dotall: bool
+    ascii: bool
+
+
+class RegexMatch(TypedDict):
+    """Result of a single regex match."""
+    sample: str
+    matches: bool
+    fullmatch: bool
+    span: list[int] | None
+    groups: list[str]
+    groupdict: dict[str, str]
+
+
+class RegexTestResult(TypedDict):
+    """Result of regex testing."""
+    valid_pattern: bool
+    results: list[RegexMatch]
+    error: str | None
+    flags_used: RegexFlags
+
+
+class JsonCompareDiff(TypedDict):
+    """A single difference between two JSON documents."""
+    path: str
+    kind: str
+    a_type: str | None
+    b_type: str | None
+    a_preview: str | None
+    b_preview: str | None
+
+
+class JsonCompareResult(TypedDict):
+    """Result of JSON comparison."""
+    valid_json_a: bool
+    valid_json_b: bool
+    equal: bool
+    same_type: bool
+    diff_count: int
+    diffs: list[JsonCompareDiff]
+    truncated: bool
+    summary: str
+
+
+# Default bracket pairs
+DEFAULT_BRACKET_PAIRS: dict[str, str] = {
+    "(": ")",
+    "[": "]",
+    "{": "}",
+    "<": ">",
+}
+
+
+def _get_line_column(s: str, index: int) -> tuple[int, int]:
+    """Get 1-based line and column for a string index.
+
+    Args:
+        s: Input string.
+        index: Character index.
+
+    Returns:
+        Tuple of (line, column), both 1-based.
+    """
+    line = 1
+    column = 1
+    for i in range(index):
+        if s[i] == "\n":
+            line += 1
+            column = 1
+        else:
+            column += 1
+    return line, column
+
+
+def check_brackets(
+    s: str,
+    pairs: dict[str, str] | None = None,
+) -> CheckBracketsResult:
+    """Check if brackets are balanced in the string.
+
+    Tracks unmatched openers and closers with positions.
+
+    Args:
+        s: Input string.
+        pairs: Bracket pair mapping (default: () [] {} <>).
+
+    Returns:
+        Dictionary with balanced (bool), unmatched_openers (list),
+        and unmatched_closers (list).
+
+    Raises:
+        ValueError: If input exceeds MAX_INPUT_LENGTH.
+    """
+    if len(s) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input length {len(s)} exceeds MAX_INPUT_LENGTH {MAX_INPUT_LENGTH}")
+
+    if pairs is None:
+        pairs = DEFAULT_BRACKET_PAIRS
+
+    openers = set(pairs.keys())
+    closers = set(pairs.values())
+    opener_to_closer = pairs.copy()
+
+    stack: list[tuple[str, int]] = []  # (char, index)
+    unmatched_openers: list[BracketError] = []
+    unmatched_closers: list[BracketError] = []
+
+    for index, char in enumerate(s):
+        if char in openers:
+            stack.append((char, index))
+        elif char in closers:
+            if stack:
+                opener, opener_index = stack.pop()
+                if opener_to_closer.get(opener) != char:
+                    # Mismatch - treat as both unmatched
+                    unmatched_openers.append(BracketError(
+                        char=opener,
+                        index=opener_index,
+                        line=_get_line_column(s, opener_index)[0],
+                        column=_get_line_column(s, opener_index)[1],
+                    ))
+                    unmatched_closers.append(BracketError(
+                        char=char,
+                        index=index,
+                        line=_get_line_column(s, index)[0],
+                        column=_get_line_column(s, index)[1],
+                    ))
+            else:
+                # No matching opener
+                unmatched_closers.append(BracketError(
+                    char=char,
+                    index=index,
+                    line=_get_line_column(s, index)[0],
+                    column=_get_line_column(s, index)[1],
+                ))
+
+    # Remaining openers are unmatched
+    for opener, opener_index in stack:
+        unmatched_openers.append(BracketError(
+            char=opener,
+            index=opener_index,
+            line=_get_line_column(s, opener_index)[0],
+            column=_get_line_column(s, opener_index)[1],
+        ))
+
+    return CheckBracketsResult(
+        balanced=len(unmatched_openers) == 0 and len(unmatched_closers) == 0,
+        unmatched_openers=unmatched_openers,
+        unmatched_closers=unmatched_closers,
+    )
+
+
+def validate_json(s: str) -> ValidateJsonResult:
+    """Validate JSON string and return detailed error information.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        Dictionary with valid (bool), error message (if invalid),
+        line, column, position (if invalid), and type/top_level_keys (if valid).
+
+    Raises:
+        ValueError: If input exceeds MAX_INPUT_LENGTH.
+    """
+    if len(s) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input length {len(s)} exceeds MAX_INPUT_LENGTH {MAX_INPUT_LENGTH}")
+
+    try:
+        parsed = json.loads(s)
+
+        # Determine the type
+        if isinstance(parsed, dict):
+            type_str = "object"
+            keys = list(parsed.keys())
+        elif isinstance(parsed, list):
+            type_str = "array"
+            keys = None
+        else:
+            type_str = type(parsed).__name__
+            keys = None
+
+        return ValidateJsonResult(
+            valid=True,
+            error=None,
+            line=None,
+            column=None,
+            position=None,
+            type=type_str,
+            top_level_keys=keys,
+        )
+
+    except json.JSONDecodeError as e:
+        return ValidateJsonResult(
+            valid=False,
+            error=e.msg,
+            line=e.lineno,
+            column=e.colno,
+            position=e.pos,
+            type=None,
+            top_level_keys=None,
+        )
+
+
+def _extract_tables(d: dict, prefix: str = "") -> list[str]:
+    """Recursively extract all table names from parsed TOML."""
+    tables: list[str] = []
+    for key, value in d.items():
+        full_name = f"{prefix}{key}" if prefix else key
+        tables.append(full_name)
+        if isinstance(value, dict):
+            tables.extend(_extract_tables(value, f"{full_name}."))
+    return tables
+
+
+def validate_toml_text(text: str) -> ValidateTomlResult:
+    """Validate TOML string and return detailed structure information.
+
+    Args:
+        text: Input string.
+
+    Returns:
+        Dictionary with valid (bool), error message (if invalid),
+        line, column, position (if invalid), type, top_level_keys,
+        and tables (table paths like 'package', 'dependencies.dev').
+
+    Raises:
+        ValueError: If input exceeds MAX_INPUT_LENGTH.
+    """
+    try:
+        import tomllib
+    except ImportError:
+        return ValidateTomlResult(
+            valid=False,
+            error="tomllib not available - Python 3.11+ required",
+            line=None,
+            column=None,
+            position=None,
+            type=None,
+            top_level_keys=None,
+            tables=None,
+        )
+
+    if len(text) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_INPUT_LENGTH {MAX_INPUT_LENGTH}")
+
+    try:
+        parsed = tomllib.loads(text)
+
+        top_level = list(parsed.keys())
+        tables = _extract_tables(parsed)
+
+        return ValidateTomlResult(
+            valid=True,
+            error=None,
+            line=None,
+            column=None,
+            position=None,
+            type="document",
+            top_level_keys=top_level,
+            tables=tables,
+        )
+
+    except Exception as e:
+        err_str = str(e)
+        line = getattr(e, 'lineno', None)
+        col = getattr(e, 'colno', None)
+        pos = getattr(e, 'pos', None)
+
+        return ValidateTomlResult(
+            valid=False,
+            error=err_str,
+            line=line,
+            column=col,
+            position=pos,
+            type=None,
+            top_level_keys=None,
+            tables=None,
+        )
+
+
+class TomlShapeResult(TypedDict):
+    """Result of TOML shape analysis."""
+    valid: bool
+    top_level_keys: list[str] | None
+    tables: list[str] | None
+    truncated: bool
+    summary: str
+
+
+class VersionCompareResult(TypedDict):
+    """Result of version comparison."""
+    comparison: int
+    valid: bool
+    scheme: str
+    summary: str
+
+
+def toml_shape(text: str, max_tables: int = 100) -> TomlShapeResult:
+    """Analyze the structure of a TOML document.
+
+    Args:
+        text: TOML document string.
+        max_tables: Maximum tables to return (default 100).
+
+    Returns:
+        Dictionary with valid (bool), top_level_keys, tables, and summary.
+
+    Raises:
+        ValueError: If input exceeds MAX_INPUT_LENGTH.
+    """
+    try:
+        import tomllib
+    except ImportError:
+        return TomlShapeResult(
+            valid=False,
+            top_level_keys=None,
+            tables=None,
+            truncated=False,
+            summary="tomllib not available - Python 3.11+ required",
+        )
+
+    if len(text) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_INPUT_LENGTH {MAX_INPUT_LENGTH}")
+
+    try:
+        parsed = tomllib.loads(text)
+        top_level = list(parsed.keys())
+        tables = _extract_tables(parsed)
+
+        truncated = len(tables) > max_tables
+        if truncated:
+            tables = tables[:max_tables]
+
+        return TomlShapeResult(
+            valid=True,
+            top_level_keys=top_level,
+            tables=tables,
+            truncated=truncated,
+            summary=f"Valid TOML with {len(top_level)} top-level keys and {len(tables)} tables",
+        )
+    except Exception as e:
+        return TomlShapeResult(
+            valid=False,
+            top_level_keys=None,
+            tables=None,
+            truncated=False,
+            summary=f"Error: {str(e)}",
+        )
+
+
+def version_compare(a: str, b: str, scheme: str = "semver") -> VersionCompareResult:
+    """Compare two version strings.
+
+    Args:
+        a: First version string.
+        b: Second version string.
+        scheme: Version scheme ("semver", "pep440", or "loose").
+
+    Returns:
+        Dictionary with comparison (-1, 0, 1), valid (bool), scheme,
+        and summary.
+    """
+    if scheme == "semver":
+        return _semver_compare(a, b)
+    elif scheme == "pep440":
+        return VersionCompareResult(
+            comparison=0,
+            valid=False,
+            scheme="pep440",
+            summary="PEP 440 not implemented (requires packaging library)",
+        )
+    elif scheme == "loose":
+        return _loose_version_compare(a, b)
+    else:
+        return VersionCompareResult(
+            comparison=0,
+            valid=False,
+            scheme=scheme,
+            summary=f"Unknown scheme: {scheme}",
+        )
+
+
+def _parse_semver(version: str) -> tuple[int, int, int] | None:
+    """Parse semver string into (major, minor, patch).
+
+    Args:
+        version: Version string like "1.2.3" or "1.2.3-beta".
+
+    Returns:
+        Tuple of (major, minor, patch) or None if invalid.
+    """
+    import re
+    match = re.match(r'^(\d+)\.(\d+)\.(\d+)', version.strip())
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def _semver_compare(a: str, b: str) -> VersionCompareResult:
+    """Compare two semver versions.
+
+    Args:
+        a: First version string.
+        b: Second version string.
+
+    Returns:
+        VersionCompareResult with comparison, valid, scheme, summary.
+    """
+    parsed_a = _parse_semver(a)
+    parsed_b = _parse_semver(b)
+
+    if parsed_a is None:
+        return VersionCompareResult(
+            comparison=0,
+            valid=False,
+            scheme="semver",
+            summary=f"Invalid semver: '{a}'",
+        )
+    if parsed_b is None:
+        return VersionCompareResult(
+            comparison=0,
+            valid=False,
+            scheme="semver",
+            summary=f"Invalid semver: '{b}'",
+        )
+
+    if parsed_a < parsed_b:
+        comparison = -1
+        summary = f"{a} < {b}"
+    elif parsed_a > parsed_b:
+        comparison = 1
+        summary = f"{a} > {b}"
+    else:
+        comparison = 0
+        summary = f"{a} == {b}"
+
+    return VersionCompareResult(
+        comparison=comparison,
+        valid=True,
+        scheme="semver",
+        summary=summary,
+    )
+
+
+def _loose_version_compare(a: str, b: str) -> VersionCompareResult:
+    """Compare two versions using loose parsing.
+
+    Extracts numeric parts and compares them sequentially.
+
+    Args:
+        a: First version string.
+        b: Second version string.
+
+    Returns:
+        VersionCompareResult with comparison, valid, scheme, summary.
+    """
+    import re
+
+    def extract_parts(version: str) -> list[int]:
+        parts = re.findall(r'\d+', version)
+        return [int(p) for p in parts]
+
+    parts_a = extract_parts(a)
+    parts_b = extract_parts(b)
+
+    max_len = max(len(parts_a), len(parts_b))
+    for i in range(max_len):
+        val_a = parts_a[i] if i < len(parts_a) else 0
+        val_b = parts_b[i] if i < len(parts_b) else 0
+        if val_a < val_b:
+            return VersionCompareResult(
+                comparison=-1,
+                valid=True,
+                scheme="loose",
+                summary=f"{a} < {b}",
+            )
+        elif val_a > val_b:
+            return VersionCompareResult(
+                comparison=1,
+                valid=True,
+                scheme="loose",
+                summary=f"{a} > {b}",
+            )
+
+    return VersionCompareResult(
+        comparison=0,
+        valid=True,
+        scheme="loose",
+        summary=f"{a} == {b}",
+    )
+
+
+def list_dedupe(
+    items: list[str],
+    normalization: str = "NFC",
+    casefold: bool = False,
+    stable: bool = True,
+) -> list[str]:
+    """Remove duplicates from list while preserving order.
+
+    Args:
+        items: List of strings to dedupe.
+        normalization: Unicode normalization form.
+        casefold: Apply casefolding before comparison.
+        stable: If True, preserve first occurrence order.
+
+    Returns:
+        List with duplicates removed.
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+
+    for item in items:
+        if casefold:
+            compare_val = item.casefold()
+        else:
+            compare_val = item
+
+        if normalization != "raw":
+            compare_val = unicodedata.normalize(normalization, compare_val)
+
+        if compare_val not in seen:
+            seen.add(compare_val)
+            result.append(item)
+
+    return result
+
+
+def list_sort(
+    items: list[str],
+    normalization: str = "NFC",
+    casefold: bool = False,
+    reverse: bool = False,
+    stable: bool = True,
+) -> list[str]:
+    """Sort list of strings with normalization support.
+
+    Args:
+        items: List of strings to sort.
+        normalization: Unicode normalization form.
+        casefold: Apply casefolding for sorting.
+        reverse: Sort in descending order.
+        stable: If True, preserve original order for equal elements.
+
+    Returns:
+        Sorted list.
+    """
+    def transform(s: str) -> str:
+        if casefold:
+            s = s.casefold()
+        if normalization != "raw":
+            s = unicodedata.normalize(normalization, s)
+        return s
+
+    return sorted(items, key=transform, reverse=reverse)
+
+
+def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
+    """Check if regex pattern is too complex (ReDoS prevention).
+
+    Args:
+        pattern: Regular expression pattern.
+
+    Returns:
+        Tuple of (is_safe, error_message).
+    """
+    if len(pattern) > MAX_PATTERN_LENGTH:
+        return False, f"Pattern length {len(pattern)} exceeds maximum {MAX_PATTERN_LENGTH}"
+
+    nesting_depth = 0
+    max_nesting = 0
+    in_char_class = False
+    i = 0
+
+    while i < len(pattern):
+        char = pattern[i]
+
+        if char == '\\' and i + 1 < len(pattern):
+            i += 2
+            continue
+
+        if char == '[':
+            nesting_depth += 1
+            max_nesting = max(max_nesting, nesting_depth)
+            in_char_class = True
+        elif char == ']':
+            nesting_depth -= 1
+            in_char_class = False
+        elif char == '(' and not in_char_class:
+            nesting_depth += 1
+            max_nesting = max(max_nesting, nesting_depth)
+        elif char == ')' and not in_char_class:
+            nesting_depth -= 1
+            if nesting_depth < 0:
+                return False, f"Unmatched closing '{char}' at position {i}"
+
+        i += 1
+
+    if max_nesting > MAX_PATTERN_NESTING:
+        return False, f"Pattern nesting depth {max_nesting} exceeds maximum {MAX_PATTERN_NESTING}"
+
+    return True, None
+
+
+def regex_test(
+    pattern: str,
+    samples: list[str],
+    flags: list[str] | None = None,
+    ignore_case: bool = False,
+    multiline: bool = False,
+    dotall: bool = False,
+    ascii: bool = False,
+) -> RegexTestResult:
+    """Test a Python regular expression against sample strings.
+
+    Args:
+        pattern: Regular expression pattern.
+        samples: List of strings to test against.
+        flags: List of flag names (e.g., ["IGNORECASE", "MULTILINE"]).
+        ignore_case: Use IGNORECASE flag.
+        multiline: Use MULTILINE flag.
+        dotall: Use DOTALL flag.
+        ascii: Use ASCII flag.
+
+    Returns:
+        Dictionary with valid_pattern (bool), results, and flags_used.
+    """
+    is_safe, error_msg = _check_pattern_complexity(pattern)
+    if not is_safe:
+        return RegexTestResult(
+            valid_pattern=False,
+            results=[],
+            error=error_msg,
+            flags_used=RegexFlags(
+                ignore_case=ignore_case,
+                multiline=multiline,
+                dotall=dotall,
+                ascii=ascii,
+            ),
+        )
+
+    flag_values = 0
+    flag_map = {
+        "IGNORECASE": re.IGNORECASE,
+        "MULTILINE": re.MULTILINE,
+        "DOTALL": re.DOTALL,
+        "UNICODE": re.UNICODE,
+        "DEBUG": re.DEBUG,
+        "VERBOSE": re.VERBOSE,
+    }
+    if flags:
+        for flag_name in flags:
+            if flag_name in flag_map:
+                flag_values |= flag_map[flag_name]
+    if ignore_case:
+        flag_values |= re.IGNORECASE
+    if multiline:
+        flag_values |= re.MULTILINE
+    if dotall:
+        flag_values |= re.DOTALL
+    if ascii:
+        flag_values |= re.ASCII
+
+    try:
+        compiled = re.compile(pattern, flag_values)
+    except re.error as e:
+        return RegexTestResult(
+            valid_pattern=False,
+            results=[],
+            error=str(e),
+            flags_used=RegexFlags(
+                ignore_case=ignore_case,
+                multiline=multiline,
+                dotall=dotall,
+                ascii=ascii,
+            ),
+        )
+
+    results: list[RegexMatch] = []
+
+    for sample in samples:
+        if len(sample) > MAX_SAMPLE_LENGTH:
+            return RegexTestResult(
+                valid_pattern=True,
+                results=[],
+                error=f"Sample length {len(sample)} exceeds MAX_SAMPLE_LENGTH {MAX_SAMPLE_LENGTH}",
+                flags_used=RegexFlags(
+                    ignore_case=ignore_case,
+                    multiline=multiline,
+                    dotall=dotall,
+                    ascii=ascii,
+                ),
+            )
+        match = compiled.search(sample)
+        if match is None:
+            results.append(RegexMatch(
+                sample=sample,
+                matches=False,
+                fullmatch=False,
+                span=None,
+                groups=[],
+                groupdict={},
+            ))
+        else:
+            full_match = compiled.fullmatch(sample)
+            span = list(match.span()) if match else None
+            groups = list(match.groups())
+            groupdict = match.groupdict() if match else {}
+
+            results.append(RegexMatch(
+                sample=sample,
+                matches=True,
+                fullmatch=full_match is not None,
+                span=span,
+                groups=groups,
+                groupdict=groupdict,
+            ))
+
+    return RegexTestResult(
+        valid_pattern=True,
+        results=results,
+        flags_used=RegexFlags(
+            ignore_case=ignore_case,
+            multiline=multiline,
+            dotall=dotall,
+            ascii=ascii,
+        ),
+    )
+
+
+def regex_replace_preview(
+    pattern: str,
+    replacement: str,
+    samples: list[str],
+    ignore_case: bool = False,
+    multiline: bool = False,
+    dotall: bool = False,
+    ascii: bool = False,
+) -> dict:
+    """Preview regex replacements on sample strings.
+
+    Args:
+        pattern: Regular expression pattern.
+        replacement: Replacement string.
+        samples: List of strings to test.
+        ignore_case: Use IGNORECASE flag.
+        multiline: Use MULTILINE flag.
+        dotall: Use DOTALL flag.
+        ascii: Use ASCII flag.
+
+    Returns:
+        Dictionary with previews of replacements.
+    """
+    is_safe, error_msg = _check_pattern_complexity(pattern)
+    if not is_safe:
+        return {
+            "valid_pattern": False,
+            "error": error_msg,
+            "previews": [],
+        }
+
+    flag_values = 0
+    if ignore_case:
+        flag_values |= re.IGNORECASE
+    if multiline:
+        flag_values |= re.MULTILINE
+    if dotall:
+        flag_values |= re.DOTALL
+    if ascii:
+        flag_values |= re.ASCII
+
+    try:
+        compiled = re.compile(pattern, flag_values)
+    except re.error as e:
+        return {
+            "valid_pattern": False,
+            "error": str(e),
+            "previews": [],
+        }
+
+    previews: list[RegexMatchPreview] = []
+    for sample in samples:
+        try:
+            new_text, count = compiled.subn(replacement, sample)
+            previews.append(RegexMatchPreview(
+                sample=sample,
+                original=sample,
+                replacement=new_text,
+                changed=count > 0,
+            ))
+        except Exception:
+            previews.append(RegexMatchPreview(
+                sample=sample,
+                original=sample,
+                replacement=sample,
+                changed=False,
+            ))
+
+    return {
+        "valid_pattern": True,
+        "error": None,
+        "previews": previews,
+    }
+
+
+def _get_json_type(value: Any) -> str:
+    """Get type string for a JSON value."""
+    if value is None:
+        return "null"
+    elif isinstance(value, bool):
+        return "boolean"
+    elif isinstance(value, int):
+        return "integer"
+    elif isinstance(value, float):
+        return "float"
+    elif isinstance(value, str):
+        return "string"
+    elif isinstance(value, list):
+        return "array"
+    elif isinstance(value, dict):
+        return "object"
+    else:
+        return type(value).__name__
+
+
+def _value_preview(value: Any, max_len: int = 30) -> str | None:
+    """Create a preview string for a JSON value."""
+    if value is None:
+        return "null"
+    elif isinstance(value, bool):
+        return "true" if value else "false"
+    elif isinstance(value, (int, float)):
+        s = str(value)
+        return s if len(s) <= max_len else s[:max_len - 3] + "..."
+    elif isinstance(value, str):
+        if len(value) <= max_len:
+            return f'"{value}"'
+        else:
+            return f'"{value[:max_len - 3]}..."'
+    elif isinstance(value, list):
+        return f"[{len(value)} items]"
+    elif isinstance(value, dict):
+        return f"{{{len(value)} keys}}"
+    return str(type(value).__name__)
+
+
+def _is_serializable(value: Any) -> bool:
+    """Check if a value can be serialized for comparison."""
+    if value is None:
+        return True
+    elif isinstance(value, (bool, int, float, str)):
+        return True
+    elif isinstance(value, dict):
+        return all(isinstance(k, str) for k in value.keys()) and all(
+            _is_serializable(v) for v in value.values()
+        )
+    elif isinstance(value, list):
+        return all(_is_serializable(v) for v in value)
+    return False
+
+
+def _canonicalize_for_compare(value: Any) -> Any:
+    """Convert value to canonical form for comparison."""
+    if value is None:
+        return None
+    elif isinstance(value, bool):
+        return value
+    elif isinstance(value, (int, float)):
+        return value
+    elif isinstance(value, str):
+        return value
+    elif isinstance(value, dict):
+        return {k: _canonicalize_for_compare(v) for k, v in sorted(value.items())}
+    elif isinstance(value, list):
+        return [_canonicalize_for_compare(v) for v in value]
+    return value
+
+
+def json_compare(
+    a: str,
+    b: str,
+    ignore_object_order: bool = True,
+    ignore_array_order: bool = False,
+    numeric_string_equivalence: bool = False,
+    casefold_keys: bool = False,
+    treat_missing_null_as_equal: bool = False,
+    max_diffs: int = 50,
+) -> JsonCompareResult:
+    """Compare two JSON documents semantically.
+
+    Args:
+        a: First JSON document string.
+        b: Second JSON document string.
+        ignore_object_order: Sort object keys for comparison.
+        ignore_array_order: Sort arrays if all items are serializable.
+        numeric_string_equivalence: Treat numeric strings as numbers.
+        casefold_keys: Casefold object keys before comparison.
+        treat_missing_null_as_equal: Treat missing and null as equal.
+        max_diffs: Maximum number of differences to report.
+
+    Returns:
+        Dictionary with comparison results including diffs and summary.
+    """
+    diffs: list[JsonCompareDiff] = []
+    valid_json_a = True
+    valid_json_b = True
+    parsed_a: Any = None
+    parsed_b: Any = None
+    equal = False
+    type_match = True
+    _diff_count_total = 0
+
+    try:
+        parsed_a = json.loads(a)
+    except json.JSONDecodeError as e:
+        valid_json_a = False
+        diffs.append(JsonCompareDiff(
+            path="",
+            kind="parse_error_a",
+            a_type=None,
+            b_type=None,
+            a_preview=f"Line {e.lineno}, Col {e.colno}: {e.msg}",
+            b_preview=None,
+        ))
+
+    try:
+        parsed_b = json.loads(b)
+    except json.JSONDecodeError as e:
+        valid_json_b = False
+        diffs.append(JsonCompareDiff(
+            path="",
+            kind="parse_error_b",
+            a_type=None,
+            b_type=None,
+            a_preview=None,
+            b_preview=f"Line {e.lineno}, Col {e.colno}: {e.msg}",
+        ))
+
+    if not valid_json_a or not valid_json_b:
+        return JsonCompareResult(
+            valid_json_a=valid_json_a,
+            valid_json_b=valid_json_b,
+            equal=False,
+            same_type=False,
+            diff_count=len(diffs),
+            diffs=diffs[:max_diffs],
+            truncated=len(diffs) > max_diffs,
+            summary="One or both inputs are not valid JSON",
+        )
+
+    def _normalize_key(key: str) -> str:
+        return key.casefold() if casefold_keys else key
+
+    def _types_equal(a_val: Any, b_val: Any) -> bool:
+        a_type = _get_json_type(a_val)
+        b_type = _get_json_type(b_val)
+        if a_type != b_type:
+            return False
+        if numeric_string_equivalence and a_type == "string":
+            try:
+                float(a_val)
+                return True
+            except (ValueError, TypeError):
+                pass
+        return True
+
+    def _compare_values(path: str, a_val: Any, b_val: Any) -> None:
+        nonlocal type_match
+        if len(diffs) >= max_diffs:
+            return
+
+        if treat_missing_null_as_equal:
+            if a_val is None or b_val is None:
+                return
+
+        a_type = _get_json_type(a_val)
+        b_type = _get_json_type(b_val)
+
+        if numeric_string_equivalence and a_type != b_type:
+            if (a_type == "string" and b_type in ("integer", "float")) or \
+               (b_type == "string" and a_type in ("integer", "float")):
+                try:
+                    num_a = float(a_val)
+                    num_b = float(b_val)
+                    if num_a == num_b:
+                        return
+                    type_match = False
+                    diffs.append(JsonCompareDiff(
+                        path=path,
+                        kind="value_changed",
+                        a_type=a_type,
+                        b_type=b_type,
+                        a_preview=_value_preview(a_val),
+                        b_preview=_value_preview(b_val),
+                    ))
+                    diff_count_total += 1
+                    return
+                except (ValueError, TypeError):
+                    pass
+
+        if a_type != b_type:
+            if treat_missing_null_as_equal:
+                a_is_null = a_val is None
+                b_is_null = b_val is None
+                if not (a_is_null or b_is_null):
+                    type_match = False
+                    diffs.append(JsonCompareDiff(
+                        path=path,
+                        kind="type_changed",
+                        a_type=a_type,
+                        b_type=b_type,
+                        a_preview=_value_preview(a_val),
+                        b_preview=_value_preview(b_val),
+                    ))
+                    return
+            else:
+                type_match = False
+                diffs.append(JsonCompareDiff(
+                    path=path,
+                    kind="type_changed",
+                    a_type=a_type,
+                    b_type=b_type,
+                    a_preview=_value_preview(a_val),
+                    b_preview=_value_preview(b_val),
+                ))
+                return
+
+        if numeric_string_equivalence and a_type == "string" and b_type == "string":
+            try:
+                num_a = float(a_val)
+                num_b = float(b_val)
+                if num_a == num_b:
+                    return
+            except (ValueError, TypeError):
+                pass
+
+        if a_type == "object":
+            a_keys = set(a_val.keys())
+            b_keys = set(b_val.keys())
+
+            if casefold_keys:
+                a_keys = {_normalize_key(k) for k in a_keys}
+                b_keys = {_normalize_key(k) for k in b_keys}
+
+            keys_a = {_normalize_key(k): k for k in a_val.keys()}
+            keys_b = {_normalize_key(k): k for k in b_val.keys()}
+
+            if not ignore_object_order:
+                a_key_order = list(a_val.keys())
+                b_key_order = list(b_val.keys())
+                len_a = len(a_key_order)
+                len_b = len(b_key_order)
+                min_len = min(len_a, len_b)
+                for i in range(min_len):
+                    a_key = a_key_order[i]
+                    b_key = b_key_order[i]
+                    if _normalize_key(a_key) != _normalize_key(b_key):
+                        type_match = False
+                        diffs.append(JsonCompareDiff(
+                            path=f"{path}/{a_key}" if path else f"/{a_key}",
+                            kind="key_missing_in_b",
+                            a_type=_get_json_type(a_val[a_key]),
+                            b_type=None,
+                            a_preview=_value_preview(a_val[a_key]),
+                            b_preview=None,
+                        ))
+                        break
+                if len_a != len_b:
+                    type_match = False
+                    longer = a_key_order if len_a > len_b else b_key_order
+                    diffs.append(JsonCompareDiff(
+                        path=path,
+                        kind="array_length_changed",
+                        a_type="object",
+                        b_type="object",
+                        a_preview=f"{len_a} keys",
+                        b_preview=f"{len_b} keys",
+                    ))
+                return
+
+            for key in sorted(a_keys - b_keys):
+                orig_key = keys_a[key]
+                if treat_missing_null_as_equal:
+                    if a_val[orig_key] is not None:
+                        type_match = False
+                        diffs.append(JsonCompareDiff(
+                            path=f"{path}/{orig_key}" if path else f"/{orig_key}",
+                            kind="key_missing_in_b",
+                            a_type=_get_json_type(a_val[orig_key]),
+                            b_type=None,
+                            a_preview=_value_preview(a_val[orig_key]),
+                            b_preview=None,
+                        ))
+                else:
+                    type_match = False
+                    diffs.append(JsonCompareDiff(
+                        path=f"{path}/{orig_key}" if path else f"/{orig_key}",
+                        kind="key_missing_in_b",
+                        a_type=_get_json_type(a_val[orig_key]),
+                        b_type=None,
+                        a_preview=_value_preview(a_val[orig_key]),
+                        b_preview=None,
+                    ))
+
+            for key in sorted(b_keys - a_keys):
+                orig_key = keys_b[key]
+                if treat_missing_null_as_equal:
+                    if b_val[orig_key] is not None:
+                        type_match = False
+                        diffs.append(JsonCompareDiff(
+                            path=f"{path}/{orig_key}" if path else f"/{orig_key}",
+                            kind="key_missing_in_a",
+                            a_type=None,
+                            b_type=_get_json_type(b_val[orig_key]),
+                            a_preview=None,
+                            b_preview=_value_preview(b_val[orig_key]),
+                        ))
+                else:
+                    type_match = False
+                    diffs.append(JsonCompareDiff(
+                        path=f"{path}/{orig_key}" if path else f"/{orig_key}",
+                        kind="key_missing_in_a",
+                        a_type=None,
+                        b_type=_get_json_type(b_val[orig_key]),
+                        a_preview=None,
+                        b_preview=_value_preview(b_val[orig_key]),
+                    ))
+
+            common_keys = a_keys & b_keys
+            for key in sorted(common_keys):
+                orig_key_a = keys_a[key]
+                orig_key_b = keys_b[key]
+                new_path = f"{path}/{orig_key_a}" if path else f"/{orig_key_a}"
+                if orig_key_a != orig_key_b:
+                    new_path = f"{path}/{orig_key_a}->{orig_key_b}"
+                _compare_values(new_path, a_val[orig_key_a], b_val[orig_key_b])
+
+        elif a_type == "array":
+            if len(a_val) != len(b_val):
+                type_match = False
+                diffs.append(JsonCompareDiff(
+                    path=path,
+                    kind="array_length_changed",
+                    a_type=a_type,
+                    b_type=b_type,
+                    a_preview=f"{len(a_val)} items",
+                    b_preview=f"{len(b_val)} items",
+                ))
+                return
+
+            if ignore_array_order and _is_serializable(a_val) and _is_serializable(b_val):
+                norm_a = sorted(_canonicalize_for_compare(v) for v in a_val)
+                norm_b = sorted(_canonicalize_for_compare(v) for v in b_val)
+                if norm_a == norm_b:
+                    return
+                for i in range(len(norm_a)):
+                    _compare_values(f"{path}/[{i}]", norm_a[i], norm_b[i])
+            else:
+                for i, (item_a, item_b) in enumerate(zip(a_val, b_val)):
+                    _compare_values(f"{path}/[{i}]", item_a, item_b)
+
+        else:
+            if a_val != b_val:
+                type_match = False
+                diffs.append(JsonCompareDiff(
+                    path=path,
+                    kind="value_changed",
+                    a_type=a_type,
+                    b_type=b_type,
+                    a_preview=_value_preview(a_val),
+                    b_preview=_value_preview(b_val),
+                ))
+
+    _compare_values("", parsed_a, parsed_b)
+    truncated = len(diffs) >= max_diffs
+    diffs = diffs[:max_diffs]
+    equal = len(diffs) == 0
+
+    if equal:
+        summary = "JSON documents are equal"
+    else:
+        summary = f"JSON documents differ at {len(diffs)} path{'s' if len(diffs) != 1 else ''}"
+
+    return JsonCompareResult(
+        valid_json_a=True,
+        valid_json_b=True,
+        equal=equal,
+        same_type=type_match,
+        diff_count=len(diffs),
+        diffs=diffs,
+        truncated=truncated,
+        summary=summary,
+    )
+
+
+class JsonExtractResult(TypedDict):
+    """Result of JSON extraction using RFC 6901 JSON Pointer."""
+    valid_json: bool
+    found: bool
+    pointer: str
+    value_type: str | None
+    value: Any | None
+    preview: str | None
+    child_keys: list[str] | None
+    array_length: int | None
+    truncated: bool
+    missing_at: str | None
+    reason: str | None
+    available_keys: list[str] | None
+    error: str | None
+    line: int | None
+    column: int | None
+    summary: str
+
+
+class SchemaViolation(TypedDict):
+    """A single schema validation violation."""
+    path: str
+    message: str
+    value_type: str | None
+    expected_type: str | None
+
+
+class ValidateSchemaLightResult(TypedDict):
+    """Result of light schema validation."""
+    valid: bool
+    violations: list[SchemaViolation]
+    truncated: bool
+    summary: str
+
+
+def _decode_pointer_token(token: str) -> str:
+    """Decode RFC 6901 escape sequences in a pointer token.
+
+    Args:
+        token: Encoded token from JSON pointer.
+
+    Returns:
+        Decoded token with ~1 -> / and ~0 -> ~
+    """
+    return token.replace("~1", "/").replace("~0", "~")
+
+
+def _encode_pointer_token(token: str) -> str:
+    """Encode a key for use in a JSON pointer.
+
+    Args:
+        token: Raw token string.
+
+    Returns:
+        Encoded token with / -> ~1 and ~ -> ~0
+    """
+    return token.replace("~", "~0").replace("/", "~1")
+
+
+def json_extract(text: str, pointer: str = "", max_output_chars: int = 4000) -> JsonExtractResult:
+    """Extract a value from JSON using RFC 6901 JSON Pointer.
+
+    Args:
+        text: JSON document string.
+        pointer: RFC 6901 JSON Pointer path (e.g., "/foo/bar/0").
+                 Empty string means the whole document.
+        max_output_chars: Maximum characters for preview string.
+
+    Returns:
+        Dictionary with extraction result including value, type, preview,
+        and for missing values: reason, available_keys, and missing_at.
+
+    Raises:
+        ValueError: If input exceeds MAX_INPUT_LENGTH.
+    """
+    if len(text) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_INPUT_LENGTH {MAX_INPUT_LENGTH}")
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        return JsonExtractResult(
+            valid_json=False,
+            found=False,
+            pointer=pointer,
+            value_type=None,
+            value=None,
+            preview=None,
+            child_keys=None,
+            array_length=None,
+            truncated=False,
+            missing_at=None,
+            reason="invalid_json",
+            available_keys=None,
+            error=e.msg,
+            line=e.lineno,
+            column=e.colno,
+            summary=f"Invalid JSON: {e.msg} at line {e.lineno}, column {e.colno}",
+        )
+
+    if pointer == "":
+        return _build_found_result(parsed, pointer, max_output_chars)
+
+    tokens = pointer.split("/")
+    if tokens and tokens[0] == "":
+        tokens = tokens[1:]
+
+    current = parsed
+    path_so_far = ""
+
+    for i, token in enumerate(tokens):
+        decoded = _decode_pointer_token(token)
+        path_so_far = "/" + "/".join(_encode_pointer_token(t) for t in tokens[:i+1])
+
+        if isinstance(current, dict):
+            if decoded in current:
+                current = current[decoded]
+            else:
+                return JsonExtractResult(
+                    valid_json=True,
+                    found=False,
+                    pointer=pointer,
+                    value_type="object",
+                    value=None,
+                    preview=None,
+                    child_keys=None,
+                    array_length=None,
+                    truncated=False,
+                    missing_at=path_so_far,
+                    reason="key_not_found",
+                    available_keys=list(current.keys()),
+                    error=None,
+                    line=None,
+                    column=None,
+                    summary=f"Key '{decoded}' not found in object at {path_so_far}",
+                )
+        elif isinstance(current, list):
+            try:
+                index = int(decoded)
+            except ValueError:
+                return JsonExtractResult(
+                    valid_json=True,
+                    found=False,
+                    pointer=pointer,
+                    value_type="array",
+                    value=None,
+                    preview=None,
+                    child_keys=None,
+                    array_length=len(current),
+                    truncated=False,
+                    missing_at=path_so_far,
+                    reason="invalid_pointer_syntax",
+                    available_keys=None,
+                    error=None,
+                    line=None,
+                    column=None,
+                    summary=f"Array index expected at {path_so_far}, got non-integer '{decoded}'",
+                )
+
+            if index < 0 or index >= len(current):
+                return JsonExtractResult(
+                    valid_json=True,
+                    found=False,
+                    pointer=pointer,
+                    value_type="array",
+                    value=None,
+                    preview=None,
+                    child_keys=None,
+                    array_length=len(current),
+                    truncated=False,
+                    missing_at=path_so_far,
+                    reason="index_out_of_range",
+                    available_keys=None,
+                    error=None,
+                    line=None,
+                    column=None,
+                    summary=f"Index {index} out of range for array of length {len(current)} at {path_so_far}",
+                )
+            current = current[index]
+        else:
+            return JsonExtractResult(
+                valid_json=True,
+                found=False,
+                pointer=pointer,
+                value_type=type(current).__name__,
+                value=None,
+                preview=None,
+                child_keys=None,
+                array_length=None,
+                truncated=False,
+                missing_at=path_so_far,
+                reason="invalid_pointer_syntax",
+                available_keys=None,
+                error=None,
+                line=None,
+                column=None,
+                summary=f"Cannot index into {type(current).__name__} at {path_so_far}",
+            )
+
+    return _build_found_result(current, pointer, max_output_chars)
+
+
+def _build_found_result(value: Any, pointer: str, max_output_chars: int) -> JsonExtractResult:
+    """Build a found result for a value."""
+    if isinstance(value, dict):
+        child_keys = list(value.keys())
+        preview = json.dumps(value, ensure_ascii=False)[:max_output_chars]
+        truncated = len(json.dumps(value, ensure_ascii=False)) > max_output_chars
+        return JsonExtractResult(
+            valid_json=True,
+            found=True,
+            pointer=pointer,
+            value_type="object",
+            value=value,
+            preview=preview,
+            child_keys=child_keys,
+            array_length=None,
+            truncated=truncated,
+            missing_at=None,
+            reason=None,
+            available_keys=None,
+            error=None,
+            line=None,
+            column=None,
+            summary=f"Object with {len(child_keys)} keys" + (" (truncated)" if truncated else ""),
+        )
+    elif isinstance(value, list):
+        preview = json.dumps(value, ensure_ascii=False)[:max_output_chars]
+        truncated = len(json.dumps(value, ensure_ascii=False)) > max_output_chars
+        return JsonExtractResult(
+            valid_json=True,
+            found=True,
+            pointer=pointer,
+            value_type="array",
+            value=value,
+            preview=preview,
+            child_keys=None,
+            array_length=len(value),
+            truncated=truncated,
+            missing_at=None,
+            reason=None,
+            available_keys=None,
+            error=None,
+            line=None,
+            column=None,
+            summary=f"Array of {len(value)} elements" + (" (truncated)" if truncated else ""),
+        )
+    elif isinstance(value, str):
+        return JsonExtractResult(
+            valid_json=True,
+            found=True,
+            pointer=pointer,
+            value_type="string",
+            value=value,
+            preview=value[:max_output_chars],
+            child_keys=None,
+            array_length=None,
+            truncated=len(value) > max_output_chars,
+            missing_at=None,
+            reason=None,
+            available_keys=None,
+            error=None,
+            line=None,
+            column=None,
+            summary=f"String: \"{value[:50]}{'...' if len(value) > 50 else ''}\"",
+        )
+    elif isinstance(value, bool):
+        return JsonExtractResult(
+            valid_json=True,
+            found=True,
+            pointer=pointer,
+            value_type="boolean",
+            value=value,
+            preview=str(value).lower(),
+            child_keys=None,
+            array_length=None,
+            truncated=False,
+            missing_at=None,
+            reason=None,
+            available_keys=None,
+            error=None,
+            line=None,
+            column=None,
+            summary=f"Boolean: {str(value).lower()}",
+        )
+    elif value is None:
+        return JsonExtractResult(
+            valid_json=True,
+            found=True,
+            pointer=pointer,
+            value_type="null",
+            value=None,
+            preview="null",
+            child_keys=None,
+            array_length=None,
+            truncated=False,
+            missing_at=None,
+            reason=None,
+            available_keys=None,
+            error=None,
+            line=None,
+            column=None,
+            summary="null",
+        )
+    else:
+        return JsonExtractResult(
+            valid_json=True,
+            found=True,
+            pointer=pointer,
+            value_type="number",
+            value=value,
+            preview=str(value),
+            child_keys=None,
+            array_length=None,
+            truncated=False,
+            missing_at=None,
+            reason=None,
+            available_keys=None,
+            error=None,
+            line=None,
+            column=None,
+            summary=f"Number: {value}",
+        )
+
+
+MAX_SCHEMA_VIOLATIONS = 100
+
+
+class JsonShapeKey(TypedDict):
+    """A single key in json_shape result."""
+    type: str
+    keys: dict[str, JsonShapeKey] | None
+    key_count: int | None
+    item_types: list[str] | None
+    item_count: int | None
+
+
+class JsonShapeResult(TypedDict):
+    """Result of JSON shape analysis."""
+    valid: bool
+    shape: JsonShapeKey | None
+    truncated: bool
+    summary: str
+
+
+def json_shape(text: str, max_depth: int = 4, max_keys: int = 100, max_array_items: int = 5) -> JsonShapeResult:
+    """Analyze the structure of a JSON document without returning values.
+
+    Args:
+        text: JSON document string.
+        max_depth: Maximum depth for nested structure (default 4).
+        max_keys: Maximum keys to show per object (default 100).
+        max_array_items: Maximum array item previews (default 5).
+
+    Returns:
+        Dictionary with valid (bool), shape (nested structure), and truncated (bool).
+
+    Raises:
+        ValueError: If input exceeds MAX_INPUT_LENGTH.
+    """
+    if len(text) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_INPUT_LENGTH {MAX_INPUT_LENGTH}")
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        return JsonShapeResult(
+            valid=False,
+            shape=None,
+            truncated=False,
+            summary=f"Invalid JSON: {e.msg} at line {e.lineno}, column {e.colno}",
+        )
+
+    def _analyze_shape(value: Any, depth: int) -> JsonShapeKey:
+        """Recursively analyze shape of a value."""
+        if isinstance(value, dict):
+            key_count = len(value)
+            if depth >= max_depth:
+                return JsonShapeKey(
+                    type="object",
+                    keys=None,
+                    key_count=key_count,
+                    item_types=None,
+                    item_count=None,
+                )
+
+            keys: dict[str, JsonShapeKey] = {}
+            shown_keys = 0
+
+            for k, v in value.items():
+                if shown_keys >= max_keys:
+                    break
+                keys[k] = _analyze_shape(v, depth + 1)
+                shown_keys += 1
+
+            return JsonShapeKey(
+                type="object",
+                keys=keys if keys else None,
+                key_count=key_count if key_count > len(keys) else None,
+                item_types=None,
+                item_count=None,
+            )
+        elif isinstance(value, list):
+            item_count = len(value)
+            if depth >= max_depth:
+                return JsonShapeKey(
+                    type="array",
+                    keys=None,
+                    key_count=None,
+                    item_types=None,
+                    item_count=item_count,
+                )
+
+            item_types: list[str] = []
+            shown_items = 0
+
+            for item in value:
+                if shown_items >= max_array_items:
+                    break
+                item_types.append(_analyze_shape(item, depth + 1)["type"])
+                shown_items += 1
+
+            return JsonShapeKey(
+                type="array",
+                keys=None,
+                key_count=None,
+                item_types=item_types if item_types else None,
+                item_count=item_count,
+            )
+        else:
+            type_name = _get_json_type(value)
+            return JsonShapeKey(
+                type=type_name,
+                keys=None,
+                key_count=None,
+                item_types=None,
+                item_count=None,
+            )
+
+    shape = _analyze_shape(parsed, 0)
+    truncated = False
+
+    return JsonShapeResult(
+        valid=True,
+        shape=shape,
+        truncated=truncated,
+        summary=_build_shape_summary(shape),
+    )
+
+
+def _build_shape_summary(shape: JsonShapeKey) -> str:
+    """Build a human-readable summary of the shape."""
+    shape_type = shape["type"]
+    if shape_type == "object":
+        keys = shape.get("keys")
+        key_count = shape.get("key_count") or (len(keys) if keys else 0)
+        if keys:
+            sub_summaries = []
+            for k, v in list(keys.items())[:3]:
+                sub_summaries.append(f"{k}: {_build_shape_summary(v)}")
+            if len(keys) > 3:
+                return f"object with {key_count} keys ({{{', '.join(sub_summaries)}, ...}})"
+            return f"object with {key_count} keys ({{{', '.join(sub_summaries)}}})"
+        return f"object with {key_count} keys"
+    elif shape_type == "array":
+        item_types = shape.get("item_types")
+        item_count = shape.get("item_count") or (len(item_types) if item_types else 0)
+        if item_types:
+            unique_types = list(dict.fromkeys(item_types))
+            if len(unique_types) == 1:
+                return f"array of {unique_types[0]} with {item_count} items"
+            return f"array with {item_count} items ([{', '.join(unique_types)}, ...])"
+        return f"array with {item_count} items"
+    else:
+        return shape_type
+
+
+MAX_TEXT_LENGTH_REGEX = 100_000
+MAX_PATTERN_LENGTH_REGEX = 1000
+MAX_MATCHES = 100
+MAX_GROUPS = 100
+
+
+class RegexFindIterMatch(TypedDict, total=False):
+    """A single regex match found by regex_finditer."""
+    match: str
+    span: list[int]
+    line: int
+    column: int
+    groups: list[str]
+    groupdict: dict[str, str]
+
+
+class RegexFindIterResult(TypedDict):
+    """Result of regex_finditer."""
+    valid_pattern: bool
+    matches: list[RegexFindIterMatch]
+    truncated: bool
+    match_count: int
+    error: str | None
+
+
+def _get_line_column_for_index(text: str, index: int) -> tuple[int, int]:
+    """Get 1-based line and column for a string byte index.
+
+    Args:
+        text: Input string.
+        index: Character index.
+
+    Returns:
+        Tuple of (line, column), both 1-based.
+    """
+    line = 1
+    column = 1
+    for i in range(index):
+        if text[i] == "\n":
+            line += 1
+            column = 1
+        else:
+            column += 1
+    return line, column
+
+
+def regex_finditer(
+    pattern: str,
+    text: str,
+    flags: list[str] | None = None,
+    max_matches: int = MAX_MATCHES,
+    include_line_column: bool = True,
+    include_groups: bool = True,
+) -> RegexFindIterResult:
+    """Find all regex matches in text with positions.
+
+    Args:
+        pattern: Regular expression pattern.
+        text: Input string to search.
+        flags: List of flag names (IGNORECASE, MULTILINE, DOTALL, etc.).
+        max_matches: Maximum number of matches to return (default 100).
+        include_line_column: Include line and column info (default True).
+        include_groups: Include capture groups (default True).
+
+    Returns:
+        Dictionary with valid_pattern (bool), matches (list), truncated (bool),
+        match_count (int), and error (str if invalid).
+
+    Raises:
+        ValueError: If text exceeds MAX_TEXT_LENGTH_REGEX.
+    """
+    if len(text) > MAX_TEXT_LENGTH_REGEX:
+        raise ValueError(f"Text length {len(text)} exceeds MAX_TEXT_LENGTH_REGEX {MAX_TEXT_LENGTH_REGEX}")
+
+    if len(pattern) > MAX_PATTERN_LENGTH_REGEX:
+        return RegexFindIterResult(
+            valid_pattern=False,
+            matches=[],
+            truncated=False,
+            match_count=0,
+            error=f"Pattern length {len(pattern)} exceeds maximum {MAX_PATTERN_LENGTH_REGEX}",
+        )
+
+    is_safe, error_msg = _check_pattern_complexity(pattern)
+    if not is_safe:
+        return RegexFindIterResult(
+            valid_pattern=False,
+            matches=[],
+            truncated=False,
+            match_count=0,
+            error=error_msg,
+        )
+
+    flag_values = 0
+    flag_map = {
+        "IGNORECASE": re.IGNORECASE,
+        "MULTILINE": re.MULTILINE,
+        "DOTALL": re.DOTALL,
+        "UNICODE": re.UNICODE,
+        "VERBOSE": re.VERBOSE,
+    }
+    if flags:
+        for flag_name in flags:
+            if flag_name in flag_map:
+                flag_values |= flag_map[flag_name]
+
+    try:
+        compiled = re.compile(pattern, flag_values)
+    except re.error as e:
+        return RegexFindIterResult(
+            valid_pattern=False,
+            matches=[],
+            truncated=False,
+            match_count=0,
+            error=str(e),
+        )
+
+    matches: list[RegexFindIterMatch] = []
+    match_count = 0
+    truncated = False
+
+    for match in compiled.finditer(text):
+        match_count += 1
+        if len(matches) >= max_matches:
+            truncated = True
+            continue
+
+        span = list(match.span())
+        groups = list(match.groups()) if include_groups else []
+        groupdict = match.groupdict() if include_groups else {}
+
+        if len(groups) > MAX_GROUPS:
+            groups = groups[:MAX_GROUPS]
+
+        match_dict: RegexFindIterMatch = RegexFindIterMatch(
+            match=match.group(),
+            span=span,
+            groups=groups,
+            groupdict=groupdict,
+        )
+
+        if include_line_column:
+            line, column = _get_line_column_for_index(text, match.start())
+            match_dict["line"] = line
+            match_dict["column"] = column
+
+        matches.append(match_dict)
+
+    return RegexFindIterResult(
+        valid_pattern=True,
+        matches=matches,
+        truncated=truncated,
+        match_count=match_count,
+        error=None,
+    )
+
+
+class RegexSafetyFinding(TypedDict):
+    """A single safety finding for a regex pattern."""
+    kind: str
+    span: list[int]
+    message: str
+
+
+class RegexSafetyResult(TypedDict):
+    """Result of regex safety check."""
+    valid_pattern: bool
+    risk: str
+    findings: list[RegexSafetyFinding]
+
+
+def regex_safety_check(pattern: str) -> RegexSafetyResult:
+    """Check regex pattern for potential catastrophic backtracking risks.
+
+    This is a heuristic check and does not guarantee safety.
+
+    Args:
+        pattern: Regular expression pattern to check.
+
+    Returns:
+        Dictionary with valid_pattern (bool), risk (low/medium/high), and findings (list).
+    """
+    findings: list[RegexSafetyFinding] = []
+
+    try:
+        re.compile(pattern)
+    except re.error:
+        return RegexSafetyResult(
+            valid_pattern=False,
+            risk="low",
+            findings=[],
+        )
+
+    is_safe, error_msg = _check_pattern_complexity(pattern)
+    if not is_safe:
+        findings.append(RegexSafetyFinding(
+            kind="complexity",
+            span=[0, len(pattern)],
+            message=error_msg or "Pattern is too complex",
+        ))
+        return RegexSafetyResult(
+            valid_pattern=True,
+            risk="high",
+            findings=findings,
+        )
+
+    i = 0
+    paren_depth = 0
+    has_inner_quantifier = False
+    last_paren_end = -1
+
+    while i < len(pattern):
+        char = pattern[i]
+
+        if char == '\\' and i + 1 < len(pattern):
+            i += 2
+            continue
+
+        if char == '[':
+            i += 1
+            while i < len(pattern):
+                if pattern[i] == '\\' and i + 1 < len(pattern):
+                    i += 2
+                    continue
+                if pattern[i] == ']':
+                    break
+                i += 1
+            i += 1
+            continue
+
+        if char == '(':
+            paren_depth += 1
+            has_inner_quantifier = False
+            i += 1
+            continue
+
+        if char == ')':
+            last_paren_end = i
+            paren_depth -= 1
+            i += 1
+            continue
+
+        if char in '+*':
+            j = i + 1
+            while j < len(pattern) and pattern[j] == char:
+                j += 1
+            if j < len(pattern) and pattern[j] == '?':
+                j += 1
+
+            if paren_depth > 0:
+                if has_inner_quantifier:
+                    findings.append(RegexSafetyFinding(
+                        kind="nested_quantifier",
+                        span=[i, j],
+                        message="Nested quantifiers may cause catastrophic backtracking",
+                    ))
+                has_inner_quantifier = True
+            elif paren_depth == 0 and last_paren_end > 0:
+                if has_inner_quantifier:
+                    findings.append(RegexSafetyFinding(
+                        kind="nested_quantifier",
+                        span=[i, j],
+                        message="Quantifier after group with quantifier may cause catastrophic backtracking",
+                    ))
+
+            i = j
+            continue
+
+        if char == '{':
+            j = i + 1
+            while j < len(pattern) and pattern[j] != '}':
+                j += 1
+            if j < len(pattern):
+                j += 1
+
+            if paren_depth > 0:
+                if has_inner_quantifier:
+                    findings.append(RegexSafetyFinding(
+                        kind="nested_quantifier",
+                        span=[i, j],
+                        message="Nested quantifiers may cause catastrophic backtracking",
+                    ))
+                has_inner_quantifier = True
+
+            i = j
+            continue
+
+        i += 1
+
+    backref_pattern = re.compile(r'\\([1-9])|\\g<')
+    if backref_pattern.search(pattern):
+        findings.append(RegexSafetyFinding(
+            kind="backreference",
+            span=[0, len(pattern)],
+            message="Backreferences can cause exponential matching in some cases",
+        ))
+
+    ambiguous_dot = re.compile(r'\.\*')
+    for match in ambiguous_dot.finditer(pattern):
+        span = list(match.span())
+        findings.append(RegexSafetyFinding(
+            kind="ambiguous_dot_star",
+            span=span,
+            message="Ambiguous dot-star pattern",
+        ))
+
+    if findings:
+        high_risk = any(f["kind"] in ("nested_quantifier",) for f in findings)
+        risk = "high" if high_risk else "medium"
+    else:
+        risk = "low"
+
+    return RegexSafetyResult(
+        valid_pattern=True,
+        risk=risk,
+        findings=findings,
+    )
+
+
+def _get_type_name(value: Any) -> str:
+    """Get type name for schema validation."""
+    if value is None:
+        return "null"
+    elif isinstance(value, bool):
+        return "boolean"
+    elif isinstance(value, int):
+        return "integer"
+    elif isinstance(value, float):
+        return "number"
+    elif isinstance(value, str):
+        return "string"
+    elif isinstance(value, list):
+        return "array"
+    elif isinstance(value, dict):
+        return "object"
+    else:
+        return type(value).__name__
+
+
+def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
+    """Validate data against a simple schema format.
+
+    This is NOT full JSON Schema - it's a simple internal schema format.
+
+    Supported schema features:
+    - type: object, array, string, number, integer, boolean, null
+    - required: list of required keys
+    - properties: nested property definitions
+    - additional_properties: false to disallow extra keys
+    - enum: list of allowed values
+    - min_length, max_length: for strings
+    - min_items, max_items: for arrays
+    - pattern: regex pattern for strings
+    - items: schema for array items (nested validation)
+
+    Args:
+        data: Data to validate (already parsed JSON).
+        schema: Schema definition dict.
+
+    Returns:
+        Dictionary with valid (bool), violations (list), truncated (bool),
+        and summary (str).
+    """
+    violations: list[SchemaViolation] = []
+
+    def _add_violation(path: str, message: str, value_type: str | None = None,
+                       expected_type: str | None = None) -> None:
+        if len(violations) < MAX_SCHEMA_VIOLATIONS:
+            violations.append(SchemaViolation(
+                path=path,
+                message=message,
+                value_type=value_type,
+                expected_type=expected_type,
+            ))
+
+    def _validate(path: str, value: Any, schema_def: dict) -> None:
+        if len(violations) >= MAX_SCHEMA_VIOLATIONS:
+            return
+
+        expected_type = schema_def.get("type")
+
+        if expected_type is not None:
+            actual_type = _get_type_name(value)
+            type_map = {
+                "object": "object",
+                "array": "array",
+                "string": "string",
+                "number": ("number", "integer"),
+                "integer": "integer",
+                "boolean": "boolean",
+                "null": "null",
+            }
+            allowed_types = type_map.get(expected_type, (expected_type,))
+            if actual_type not in allowed_types and not (expected_type == "number" and actual_type == "integer"):
+                _add_violation(
+                    path,
+                    f"expected {expected_type}, got {actual_type}",
+                    actual_type,
+                    expected_type,
+                )
+                return
+
+        if expected_type == "object" and isinstance(value, dict):
+            required = schema_def.get("required", [])
+            for req_key in required:
+                if req_key not in value:
+                    _add_violation(
+                        f"{path}/{req_key}" if path else f"/{req_key}",
+                        f"missing required key '{req_key}'",
+                        None,
+                        "object",
+                    )
+
+            additional_props = schema_def.get("additional_properties")
+            if additional_props is False:
+                props = schema_def.get("properties", {})
+                for key in value:
+                    if key not in props:
+                        _add_violation(
+                            f"{path}/{key}" if path else f"/{key}",
+                            f"additional property '{key}' not allowed",
+                            "string",
+                            None,
+                        )
+
+            properties = schema_def.get("properties", {})
+            for prop_name, prop_schema in properties.items():
+                if prop_name in value:
+                    new_path = f"{path}/{prop_name}" if path else f"/{prop_name}"
+                    _validate(new_path, value[prop_name], prop_schema)
+
+        elif expected_type == "array" and isinstance(value, list):
+            min_items = schema_def.get("min_items")
+            max_items = schema_def.get("max_items")
+            if min_items is not None and len(value) < min_items:
+                _add_violation(
+                    path,
+                    f"array has {len(value)} items, minimum is {min_items}",
+                    "array",
+                    None,
+                )
+            if max_items is not None and len(value) > max_items:
+                _add_violation(
+                    path,
+                    f"array has {len(value)} items, maximum is {max_items}",
+                    "array",
+                    None,
+                )
+
+            items_schema = schema_def.get("items")
+            if items_schema is not None:
+                for i, item in enumerate(value):
+                    item_path = f"{path}/[{i}]"
+                    _validate(item_path, item, items_schema)
+
+        elif expected_type == "string" and isinstance(value, str):
+            min_len = schema_def.get("min_length")
+            max_len = schema_def.get("max_length")
+            if min_len is not None and len(value) < min_len:
+                _add_violation(
+                    path,
+                    f"string has length {len(value)}, minimum is {min_len}",
+                    "string",
+                    None,
+                )
+            if max_len is not None and len(value) > max_len:
+                _add_violation(
+                    path,
+                    f"string has length {len(value)}, maximum is {max_len}",
+                    "string",
+                    None,
+                )
+
+            pattern = schema_def.get("pattern")
+            if pattern is not None:
+                try:
+                    if not re.match(pattern, value):
+                        _add_violation(
+                            path,
+                            f"string '{value}' does not match pattern '{pattern}'",
+                            "string",
+                            None,
+                        )
+                except re.error:
+                    pass
+
+        enum_values = schema_def.get("enum")
+        if enum_values is not None:
+            if value not in enum_values:
+                _add_violation(
+                    path,
+                    f"value {value!r} is not in enum {enum_values}",
+                    _get_type_name(value),
+                    None,
+                )
+
+    _validate("", data, schema)
+
+    truncated = len(violations) >= MAX_SCHEMA_VIOLATIONS
+
+    if not violations:
+        summary = "Data is valid"
+    elif truncated:
+        summary = f"Schema violations detected (truncated, {len(violations)} shown)"
+    else:
+        summary = f"Schema violations detected: {len(violations)} issue{'s' if len(violations) != 1 else ''}"
+
+    return ValidateSchemaLightResult(
+        valid=len(violations) == 0,
+        violations=violations,
+        truncated=truncated,
+        summary=summary,
+    )
+
+
+class JsonCanonicalizeResult(TypedDict):
+    """Result of JSON canonicalization."""
+    valid: bool
+    canonical: str | None
+    minified: str | None
+    sha256: str | None
+    duplicate_keys: list[str]
+    top_level_type: str | None
+    top_level_keys: list[str] | None
+    error: str | None
+    line: int | None
+    column: int | None
+
+
+class JsonQueryResult(TypedDict):
+    """Result of JSON query using RFC 6901 JSON Pointer."""
+    found: bool
+    pointer: str
+    value: Any | None
+    type: str | None
+    missing_at: str | None
+    reason: str | None
+    error: str | None
+    line: int | None
+    column: int | None
+
+
+def json_canonicalize(
+    text: str,
+    sort_keys: bool = True,
+    indent: int | None = None,
+    ensure_ascii: bool = False,
+    detect_duplicate_keys: bool = True,
+    trailing_newline: bool = False,
+) -> JsonCanonicalizeResult:
+    """Canonicalize JSON with deterministic formatting and duplicate key detection.
+
+    Args:
+        text: Input JSON string.
+        sort_keys: Sort object keys alphabetically.
+        indent: Indentation spaces (None for minified).
+        ensure_ascii: Use ASCII escaping for non-ASCII characters.
+        detect_duplicate_keys: Report duplicate keys in the input.
+        trailing_newline: Add a trailing newline to the canonical form.
+
+    Returns:
+        Dictionary with canonical form, minified form, SHA256 hash,
+        duplicate_keys, top_level_type, and top_level_keys.
+    """
+    if len(text) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_INPUT_LENGTH {MAX_INPUT_LENGTH}")
+
+    duplicate_keys: list[str] = []
+    parsed: Any = None
+
+    if detect_duplicate_keys:
+        class DuplicateKeyChecker:
+            def __init__(self) -> None:
+                self.keys: list[str] = []
+                self.duplicate_found: list[str] = []
+
+            def object_pairs_hook(self, pairs: list[tuple[str, Any]]) -> dict:
+                seen: set[str] = set()
+                for key, value in pairs:
+                    if key in seen:
+                        self.duplicate_found.append(key)
+                    else:
+                        seen.add(key)
+                    self.keys.append(key)
+                return dict(pairs)
+
+        checker = DuplicateKeyChecker()
+        try:
+            parsed = json.loads(text, object_pairs_hook=checker.object_pairs_hook)
+            duplicate_keys = checker.duplicate_found
+        except json.JSONDecodeError as e:
+            return JsonCanonicalizeResult(
+                valid=False,
+                canonical=None,
+                minified=None,
+                sha256=None,
+                duplicate_keys=[],
+                top_level_type=None,
+                top_level_keys=None,
+                error=e.msg,
+                line=e.lineno,
+                column=e.colno,
+            )
+    else:
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as e:
+            return JsonCanonicalizeResult(
+                valid=False,
+                canonical=None,
+                minified=None,
+                sha256=None,
+                duplicate_keys=[],
+                top_level_type=None,
+                top_level_keys=None,
+                error=e.msg,
+                line=e.lineno,
+                column=e.colno,
+            )
+
+    if isinstance(parsed, dict):
+        top_level_type = "object"
+        top_level_keys = list(parsed.keys())
+    elif isinstance(parsed, list):
+        top_level_type = "array"
+        top_level_keys = None
+    else:
+        top_level_type = type(parsed).__name__
+        top_level_keys = None
+
+    if sort_keys:
+        canonical_data = _sort_json_keys(parsed)
+    else:
+        canonical_data = parsed
+
+    canonical = json.dumps(canonical_data, ensure_ascii=ensure_ascii, indent=indent, sort_keys=False)
+    if trailing_newline:
+        canonical += "\n"
+
+    if indent is None:
+        minified = json.dumps(canonical_data, ensure_ascii=ensure_ascii, indent=None, separators=(",", ":"), sort_keys=False)
+    else:
+        minified = json.dumps(canonical_data, ensure_ascii=ensure_ascii, indent=indent, sort_keys=False)
+
+    sha256_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    return JsonCanonicalizeResult(
+        valid=True,
+        canonical=canonical,
+        minified=minified,
+        sha256=sha256_hash,
+        duplicate_keys=duplicate_keys,
+        top_level_type=top_level_type,
+        top_level_keys=top_level_keys,
+        error=None,
+        line=None,
+        column=None,
+    )
+
+
+def _sort_json_keys(obj: Any) -> Any:
+    """Recursively sort object keys in JSON-compatible data."""
+    if isinstance(obj, dict):
+        return {key: _sort_json_keys(obj[key]) for key in sorted(obj.keys())}
+    elif isinstance(obj, list):
+        return [_sort_json_keys(item) for item in obj]
+    else:
+        return obj
+
+
+def json_query(text: str, pointer: str = "") -> JsonQueryResult:
+    """Query JSON using RFC 6901 JSON Pointer.
+
+    Args:
+        text: JSON document string.
+        pointer: RFC 6901 JSON Pointer path (e.g., "/foo/bar/0").
+                 Empty string means the whole document.
+
+    Returns:
+        Dictionary with found (bool), value, type, and for missing values:
+        missing_at, reason, and available information.
+    """
+    if len(text) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_INPUT_LENGTH {MAX_INPUT_LENGTH}")
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        return JsonQueryResult(
+            found=False,
+            pointer=pointer,
+            value=None,
+            type=None,
+            missing_at=None,
+            reason="invalid_json",
+            error=e.msg,
+            line=e.lineno,
+            column=e.colno,
+        )
+
+    if pointer == "":
+        return _build_json_query_result(parsed, pointer)
+
+    tokens = pointer.split("/")
+    if tokens and tokens[0] == "":
+        tokens = tokens[1:]
+
+    current = parsed
+    path_so_far = ""
+
+    for i, token in enumerate(tokens):
+        decoded = _decode_pointer_token(token)
+        path_so_far = "/" + "/".join(_encode_pointer_token(t) for t in tokens[:i+1])
+
+        if isinstance(current, dict):
+            if decoded in current:
+                current = current[decoded]
+            else:
+                return JsonQueryResult(
+                    found=False,
+                    pointer=pointer,
+                    value=None,
+                    type="object",
+                    missing_at=path_so_far,
+                    reason="key_not_found",
+                    error=None,
+                    line=None,
+                    column=None,
+                )
+        elif isinstance(current, list):
+            try:
+                index = int(decoded)
+            except ValueError:
+                return JsonQueryResult(
+                    found=False,
+                    pointer=pointer,
+                    value=None,
+                    type="array",
+                    missing_at=path_so_far,
+                    reason="invalid_pointer_syntax",
+                    error=None,
+                    line=None,
+                    column=None,
+                )
+
+            if index < 0 or index >= len(current):
+                return JsonQueryResult(
+                    found=False,
+                    pointer=pointer,
+                    value=None,
+                    type="array",
+                    missing_at=path_so_far,
+                    reason="index_out_of_range",
+                    error=None,
+                    line=None,
+                    column=None,
+                )
+            current = current[index]
+        else:
+            return JsonQueryResult(
+                found=False,
+                pointer=pointer,
+                value=None,
+                type=type(current).__name__,
+                missing_at=path_so_far,
+                reason="invalid_pointer_syntax",
+                error=None,
+                line=None,
+                column=None,
+            )
+
+    return _build_json_query_result(current, pointer)
+
+
+def _build_json_query_result(value: Any, pointer: str) -> JsonQueryResult:
+    """Build a query result for a value."""
+    if isinstance(value, dict):
+        return JsonQueryResult(
+            found=True,
+            pointer=pointer,
+            value=value,
+            type="object",
+            missing_at=None,
+            reason=None,
+            error=None,
+            line=None,
+            column=None,
+        )
+    elif isinstance(value, list):
+        return JsonQueryResult(
+            found=True,
+            pointer=pointer,
+            value=value,
+            type="array",
+            missing_at=None,
+            reason=None,
+            error=None,
+            line=None,
+            column=None,
+        )
+    elif isinstance(value, str):
+        return JsonQueryResult(
+            found=True,
+            pointer=pointer,
+            value=value,
+            type="string",
+            missing_at=None,
+            reason=None,
+            error=None,
+            line=None,
+            column=None,
+        )
+    elif isinstance(value, bool):
+        return JsonQueryResult(
+            found=True,
+            pointer=pointer,
+            value=value,
+            type="boolean",
+            missing_at=None,
+            reason=None,
+            error=None,
+            line=None,
+            column=None,
+        )
+    elif value is None:
+        return JsonQueryResult(
+            found=True,
+            pointer=pointer,
+            value=None,
+            type="null",
+            missing_at=None,
+            reason=None,
+            error=None,
+            line=None,
+            column=None,
+        )
+    else:
+        return JsonQueryResult(
+            found=True,
+            pointer=pointer,
+            value=value,
+            type="number",
+            missing_at=None,
+            reason=None,
+            error=None,
+            line=None,
+            column=None,
+        )
+
+# === exact/measure.py ===
+class LineMetrics(TypedDict):
+    """Line-level metrics."""
+    lines: int
+    nonempty_lines: int
+    blank_lines: int
+    max_line_length_codepoints: int
+    trailing_whitespace_lines: list[int]
+    newline_style: str  # "LF", "CRLF", "CR", "mixed", "none"
+    ends_with_newline: bool
+
+
+class WordMetrics(TypedDict):
+    """Word-level metrics."""
+    words: int
+    unique_words_casefolded: int
+    sentences_estimate: int
+    paragraphs: int
+    average_word_length: float
+
+
+class CharCategoryMetrics(TypedDict):
+    """Character category metrics."""
+    letters: int
+    digits: int
+    punctuation: int
+    symbols: int
+    spaces: int
+    control_chars: int
+    combining_marks: int
+
+
+def _detect_newline_style(s: str) -> str:
+    """Detect the newline style used in the string."""
+    has_crlf = "\r\n" in s
+    standalone_cr = s.count("\r") - s.count("\r\n")
+    standalone_lf = s.count("\n") - s.count("\r\n")
+
+    if has_crlf and (standalone_cr > 0 or standalone_lf > 0):
+        return "mixed"
+    if standalone_cr > 0 and standalone_lf > 0:
+        return "mixed"
+    if has_crlf:
+        return "CRLF"
+    elif standalone_cr > 0:
+        return "CR"
+    elif standalone_lf > 0:
+        return "LF"
+    else:
+        return "none"
+
+
+def line_metrics(s: str) -> LineMetrics:
+    """Calculate line-level metrics for a string.
+
+    Args:
+        s: Input string. None is treated as empty string (returns zero metrics).
+
+    Returns:
+        Dictionary with lines, nonempty_lines, blank_lines,
+        max_line_length_codepoints, trailing_whitespace_lines (1-based line numbers),
+        newline_style (LF/CRLF/CR/mixed/none), ends_with_newline.
+    """
+    if not s:
+        return LineMetrics(
+            lines=0,
+            nonempty_lines=0,
+            blank_lines=0,
+            max_line_length_codepoints=0,
+            trailing_whitespace_lines=[],
+            newline_style="none",
+            ends_with_newline=False,
+        )
+
+    lines = s.splitlines()
+    num_lines = len(lines)
+
+    # Check how string ends
+    ends_with_newline = s.endswith("\n") or s.endswith("\r") or s.endswith("\r\n")
+
+    # Detect newline style
+    newline_style = _detect_newline_style(s)
+
+    # Analyze each line
+    nonempty_lines = 0
+    blank_lines = 0
+    max_line_length = 0
+    trailing_whitespace_lines: list[int] = []
+
+    for line_num, line in enumerate(lines, start=1):
+        line_length = len(line)
+
+        if line_length > 0:
+            nonempty_lines += 1
+            if line_length > max_line_length:
+                max_line_length = line_length
+
+            # Check for trailing whitespace
+            if line != line.rstrip():
+                trailing_whitespace_lines.append(line_num)
+        else:
+            blank_lines += 1
+
+    return LineMetrics(
+        lines=num_lines,
+        nonempty_lines=nonempty_lines,
+        blank_lines=blank_lines,
+        max_line_length_codepoints=max_line_length,
+        trailing_whitespace_lines=trailing_whitespace_lines,
+        newline_style=newline_style,
+        ends_with_newline=ends_with_newline,
+    )
+
+
+def word_metrics(s: str) -> WordMetrics:
+    """Calculate word-level metrics for a string.
+
+    Splits on whitespace and counts words, unique words (casefolded),
+    estimates sentences, paragraphs, and average word length.
+
+    Args:
+        s: Input string. None is treated as empty string (returns zero metrics).
+
+    Returns:
+        Dictionary with words, unique_words_casefolded, sentences_estimate,
+        paragraphs, average_word_length.
+    """
+    if not s:
+        return WordMetrics(
+            words=0,
+            unique_words_casefolded=0,
+            sentences_estimate=0,
+            paragraphs=0,
+            average_word_length=0.0,
+        )
+
+    # Split into words (whitespace-separated tokens)
+    tokens = s.split()
+
+    # Filter out tokens that don't contain letters (keep word-like tokens)
+    words = [t for t in tokens if any(c.isalpha() for c in t)]
+
+    num_words = len(words)
+
+    # Unique words (casefolded)
+    casefolded = {w.casefold() for w in words}
+    unique_words = len(casefolded)
+
+    # Average word length
+    if num_words > 0:
+        total_length = sum(len(w) for w in words)
+        avg_word_length = total_length / num_words
+    else:
+        avg_word_length = 0.0
+
+    # Estimate sentences (count . ! ? that are ellipses or sentence terminators)
+    # Simple heuristic: count sentence-ending punctuation
+    sentence_pattern = r"[.!?]+(?:\s|$)|[.!?]+(?=[A-Z])"
+    sentences = re.findall(sentence_pattern, s)
+    sentences_estimate = len(sentences) if sentences else 0
+
+    # Paragraphs (separated by blank lines)
+    paragraphs = 0
+    current_paragraph_has_content = False
+    for line in s.splitlines():
+        stripped = line.strip()
+        if stripped:
+            if not current_paragraph_has_content:
+                paragraphs += 1
+                current_paragraph_has_content = True
+        else:
+            current_paragraph_has_content = False
+
+    # Ensure at least 1 paragraph if there's any content
+    if paragraphs == 0 and any(c.isalpha() for c in s):
+        paragraphs = 1
+
+    return WordMetrics(
+        words=num_words,
+        unique_words_casefolded=unique_words,
+        sentences_estimate=sentences_estimate,
+        paragraphs=paragraphs,
+        average_word_length=round(avg_word_length, 2),
+    )
+
+
+def char_category_metrics(s: str) -> CharCategoryMetrics:
+    """Calculate character category metrics.
+
+    Categorizes each character by Unicode general category.
+
+    Args:
+        s: Input string. None is treated as empty string (returns zero metrics).
+
+    Returns:
+        Dictionary with counts for letters, digits, punctuation,
+        symbols, spaces, control_chars, combining_marks.
+    """
+    if not s:
+        return CharCategoryMetrics(
+            letters=0,
+            digits=0,
+            punctuation=0,
+            symbols=0,
+            spaces=0,
+            control_chars=0,
+            combining_marks=0,
+        )
+
+    letters = 0
+    digits = 0
+    punctuation = 0
+    symbols = 0
+    spaces = 0
+    control_chars = 0
+    combining_marks = 0
+
+    for char in s:
+        cat = unicodedata.category(char)
+
+        if cat.startswith("L"):  # Letters
+            letters += 1
+        elif cat.startswith("N"):  # Numbers
+            digits += 1
+        elif cat.startswith("P"):  # Punctuation
+            punctuation += 1
+        elif cat.startswith("S"):  # Symbols
+            symbols += 1
+        elif cat.startswith("Z"):  # Separators (spaces)
+            spaces += 1
+        elif cat.startswith("C"):  # Other (control, format, etc.)
+            if cat == "Cf":  # Format characters (e.g., U+FEFF BOM)
+                pass  # Cf excluded from control_chars count per UTS #55
+            else:
+                control_chars += 1  # Cc, Co, Cn all count
+        elif cat.startswith("M"):  # Mark categories
+            combining_marks += 1
+        else:  # Defensive: all valid Unicode categories are L/N/P/S/Z/C/M
+            pass
+
+    return CharCategoryMetrics(
+        letters=letters,
+        digits=digits,
+        punctuation=punctuation,
+        symbols=symbols,
+        spaces=spaces,
+        control_chars=control_chars,
+        combining_marks=combining_marks,
+    )
+
+# === exact/unicode_tools.py ===
+class ScriptInfo(TypedDict):
+    """Information about a script detection result."""
+    index: int
+    char: str
+    script: str
+    codepoint: str
+
+
+class ConfusableInfo(TypedDict):
+    """Information about a confusable character."""
+    # Position of the character in the input string
+    index: int
+    # The confusable character itself
+    char: str
+    # Unicode codepoint in "U+XXXX" format
+    codepoint: str
+    # Unicode character name (e.g., "LATIN SMALL LETTER A")
+    name: str
+    # Character(s) this character is confusable with (can be multi-character)
+    confusable_with: str
+    # Unicode name(s) of the confusable character(s)
+    confusable_name: str
+
+
+class MixedScriptsResult(TypedDict):
+    """Result of mixed script detection."""
+    # True if multiple scripts present (excluding Common/Inherited/Other)
+    mixed_scripts: bool
+    # Distinct scripts found (excluding Common/Inherited/Other)
+    scripts: list[str]
+    # Position details for non-Common/Inherited/Other characters
+    positions: list[ScriptInfo]
+
+
+# Unicode script ranges for heuristic detection
+_SCRIPT_RANGES: list[tuple[int, int, str]] = [
+    (0x0041, 0x005a, "Latin"),
+    (0x0061, 0x007a, "Latin"),
+    (0x00c0, 0x00ff, "Latin"),
+    (0x0100, 0x017f, "Latin"),
+    (0x0180, 0x024f, "Latin"),
+    (0x0400, 0x04ff, "Cyrillic"),
+    (0x0500, 0x052f, "Cyrillic"),
+    (0x0370, 0x03ff, "Greek"),
+    (0x1f00, 0x1fff, "Greek"),
+    (0x4e00, 0x9fff, "Han"),
+    (0x3000, 0x303f, "CJK"),
+    (0x3040, 0x309f, "Hiragana"),
+    (0x30a0, 0x30ff, "Katakana"),
+    (0x0600, 0x06ff, "Arabic"),
+    (0x0590, 0x05ff, "Hebrew"),
+    (0x0900, 0x097f, "Devanagari"),
+    (0x0e00, 0x0e7f, "Thai"),
+    (0xac00, 0xd7af, "Hangul"),
+    (0x10a0, 0x10ff, "Georgian"),
+    (0x0530, 0x058f, "Armenian"),
+    (0x13a0, 0x13ff, "Cherokee"),
+    (0x1400, 0x167f, "Canadian_Aboriginal"),
+]
+
+
+@functools.lru_cache(maxsize=128)
+def _get_script_heuristic(char: str) -> str:
+    """Determine script for a character using unicodedata.script() with fallback.
+
+    Tries unicodedata.script() first (available in Python 3.14+), falling back
+    to range-based heuristic detection for compatibility.
+
+    Args:
+        char: Single character.
+
+    Returns:
+        Script name or 'Other'.
+    """
+    # Try unicodedata.script() first (Python 3.14+)
+    try:
+        script = unicodedata.script(char)
+        if script != "Unknown":
+            return script
+    except (AttributeError, ValueError):
+        pass
+
+    # Fallback: heuristic range-based detection
+    codepoint = ord(char)
+
+    # Check if it's a combining mark
+    if unicodedata.category(char).startswith("M"):
+        return "Inherited"
+
+    # Check predefined scripts via unicodedata.name for Common script
+    try:
+        name = unicodedata.name(char, "")
+        if "COMMON" in name.upper():
+            return "Common"
+        # Check for inherited scripts by name patterns
+        if "INHERITED" in name.upper():
+            return "Inherited"
+    except ValueError:
+        pass
+
+    # Use range heuristic for script detection
+    for start, end, script_name in _SCRIPT_RANGES:
+        if start <= codepoint <= end:
+            return script_name
+
+    return "Other"
+
+
+def unicode_script(char: str) -> str:
+    """Determine the Unicode script of a single character.
+
+    Uses Unicode script property with heuristic fallback for
+    characters where the property returns Unknown.
+
+    Args:
+        char: Single character.
+
+    Returns:
+        Script name (Latin, Cyrillic, Greek, Han, Hiragana,
+        Katakana, Arabic, Hebrew, Devanagari, Common, Inherited, Other).
+    """
+    if len(char) != 1:
+        raise ValueError("char must be a single character")
+
+    return _get_script_heuristic(char)
+
+
+def unicode_scripts(s: str) -> list[str]:
+    """Determine the Unicode scripts for all characters in a string.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        List of script names for each character.
+    """
+    return [_get_script_heuristic(char) for char in s]
+
+
+def detect_mixed_scripts(s: str) -> MixedScriptsResult:
+    """Detect if string contains mixed scripts.
+
+    Ignores Common, Inherited, and Other scripts for the mixed-script
+    verdict. Characters classified as "Other" (digits, punctuation,
+    whitespace, etc.) are excluded from the mixed-script analysis.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        MixedScriptsResult with mixed_scripts (bool), scripts (list of distinct
+        scripts excluding Common/Inherited/Other), and positions (list of
+        ScriptInfo dicts for non-Common/Inherited/Other chars).
+    """
+    positions: list[ScriptInfo] = []
+    scripts: set[str] = set()
+
+    for index, char in enumerate(s):
+        script = _get_script_heuristic(char)
+        if script not in ("Common", "Inherited", "Other"):
+            scripts.add(script)
+            codepoint_str = f"U+{ord(char):04X}"
+            positions.append(ScriptInfo(
+                index=index,
+                char=char,
+                script=script,
+                codepoint=codepoint_str,
+            ))
+
+    return MixedScriptsResult(
+        mixed_scripts=len(scripts) > 1,
+        scripts=sorted(scripts),
+        positions=positions,
+    )
+
+
+def detect_confusables(s: str) -> list[ConfusableInfo]:
+    """Detect confusable homoglyph characters in the string.
+
+    Uses the full Unicode confusables table (UTS #39) loaded from
+    confusables.py, which was generated from confusables.txt.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        List of ConfusableInfo dicts with position, char, codepoint,
+        name, confusable_with, and confusable_name.
+    """
+    result: list[ConfusableInfo] = []
+
+    for index, char in enumerate(s):
+        key = f"U+{ord(char):04X}"
+        if key in CONFUSABLES:
+            sub_str = CONFUSABLES[key]
+            codepoint_str = f"U+{ord(char):04X}"
+            name = unicodedata.name(char, "<unknown>")
+
+            # Parse substitution codepoints back to characters
+            confusable_with = "".join(chr(int(cp[2:], 16)) for cp in sub_str.split())
+
+            confusable_name = ""
+            for c in confusable_with:
+                n = unicodedata.name(c, "")
+                if n:
+                    confusable_name += n + " "
+                else:
+                    confusable_name += c
+            confusable_name = confusable_name.strip()
+
+            result.append(ConfusableInfo(
+                index=index,
+                char=char,
+                codepoint=codepoint_str,
+                name=name,
+                confusable_with=confusable_with,
+                confusable_name=confusable_name,
+            ))
+
+    return result
+
+
+def confusables_count(s: str) -> int:
+    """Count confusable homoglyph characters in the string.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        Count of confusable characters.
+    """
+    count = 0
+    for char in s:
+        key = f"U+{ord(char):04X}"
+        if key in CONFUSABLES:
+            count += 1
+    return count
+
+
+@functools.lru_cache(maxsize=1)
+def _build_reverse_index() -> dict[str, list[str]]:
+    """Build inverted index mapping target codepoints to source characters.
+
+    Returns:
+        Dict mapping target codepoint strings (e.g., "U+004F") to lists
+        of source characters that confusable-map to them.
+    """
+    index: dict[str, list[str]] = {}
+    for source_cp, target_cps_str in CONFUSABLES.items():
+        for target_cp in target_cps_str.split():
+            if target_cp not in index:
+                index[target_cp] = []
+            source_char = chr(int(source_cp[2:], 16))
+            index[target_cp].append(source_char)
+    return index
+
+
+def reverse_confusables(char: str) -> list[str]:
+    """Find all characters that are confusable with the given character.
+
+    Given a character, returns all characters from the confusables table
+    that confusable-map TO this character (i.e., characters that look
+    like the given character and could be confused with it).
+
+    Args:
+        char: Single character to look up.
+
+    Returns:
+        List of characters that are confusable with the input.
+
+    Raises:
+        ValueError: If input is not a single character.
+
+    Example:
+        >>> "0" in reverse_confusables("O")  # digit 0 looks like letter O
+        True
+    """
+    if len(char) != 1:
+        raise ValueError("char must be a single character")
+
+    target_cp = f"U+{ord(char):04X}"
+    reverse_index = _build_reverse_index()
+    return reverse_index.get(target_cp, [])
+
+# === exact/synthesis.py ===
+MAX_TEXT_LENGTH = 100_000
+MAX_DIFF_SPANS = 50
+
+
+class NormalizationState(TypedDict):
+    """Unicode normalization state."""
+    is_nfc: bool
+    is_nfd: bool
+    is_nfkc: bool
+    is_nfkd: bool
+
+
+class UnicodeRisks(TypedDict):
+    """Unicode risk signals."""
+    contains_invisibles: bool
+    contains_bidi_controls: bool
+    mixed_scripts: bool
+    scripts: list[str]
+
+
+class MeasureTextResult(TypedDict):
+    """Complete text measurement result."""
+    bytes_utf8: int
+    codepoints: int
+    graphemes: int
+    words: int
+    unique_words_casefolded: int
+    lines: int
+    nonempty_lines: int
+    blank_lines: int
+    max_line_length_codepoints: int
+    chars_no_whitespace: int
+    ascii: int
+    non_ascii: int
+    letters: int
+    digits: int
+    punctuation: int
+    symbols: int
+    spaces: int
+    control_chars: int
+    combining_marks: int
+    invisible_chars: int
+    newline_style: str
+    ends_with_newline: bool
+    normalization: NormalizationState
+    unicode_risks: UnicodeRisks
+    warnings: list[str]
+
+
+class TextEqualResult(TypedDict):
+    """Text equality comparison result."""
+    equal: bool
+    mode: dict[str, Any]
+    raw_equal: bool
+    nfc_equal: bool
+    nfd_equal: bool
+    nfkc_equal: bool
+    nfkd_equal: bool
+    casefold_equal: bool
+    byte_equal: bool
+    lengths: dict[str, int]
+    first_difference: dict[str, Any] | None
+    classification: str
+
+
+class DiffInfo(TypedDict):
+    """A single diff span with detailed information."""
+    kind: str
+    a_span: list[int]
+    b_span: list[int]
+    a_text: str
+    b_text: str
+    a_visible: str
+    b_visible: str
+    a_codepoints: list[dict]
+    b_codepoints: list[dict]
+    note: str
+
+
+class ExplainDiffResult(TypedDict):
+    """Detailed diff explanation result."""
+    equal: bool
+    classification: str
+    summary: dict[str, Any]
+    a_metrics: dict[str, int]
+    b_metrics: dict[str, int]
+    diffs: list[DiffInfo]
+    security_findings: list[dict]
+    agent_instruction: str
+
+
+class InspectTextNormalized(TypedDict):
+    """Normalized text analysis."""
+    form: str
+    text: str
+    safe_repr: str
+    changed: bool
+    diff: list[dict]
+
+class NormalizationFinding(TypedDict):
+    """A finding from normalization analysis."""
+    kind: str
+    message: str
+
+class InspectTextResult(TypedDict):
+    """Complete text inspection result."""
+    safe_repr: str
+    metrics: dict[str, Any]
+    normalization: dict[str, bool]
+    normalization_diff: bool
+    normals_repr: str | None
+    invisibles: list[dict]
+    bidi_controls: list[dict]
+    mixed_scripts: dict[str, Any]
+    confusables: list[dict]
+    warnings: list[dict]
+    limits_applied: list[str]
+    normalize: str
+    compare_normalized: bool
+    original: dict[str, Any]
+    normalized: InspectTextNormalized | None
+    normalization_findings: list[NormalizationFinding]
+
+
+class CountCharsResult(TypedDict):
+    """Character counting result."""
+    target: str
+    normalization: str
+    count: int
+    positions: list[int]
+    text_length_codepoints: int
+
+
+class ListCompareOrderedResult(TypedDict):
+    """Ordered list comparison result."""
+    equal: bool
+    first_diff_index: int | None
+    equal_prefix_length: int
+    aligned: list[dict]
+
+class ListCompareSetResult(TypedDict):
+    """Set-based list comparison result."""
+    equal: bool
+    only_in_a: list[str]
+    only_in_b: list[str]
+
+class ListCompareMultisetResult(TypedDict):
+    """Multiset-based list comparison result."""
+    equal: bool
+    count_deltas: dict[str, int]
+    only_in_a: list[str]
+    only_in_b: list[str]
+
+class ListCompareNearMatch(TypedDict):
+    """A near match between list items."""
+    a: str
+    b: str
+    distance: int
+    classification: str
+
+class ListCompareResult(TypedDict):
+    """List comparison result with near-match detection."""
+    same_ordered: bool
+    same_unordered: bool
+    only_in_a: list[str]
+    only_in_b: list[str]
+    duplicates_a: list[str]
+    duplicates_b: list[str]
+    near_matches: list[ListCompareNearMatch]
+
+
+def _detect_special_sequences(s: str) -> dict[str, int]:
+    """Detect sequences that cause codepoint/grapheme divergence.
+
+    Returns counts of: combining_marks, zwj_sequences, variation_selectors,
+    regional_indicator_pairs, emoji_modifiers.
+    """
+    result = {
+        "combining_marks": 0,
+        "zwj_sequences": 0,
+        "variation_selectors": 0,
+        "regional_indicator_pairs": 0,
+        "emoji_modifiers": 0,
+    }
+    i = 0
+    n = len(s)
+    while i < n:
+        cp = ord(s[i])
+        cat = unicodedata.category(s[i])
+
+        if cat.startswith("M"):
+            result["combining_marks"] += 1
+        elif cp == 0x200D:
+            result["zwj_sequences"] += 1
+        elif 0xFE00 <= cp <= 0xFE0F:
+            result["variation_selectors"] += 1
+        elif 0x1F1E6 <= cp <= 0x1F1FF:
+            if i + 1 < n and 0x1F1E6 <= ord(s[i + 1]) <= 0x1F1FF:
+                result["regional_indicator_pairs"] += 1
+        elif 0x1F3FB <= cp <= 0x1F3FF:
+            result["emoji_modifiers"] += 1
+        i += 1
+    return result
+
+
+def measure_text(text: str) -> MeasureTextResult:
+    """Measure text properties combining multiple primitives.
+
+    Args:
+        text: Input string.
+
+    Returns:
+        Complete text measurement with metrics, normalization, and risk signals.
+
+    Raises:
+        ValueError: If text exceeds MAX_TEXT_LENGTH.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+
+    basic = measure_basic(text)
+    lines = line_metrics(text)
+    words = word_metrics(text)
+    categories = char_category_metrics(text)
+    invisibles = find_invisibles(text)
+    scripts = detect_mixed_scripts(text)
+    grapheme_count = count_graphemes(text)
+    special = _detect_special_sequences(text)
+
+    warnings: list[str] = []
+    if special["combining_marks"] > 0:
+        warnings.append(f"Text contains {special['combining_marks']} combining mark(s) - codepoint count diverges from user-perceived characters")
+    if special["zwj_sequences"] > 0:
+        warnings.append(f"Text contains {special['zwj_sequences']} zero-width joiner sequence(s) - sequences may affect display")
+    if special["variation_selectors"] > 0:
+        warnings.append(f"Text contains {special['variation_selectors']} variation selector(s) - display may differ")
+    if special["regional_indicator_pairs"] > 0:
+        warnings.append(f"Text contains {special['regional_indicator_pairs']} regional indicator pair(s) - these render as flag emoji")
+    if special["emoji_modifiers"] > 0:
+        warnings.append(f"Text contains {special['emoji_modifiers']} emoji modifier(s) - modifies base emoji appearance")
+
+    return MeasureTextResult(
+        bytes_utf8=basic["bytes_utf8"],
+        codepoints=basic["codepoints"],
+        graphemes=grapheme_count,
+        words=words["words"],
+        unique_words_casefolded=words["unique_words_casefolded"],
+        lines=lines["lines"],
+        nonempty_lines=lines["nonempty_lines"],
+        blank_lines=lines["blank_lines"],
+        max_line_length_codepoints=lines["max_line_length_codepoints"],
+        chars_no_whitespace=basic["chars_no_whitespace"],
+        ascii=basic["ascii"],
+        non_ascii=basic["non_ascii"],
+        letters=categories["letters"],
+        digits=categories["digits"],
+        punctuation=categories["punctuation"],
+        symbols=categories["symbols"],
+        spaces=categories["spaces"],
+        control_chars=categories["control_chars"],
+        combining_marks=categories["combining_marks"],
+        invisible_chars=len(invisibles),
+        newline_style=lines["newline_style"],
+        ends_with_newline=lines["ends_with_newline"],
+        normalization=NormalizationState(
+            is_nfc=unicodedata.is_normalized("NFC", text),
+            is_nfd=unicodedata.is_normalized("NFD", text),
+            is_nfkc=unicodedata.is_normalized("NFKC", text),
+            is_nfkd=unicodedata.is_normalized("NFKD", text),
+        ),
+        unicode_risks=UnicodeRisks(
+            contains_invisibles=len(invisibles) > 0,
+            contains_bidi_controls=any("BIDI" in inv.get("display", "") for inv in invisibles),
+            mixed_scripts=scripts["mixed_scripts"],
+            scripts=scripts["scripts"],
+        ),
+        warnings=warnings,
+    )
+
+
+def text_equal(
+    a: str,
+    b: str,
+    normalization: str = "raw",
+    casefold: bool = False,
+    trim: bool = False,
+    ignore_newline_style: bool = False,
+    ignore_trailing_whitespace: bool = False,
+    ignore_final_newline: bool = False,
+) -> TextEqualResult:
+    """Compare two strings under various equality modes.
+
+    Args:
+        a: First string.
+        b: Second string.
+        normalization: "raw", "NFC", "NFD", "NFKC", or "NFKD".
+        casefold: If True, use casefolded comparison.
+        trim: If True, trim whitespace.
+        ignore_newline_style: Normalize different newline styles before comparison.
+        ignore_trailing_whitespace: Ignore trailing whitespace on each line.
+        ignore_final_newline: Ignore trailing newline at end of strings.
+
+    Returns:
+        Detailed equality comparison with evidence.
+    """
+    a_work = a
+    b_work = b
+
+    if ignore_final_newline:
+        while a_work.endswith("\n") or a_work.endswith("\r"):
+            a_work = a_work[:-1]
+        while b_work.endswith("\n") or b_work.endswith("\r"):
+            b_work = b_work[:-1]
+
+    if ignore_trailing_whitespace:
+        lines_a = a_work.replace("\r\n", "\n").replace("\r", "\n").splitlines()
+        lines_b = b_work.replace("\r\n", "\n").replace("\r", "\n").splitlines()
+        lines_a = [la.rstrip() for la in lines_a]
+        lines_b = [lb.rstrip() for lb in lines_b]
+        a_work = "\n".join(lines_a)
+        b_work = "\n".join(lines_b)
+
+    if ignore_newline_style:
+        a_work = a_work.replace("\r\n", "\n").replace("\r", "\n")
+        b_work = b_work.replace("\r\n", "\n").replace("\r", "\n")
+
+    if trim:
+        a_work = a_work.strip()
+        b_work = b_work.strip()
+
+    raw_equal = raw_equal(a_work, b_work)
+    nfc_equal = normalized_equal(a_work, b_work, "NFC")
+    nfd_equal = normalized_equal(a_work, b_work, "NFD")
+    nfkc_equal = normalized_equal(a_work, b_work, "NFKC")
+    nfkd_equal = normalized_equal(a_work, b_work, "NFKD")
+    casefold_equal = casefold_text(a_work) == casefold_text(b_work)
+    byte_equal = a_work.encode("utf-8") == b_work.encode("utf-8")
+
+    lengths = {
+        "a_codepoints": len(a_work),
+        "b_codepoints": len(b_work),
+        "a_bytes_utf8": len(a_work.encode("utf-8")),
+        "b_bytes_utf8": len(b_work.encode("utf-8")),
+    }
+
+    first_difference = first_diff(a_work, b_work)
+    if first_difference:
+        first_difference["a_visible"] = visible_repr(a_work[first_difference["a_index"]:first_difference["a_index"]+1])
+        first_difference["b_visible"] = visible_repr(b_work[first_difference["b_index"]:first_difference["b_index"]+1])
+
+    invisibles_a = find_invisibles(a_work)
+    invisibles_b = find_invisibles(b_work)
+    invisibles_detected = bool(invisibles_a or invisibles_b)
+
+    classification = _classify_difference(
+        raw_equal, nfc_equal, casefold_equal, byte_equal,
+        len(a_work) != len(b_work), first_difference, invisibles_detected=invisibles_detected
+    )
+
+    if casefold:
+        equal = casefold_equal
+    elif normalization == "raw":
+        equal = raw_equal
+    elif normalization in ("NFC", "NFD", "NFKC", "NFKD"):
+        equal = normalized_equal(a_work, b_work, normalization)
+    else:
+        equal = raw_equal
+
+    return TextEqualResult(
+        equal=equal,
+        mode={
+            "normalization": normalization,
+            "casefold": casefold,
+            "trim": trim,
+            "ignore_newline_style": ignore_newline_style,
+            "ignore_trailing_whitespace": ignore_trailing_whitespace,
+            "ignore_final_newline": ignore_final_newline,
+        },
+        raw_equal=raw_equal,
+        nfc_equal=nfc_equal,
+        nfd_equal=nfd_equal,
+        nfkc_equal=nfkc_equal,
+        nfkd_equal=nfkd_equal,
+        casefold_equal=casefold_equal,
+        byte_equal=byte_equal,
+        lengths=lengths,
+        first_difference=first_difference,
+        classification=classification,
+    )
+
+
+def _classify_difference(
+    raw_equal: bool,
+    nfc_equal: bool,
+    casefold_equal: bool,
+    byte_equal: bool,
+    length_diff: bool,
+    first_diff: dict | None,
+    invisibles_detected: bool,
+) -> str:
+    """Classify the type of difference between two strings."""
+    if raw_equal:
+        return "exact_match"
+
+    if nfc_equal:
+        if byte_equal:
+            return "exact_match"
+        if not casefold_equal:
+            return "accent_or_diacritic_difference"
+        return "unicode_normalization_only"
+
+    if casefold_equal:
+        return "case_only"
+
+    if length_diff:
+        return "length_only"
+
+    if invisibles_detected:
+        return "invisible_character"
+
+    return "ordinary_text_difference"
+
+
+def _codepoint_details(s: str, start: int, end: int) -> list[dict]:
+    """Get codepoint details for a span."""
+    result = []
+    for i in range(start, min(end, len(s))):
+        char = s[i]
+        result.append({
+            "char": char,
+            "codepoint": f"U+{ord(char):04X}",
+            "name": unicodedata.name(char, "<unknown>"),
+        })
+    return result
+
+
+def _truncatediff_spans(spans: list[DiffInfo], max_diffs: int, max_equal_context: int = 200) -> tuple[list[DiffInfo], bool, int]:
+    """Truncate diff spans, limiting equal spans and marking truncation.
+
+    Args:
+        spans: List of DiffInfo spans.
+        max_diffs: Maximum number of diff spans to return.
+        max_equal_context: Maximum length for equal spans (0 to skip truncation).
+
+    Returns:
+        Tuple of (truncated_spans, truncated, total_diffs_exceeding_limit).
+    """
+    if len(spans) <= max_diffs:
+        if max_equal_context > 0:
+            truncated_spans: list[DiffInfo] = []
+            for sp in spans:
+                if sp["kind"] == "equal" and len(sp["a_text"]) > max_equal_context:
+                    sp = DiffInfo(
+                        kind="equal",
+                        a_span=sp["a_span"],
+                        b_span=sp["b_span"],
+                        a_text=sp["a_text"][:max_equal_context] + "...",
+                        b_text=sp["b_text"][:max_equal_context] + "...",
+                        a_codepoints=sp["a_codepoints"],
+                        b_codepoints=sp["b_codepoints"],
+                        note=f"(truncated from {len(sp['a_text'])} chars)",
+                    )
+                truncated_spans.append(sp)
+            return truncated_spans, False, 0
+        return spans, False, 0
+
+    return spans[:max_diffs], True, len(spans) - max_diffs
+
+
+def explain_diff(
+    a: str,
+    b: str,
+    max_diffs: int = 20,
+    include_codepoints: bool = True,
+    include_context: bool = True,
+    detail: str = "normal",
+) -> ExplainDiffResult:
+    """Explain why two strings differ with detailed evidence.
+
+    Args:
+        a: First string.
+        b: Second string.
+        max_diffs: Maximum number of diff spans.
+        include_codepoints: Include codepoint details.
+        include_context: Include context in notes.
+        detail: "summary", "normal", or "full".
+
+    Returns:
+        Detailed diff explanation with classification and agent instruction.
+    """
+    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
+        raise ValueError(f"Input exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+
+    if detail == "summary":
+        max_diffs_to_use = min(max_diffs, 5)
+        max_equal_context = 50
+    elif detail == "full":
+        max_diffs_to_use = max_diffs
+        max_equal_context = 0
+    else:
+        max_diffs_to_use = max_diffs
+        max_equal_context = 200
+
+    raw_equal = raw_equal(a, b)
+    nfc_equal = normalized_equal(a, b, "NFC")
+    nfkc_equal = normalized_equal(a, b, "NFKC")
+    casefold_equal = casefold_text(a) == casefold_text(b)
+    byte_equal = a.encode("utf-8") == b.encode("utf-8")
+
+    same_length_codepoints = len(a) == len(b)
+    edit_distance = levenshtein_distance(a, b) if not raw_equal else 0
+    prefix_suffix = common_prefix_suffix(a, b)
+
+    a_metrics = {
+        "bytes_utf8": len(a.encode("utf-8")),
+        "codepoints": len(a),
+    }
+    b_metrics = {
+        "bytes_utf8": len(b.encode("utf-8")),
+        "codepoints": len(b),
+    }
+
+    diffs_raw = diff_spans(a, b, max_diffs=max_diffs_to_use)
+    diffs: list[DiffInfo] = []
+
+    invisibles_a = find_invisibles(a)
+    invisibles_b = find_invisibles(b)
+    invisibles_detected = bool(invisibles_a or invisibles_b)
+    confusables_a = detect_confusables(a)
+    confusables_b = detect_confusables(b)
+
+    classification = _classify_difference(
+        raw_equal, nfc_equal, casefold_equal, byte_equal,
+        not same_length_codepoints, None, invisibles_detected
+    )
+
+    if classification == "ordinary_text_difference" and nfkc_equal:
+        classification = "compatibility_normalization_only"
+
+    security_findings: list[dict] = []
+    if invisibles_a or invisibles_b:
+        security_findings.append({
+            "kind": "invisible_characters",
+            "a_count": len(invisibles_a),
+            "b_count": len(invisibles_b),
+        })
+    if confusables_a or confusables_b:
+        security_findings.append({
+            "kind": "confusables",
+            "a_count": len(confusables_a),
+            "b_count": len(confusables_b),
+        })
+
+    for d in diffs_raw:
+        a_start, a_end = d["a_span"]
+        b_start, b_end = d["b_span"]
+
+        a_text = d["a_text"]
+        b_text = d["b_text"]
+
+        note = ""
+        if d["kind"] == "equal":
+            note = "Matching text"
+        elif len(a_text) != len(b_text):
+            note = f"Length difference: {len(a_text)} vs {len(b_text)} codepoints"
+        elif nfc_equal:
+            note = "Different raw codepoints, equal after NFC normalization"
+        else:
+            note = "Different codepoints"
+
+        diff_info = DiffInfo(
+            kind=d["kind"],
+            a_span=d["a_span"],
+            b_span=d["b_span"],
+            a_text=a_text,
+            b_text=b_text,
+            a_visible=visible_repr(a_text),
+            b_visible=visible_repr(b_text),
+            a_codepoints=_codepoint_details(a, a_start, a_end) if include_codepoints else [],
+            b_codepoints=_codepoint_details(b, b_start, b_end) if include_codepoints else [],
+            note=note,
+        )
+        diffs.append(diff_info)
+
+        if not classification or classification == "exact_match":
+            if d["kind"] == "replace":
+                classification = "ordinary_text_difference"
+
+    diffs, truncated, omitted_count = _truncatediff_spans(diffs, max_diffs_to_use, max_equal_context)
+
+    agent_instruction = _generate_agent_instruction(classification, raw_equal, nfc_equal, byte_equal)
+
+    limits_applied: list[str] = []
+    if truncated:
+        limits_applied.append(f"max_diffs={max_diffs_to_use}")
+
+    return ExplainDiffResult(
+        equal=raw_equal,
+        classification=classification,
+        summary={
+            "raw_equal": raw_equal,
+            "byte_equal": byte_equal,
+            "nfc_equal": nfc_equal,
+            "nfkc_equal": nfkc_equal,
+            "casefold_equal": casefold_equal,
+            "same_length_codepoints": same_length_codepoints,
+            "edit_distance": edit_distance,
+            "common_prefix_len": prefix_suffix["common_prefix_len"],
+            "common_suffix_len": prefix_suffix["common_suffix_len"],
+            "truncated": truncated,
+            "max_diffs_applied": max_diffs_to_use,
+        },
+        a_metrics=a_metrics,
+        b_metrics=b_metrics,
+        diffs=diffs,
+        security_findings=security_findings,
+        agent_instruction=agent_instruction,
+    )
+
+
+def _generate_agent_instruction(classification: str, raw_equal: bool, nfc_equal: bool, byte_equal: bool) -> str:
+    """Generate agent-facing instruction based on classification."""
+    if raw_equal:
+        return "Strings are identical."
+    if classification == "unicode_normalization_only":
+        return "Treat these strings as equivalent only if NFC normalization is acceptable. They are not byte-identical."
+    if classification == "case_only":
+        return "Strings differ only by case. Case-insensitive comparison should treat them as equal."
+    if classification == "accent_or_diacritic_difference":
+        return "Strings differ by accents or diacritics only (same letters, different marks). NFC normalization will make them equal."
+    if classification == "compatibility_normalization_only":
+        return "Strings differ in compatibility normalization (NFKC). Treat as equivalent if compatibility normalization is acceptable."
+    if not byte_equal:
+        return "Strings are not byte-identical and differ in Unicode normalization. Choose appropriate normalization for your use case."
+    return "Strings differ. Review diff details for specifics."
+
+
+MAX_INSPECT_ITEMS = 100
+
+
+def inspect_text(
+    text: str,
+    include_codepoints: bool = True,
+    include_confusables: bool = True,
+    detail: str = "normal",
+    normalize: str = "none",
+    compare_normalized: bool = False,
+) -> InspectTextResult:
+    """Inspect text for hidden characters, confusables, and Unicode signals.
+
+    Args:
+        text: Input string.
+        include_codepoints: Include codepoint details in invisibles.
+        include_confusables: Check for confusables.
+        detail: "summary", "normal", or "full".
+        normalize: Normalization form to analyze ("none", "NFC", "NFD", "NFKC", "NFKD").
+        compare_normalized: If True, report both original and normalized analysis.
+
+    Returns:
+        Complete text inspection with safe representation.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+
+    if detail == "summary":
+        max_items = 10
+    elif detail == "full":
+        max_items = MAX_INSPECT_ITEMS
+    else:
+        max_items = MAX_INSPECT_ITEMS
+
+    metrics = measure_text(text)
+    all_invisibles = find_invisibles(text)
+
+    bidi_controls: list[dict] = []
+    invisibles_truncated: list[dict] = []
+    for inv in all_invisibles:
+        if "BIDI" in inv.get("display", ""):
+            bidi_controls.append(inv)
+        else:
+            invisibles_truncated.append(inv)
+
+    scripts = detect_mixed_scripts(text)
+    all_confusables = detect_confusables(text) if include_confusables else []
+
+    limits_applied: list[str] = []
+    invisibles = invisibles_truncated
+    confusables = all_confusables
+    if len(invisibles) > max_items:
+        invisibles = invisibles[:max_items]
+        limits_applied.append(f"invisibles_limited={max_items}")
+    if len(confusables) > max_items:
+        confusables = confusables[:max_items]
+        limits_applied.append(f"confusables_limited={max_items}")
+
+    safe_repr = visible_repr(text)
+
+    warnings: list[dict] = []
+    for inv in invisibles:
+        warnings.append({
+            "severity": "warning",
+            "kind": "invisible_character",
+            "message": f"Text contains {inv['name']} at index {inv['index']}",
+            "codepoint": inv["codepoint"],
+        })
+    for bc in bidi_controls:
+        warnings.append({
+            "severity": "danger",
+            "kind": "bidi_control",
+            "message": f"Text contains bidirectional control character {bc['name']} at index {bc['index']}",
+            "codepoint": bc["codepoint"],
+        })
+    if metrics["unicode_risks"]["mixed_scripts"]:
+        warnings.append({
+            "severity": "info",
+            "kind": "mixed_scripts",
+            "message": f"Text contains mixed scripts: {', '.join(metrics['unicode_risks']['scripts'])}",
+        })
+    for conf in confusables:
+        warnings.append({
+            "severity": "warning",
+            "kind": "confusable",
+            "message": f"Text contains confusable character '{conf['char']}' (looks like '{conf['confusable_with']}')",
+            "codepoint": f"U+{ord(conf['char']):04X}",
+        })
+
+    limits_applied_info: list[str] = []
+    total_invisibles_omitted = len(all_invisibles) - len(invisibles)
+    total_bidi_omitted = len(bidi_controls) - len([b for b in bidi_controls if b in warnings])
+    total_confusables_omitted = len(all_confusables) - len(confusables)
+    if total_invisibles_omitted > 0:
+        limits_applied_info.append(f"invisibles_omitted={total_invisibles_omitted}")
+    if total_confusables_omitted > 0:
+        limits_applied_info.append(f"confusables_omitted={total_confusables_omitted}")
+
+    if limits_applied_info and detail == "summary":
+        for msg in limits_applied_info:
+            warnings.append({
+                "severity": "info",
+                "kind": "limits_applied",
+                "message": msg,
+            })
+            limits_applied.append(msg)
+
+    nfc_text = normalize_unicode(text, "NFC")
+    normalization_diff = text != nfc_text
+
+    original_analysis: dict[str, Any] = {
+        "safe_repr": safe_repr,
+        "confusables": confusables,
+        "invisibles": invisibles,
+    }
+
+    normalized_analysis: InspectTextNormalized | None = None
+    normalization_findings: list[NormalizationFinding] = []
+
+    if normalize != "none" and compare_normalized:
+        norm_text = normalize_unicode(text, normalize)
+        norm_safe_repr = visible_repr(norm_text)
+        norm_changed = text != norm_text
+
+        diff_entries: list[dict] = []
+        if norm_changed:
+            for i, (c1, c2) in enumerate(zip(text, norm_text)):
+                if c1 != c2:
+                    diff_entries.append({
+                        "index": i,
+                        "original": c1,
+                        "normalized": c2,
+                        "original_codepoint": f"U+{ord(c1):04X}",
+                        "normalized_codepoint": f"U+{ord(c2):04X}",
+                    })
+
+        if normalize == "NFKC":
+            normalization_findings.append(NormalizationFinding(
+                kind="compatibility_fold",
+                message="NFKC changes fullwidth character to ASCII"
+            ))
+        elif normalize == "NFC":
+            if norm_changed:
+                normalization_findings.append(NormalizationFinding(
+                    kind="canonical_composition",
+                    message="NFC composes combining characters"
+                ))
+        elif normalize == "NFD":
+            if norm_changed:
+                normalization_findings.append(NormalizationFinding(
+                    kind="canonical_decomposition",
+                    message="NFD decomposes combined characters"
+                ))
+        elif normalize == "NFKD":
+            normalization_findings.append(NormalizationFinding(
+                kind="compatibility_decomposition",
+                message="NFKD decomposes and converts compatibility characters"
+            ))
+
+        normalized_analysis = InspectTextNormalized(
+            form=normalize,
+            text=norm_text,
+            safe_repr=norm_safe_repr,
+            changed=norm_changed,
+            diff=diff_entries,
+        )
+
+    return InspectTextResult(
+        safe_repr=safe_repr,
+        metrics=metrics,
+        normalization={
+            "is_nfc": metrics["normalization"]["is_nfc"],
+            "is_nfkc": metrics["normalization"]["is_nfkc"],
+        },
+        normalization_diff=normalization_diff,
+        normals_repr=nfc_text if normalization_diff else None,
+        invisibles=invisibles,
+        bidi_controls=bidi_controls,
+        mixed_scripts=scripts,
+        confusables=confusables,
+        warnings=warnings,
+        limits_applied=limits_applied + limits_applied_info,
+        normalize=normalize,
+        compare_normalized=compare_normalized,
+        original=original_analysis,
+        normalized=normalized_analysis,
+        normalization_findings=normalization_findings,
+    )
+
+
+def count_chars(
+    text: str,
+    target: str | None = None,
+    normalization: str = "raw",
+    count_mode: str = "codepoint",
+) -> CountCharsResult | dict[str, int]:
+    """Count character occurrences or return frequency table.
+
+    Args:
+        text: Input string.
+        target: Single character to count (None for frequency table).
+        normalization: "raw", "NFC", or "NFKC".
+        count_mode: "codepoint", "grapheme", "byte", or "substring".
+
+    Returns:
+        Counting result or frequency table if target is None.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+
+    valid_modes = {"codepoint", "grapheme", "byte", "substring"}
+    if count_mode not in valid_modes:
+        raise ValueError(f"Invalid count_mode: {count_mode}. Use one of: {', '.join(valid_modes)}")
+
+    if normalization != "raw":
+        text = normalize_unicode(text, normalization)
+
+    if target is not None and len(target) != 1 and count_mode != "substring":
+        raise ValueError("target must be a single character")
+
+    if count_mode == "byte":
+        target_bytes = target.encode("utf-8") if target else None
+        text_bytes = text.encode("utf-8")
+        if target is None:
+            freq: dict[str, int] = {}
+            for byte_seq in set(text_bytes):
+                freq[chr(byte_seq)] = text_bytes.count(byte_seq)
+            return freq
+        positions = [i for i in range(len(text_bytes)) if text_bytes[i:i+len(target_bytes)] == target_bytes]
+        return CountCharsResult(
+            target=target,
+            normalization=normalization,
+            count=len(positions),
+            positions=positions,
+            text_length_codepoints=len(text),
+        )
+    elif count_mode == "grapheme":
+        grapheme_text = list(text)
+        if target is None:
+            freq: dict[str, int] = {}
+            for g in grapheme_text:
+                freq[g] = freq.get(g, 0) + 1
+            return freq
+        target_grapheme = list(target)[0] if target else None
+        positions = [i for i, g in enumerate(grapheme_text) if g == target_grapheme]
+        return CountCharsResult(
+            target=target,
+            normalization=normalization,
+            count=len(positions),
+            positions=positions,
+            text_length_codepoints=count_graphemes(text),
+        )
+    elif count_mode == "substring" and target is not None:
+        positions = []
+        start = 0
+        while start < len(text):
+            idx = text.find(target, start)
+            if idx == -1:
+                break
+            positions.append(idx)
+            start = idx + 1
+        return CountCharsResult(
+            target=target,
+            normalization=normalization,
+            count=len(positions),
+            positions=positions,
+            text_length_codepoints=len(text),
+        )
+    else:
+        if target is None:
+            freq: dict[str, int] = {}
+            for char in text:
+                freq[char] = freq.get(char, 0) + 1
+            return freq
+
+        positions = [i for i, c in enumerate(text) if c == target]
+
+        return CountCharsResult(
+            target=target,
+            normalization=normalization,
+            count=len(positions),
+            positions=positions,
+            text_length_codepoints=len(text),
+        )
+
+
+def list_compare(
+    a: list[str],
+    b: list[str],
+    ignore_order: bool = True,
+    casefold: bool = False,
+    normalization: str = "NFC",
+    trim: bool = False,
+    treat_as_multiset: bool = True,
+    include_near_matches: bool = False,
+    near_match_threshold: int = 2,
+) -> ListCompareResult:
+    """Compare two lists with optional ignore_order, casefold, normalization.
+
+    Args:
+        a: First list.
+        b: Second list.
+        ignore_order: If True, compare as sets. (legacy, use mode instead)
+        casefold: If True, casefold elements before comparison.
+        normalization: Unicode normalization form.
+        trim: If True, trim whitespace from each element.
+        treat_as_multiset: If True, ignore duplicates when comparing sets.
+                          If False, duplicate counts matter for equality.
+        include_near_matches: If True, include near matches (fuzzy matching).
+        near_match_threshold: Maximum edit distance for near matches.
+
+    Returns:
+        ListCompareResult with same_ordered, same_unordered, only_in_a,
+        only_in_b, duplicates_a, duplicates_b, near_matches.
+    """
+    def transform(s: str) -> str:
+        result = s
+        if trim:
+            result = result.strip()
+        if normalization != "raw":
+            result = normalize_unicode(result, normalization)
+        if casefold:
+            result = casefold_text(result)
+        return result
+
+    a_transformed = [transform(x) for x in a]
+    b_transformed = [transform(x) for x in b]
+
+    a_set = set(a_transformed)
+    b_set = set(b_transformed)
+
+    if treat_as_multiset:
+        only_in_a = [a[i] for i, x in enumerate(a_transformed) if x not in b_set]
+        only_in_b = [b[i] for i, x in enumerate(b_transformed) if x not in a_set]
+    else:
+        a_counts: dict[str, int] = {}
+        b_counts: dict[str, int] = {}
+        for x in a_transformed:
+            a_counts[x] = a_counts.get(x, 0) + 1
+        for x in b_transformed:
+            b_counts[x] = b_counts.get(x, 0) + 1
+        only_in_a = [a[i] for i, x in enumerate(a_transformed) if a_counts.get(x, 0) > b_counts.get(x, 0)]
+        only_in_b = [b[i] for i, x in enumerate(b_transformed) if b_counts.get(x, 0) > a_counts.get(x, 0)]
+
+    from collections import Counter
+    a_counter = Counter(a_transformed)
+    b_counter = Counter(b_transformed)
+    duplicates_a = [x for x, c in a_counter.items() if c > 1]
+    duplicates_b = [x for x, c in b_counter.items() if c > 1]
+
+    near_matches: list[ListCompareNearMatch] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    seen_a_positions: set[int] = set()
+
+    if include_near_matches and near_match_threshold > 0:
+        for i, (a_item, a_t) in enumerate(zip(a, a_transformed, strict=True)):
+            for j, b_t in enumerate(b_transformed):
+                if a_t == b_t:
+                    continue
+                dist = levenshtein_distance(a_t, b_t)
+                if 0 < dist <= near_match_threshold:
+                    b_item = b[j]
+                    pair = (a_item, b_item) if a_item <= b_item else (b_item, a_item)
+                    if pair not in seen_pairs:
+                        seen_pairs.add(pair)
+                        near_matches.append(ListCompareNearMatch(
+                            a=a_item,
+                            b=b_item,
+                            distance=dist,
+                            classification="fuzzy",
+                        ))
+                    break
+
+    same_ordered = ignore_order or (a_transformed == b_transformed)
+    same_unordered = (treat_as_multiset and a_set == b_set) or (not treat_as_multiset and a_counter == b_counter)
+
+    return ListCompareResult(
+        same_ordered=same_ordered,
+        same_unordered=same_unordered,
+        only_in_a=only_in_a,
+        only_in_b=only_in_b,
+        duplicates_a=duplicates_a,
+        duplicates_b=duplicates_b,
+        near_matches=near_matches,
+    )
+
+
+class TextWindowPosition(TypedDict):
+    """Position information in text_window."""
+    byte_offset: int
+    codepoint_index: int
+    grapheme_index: int
+    line: int
+    column: int
+
+
+class TextWindowResult(TypedDict):
+    """Result of text_window operation."""
+    position: TextWindowPosition
+    line_text: str
+    line_visible_repr: str
+    before: list[dict]
+    after: list[dict]
+    newline_style: str
+    at_codepoint: dict | None
+    warnings: list[str]
+
+
+def text_window(
+    text: str,
+    position: dict,
+    context_lines: int = 2,
+    include_visible_repr: bool = True,
+) -> TextWindowResult:
+    """Get a window around a position in text with context lines.
+
+    Shows the line at the given position with surrounding context lines.
+
+    Args:
+        text: Input string.
+        position: Dict with kind (byte_offset/codepoint_index/grapheme_index/line_column)
+                  and value (numeric) or line/column for line_column kind.
+        context_lines: Number of lines before and after to return.
+        include_visible_repr: Include visible representation of the line.
+
+    Returns:
+        Dictionary with position info, line_text, before/after context,
+        newline_style, at_codepoint info, and warnings.
+    """
+    _byte_to_cp = byte_offset_to_codepoint_index
+    _cp_to_byte = codepoint_index_to_byte_offset
+    _cp_to_line_col = codepoint_index_to_line_column
+    _count_graphemes = count_graphemes
+    _detect_newline = detect_newline_style
+    _get_line_text = get_line_text
+    _get_surrounding = get_surrounding_lines
+    _utf8_bytes = utf8_bytes
+    _visible_repr = visible_repr
+
+    warnings: list[str] = []
+
+    kind = position.get("kind", "codepoint_index")
+    line_base = position.get("line_base", 1)
+    column_base = position.get("column_base", 1)
+
+    n = len(text)
+    codepoint_index: int | None = None
+
+    if kind == "byte_offset":
+        byte_offset = position.get("value", position.get("byte_offset"))
+        try:
+            codepoint_index = _byte_to_cp(text, byte_offset)
+        except ValueError as e:
+            raise ValueError(f"Invalid byte offset: {e}")
+
+    elif kind == "codepoint_index":
+        codepoint_index = position.get("value", position.get("codepoint_index"))
+        if codepoint_index < 0 or codepoint_index > len(text):
+            raise ValueError(f"Codepoint index {codepoint_index} out of range (0-{len(text)})")
+
+    elif kind == "grapheme_index":
+        grapheme_index = position.get("value", position.get("grapheme_index"))
+        grapheme_count = count_graphemes(text)
+        if grapheme_index < 0 or grapheme_index > grapheme_count:
+            raise ValueError(f"Grapheme index {grapheme_index} out of range (0-{grapheme_count})")
+        target_grapheme = 0
+        i = 0
+        n = len(text)
+        while i < n:
+            if target_grapheme == grapheme_index:
+                codepoint_index = i
+                break
+            target_grapheme += 1
+            i += 1
+            while i < n:
+                cp = ord(text[i])
+                _is_extend_char = _is_extend_char
+                _is_extended_pictographic = _is_extended_pictographic
+                if _is_extend_char(text[i]):
+                    i += 1
+                    continue
+                if cp == 0x200D:
+                    i += 1
+                    if i < n and _is_extended_pictographic(text[i]):
+                        i += 1
+                    continue
+                if 0x1F1E6 <= cp <= 0x1F1FF:
+                    if i + 1 < n and 0x1F1E6 <= ord(text[i + 1]) <= 0x1F1FF:
+                        i += 2
+                        continue
+                    i += 1
+                    continue
+                break
+        if codepoint_index is None:
+            codepoint_index = len(text)
+
+    elif kind == "line_column":
+        line = position.get("line", position.get("value"))
+        column = position.get("column")
+        if line is None or column is None:
+            raise ValueError("line_column position requires line and column")
+        _lc_to_cp = line_column_to_codepoint_index
+        try:
+            codepoint_index = _lc_to_cp(text, line, column, line_base, column_base)
+        except ValueError as e:
+            raise ValueError(f"Invalid line/column: {e}")
+
+    else:
+        raise ValueError(f"Unknown position kind: {kind}")
+
+    line_num, column_num = _cp_to_line_col(text, codepoint_index, 1, 1)
+
+    byte_offset = _cp_to_byte(text, codepoint_index)
+
+    grapheme_idx = 0
+    i = 0
+    while i < codepoint_index:
+        grapheme_idx += 1
+        i += 1
+        while i < codepoint_index:
+            _is_extend_char = _is_extend_char
+            _is_extended_pictographic = _is_extended_pictographic
+            if _is_extend_char(text[i]):
+                i += 1
+                continue
+            cp = ord(text[i])
+            if cp == 0x200D:
+                i += 1
+                if i < n and _is_extended_pictographic(text[i]):
+                    i += 1
+                continue
+            if 0x1F1E6 <= cp <= 0x1F1FF:
+                if i + 1 < n and 0x1F1E6 <= ord(text[i + 1]) <= 0x1F1FF:
+                    i += 2
+                    continue
+                i += 1
+                continue
+            break
+    grapheme_index = grapheme_idx
+
+    line_text = _get_line_text(text, line_num, 1)
+    line_visible = visible_repr(line_text) if include_visible_repr else ""
+
+    newline_style = _detect_newline(text)
+
+    before_lines, after_lines = _get_surrounding(text, line_num, context_lines, 1)
+
+    before = [{"line": ln, "text": txt} for ln, txt in before_lines]
+    after = [{"line": ln, "text": txt} for ln, txt in after_lines]
+
+    at_codepoint = None
+    if codepoint_index < len(text):
+        char = text[codepoint_index]
+        import unicodedata
+        codepoint_str = f"U+{ord(char):04X}"
+        name = unicodedata.name(char, "<unknown>")
+        category = unicodedata.category(char)
+        at_codepoint = {
+            "char": char,
+            "codepoint": codepoint_str,
+            "name": name,
+            "category": category,
+        }
+
+    if byte_offset < len(_utf8_bytes(text)):
+        b = text.encode("utf-8")[byte_offset]
+        if b >= 0x80 and b < 0xC0:
+            warnings.append("Position falls in middle of multi-byte sequence (byte is continuation byte)")
+
+    return TextWindowResult(
+        position={
+            "byte_offset": byte_offset,
+            "codepoint_index": codepoint_index,
+            "grapheme_index": grapheme_index,
+            "line": line_num,
+            "column": column_num,
+        },
+        line_text=line_text,
+        line_visible_repr=line_visible,
+        before=before,
+        after=after,
+        newline_style=newline_style,
+        at_codepoint=at_codepoint,
+        warnings=warnings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# text_replace_check
+# ---------------------------------------------------------------------------
+
+MAX_PREVIEW_CHARS = 2000
+
+
+class TextReplaceCheckResult(TypedDict):
+    """Result of text_replace_check."""
+    match_count: int
+    unique_match: bool
+    expected_count_met: bool
+    would_change: bool
+    positions: list[dict[str, int]]
+    changed_text_fingerprint: str
+    newline_style_before: str
+    newline_style_after: str
+    preview_before: str
+    preview_after: str
+    findings: list[dict[str, str]]
+
+
+def text_replace_check(
+    text: str,
+    old: str,
+    new: str,
+    mode: str = "exact",
+    expected_count: int | None = None,
+    allow_multiple: bool = False,
+    newline_policy: str = "preserve",
+    return_preview: bool = False,
+    max_preview_chars: int = MAX_PREVIEW_CHARS,
+) -> TextReplaceCheckResult:
+    """Check whether a replacement would apply cleanly before editing.
+
+    Args:
+        text: Source text.
+        old: Text to find.
+        new: Replacement text.
+        mode: Matching mode (exact, nfc, nfkc, casefold, whitespace_collapse).
+        expected_count: Expected number of matches (optional).
+        allow_multiple: If False and more than one match, add a finding.
+        newline_policy: How to handle newlines (preserve, normalize_lf, normalize_crlf).
+        return_preview: If True, include before/after previews.
+        max_preview_chars: Maximum characters in preview output.
+
+    Returns:
+        TextReplaceCheckResult with match info, positions, and findings.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+
+    valid_modes = {"exact", "nfc", "nfkc", "casefold", "whitespace_collapse"}
+    if mode not in valid_modes:
+        raise ValueError(f"Invalid mode: {mode}. Use one of: {', '.join(valid_modes)}")
+
+    valid_newline = {"preserve", "normalize_lf", "normalize_crlf"}
+    if newline_policy not in valid_newline:
+        raise ValueError(f"Invalid newline_policy: {newline_policy}. Use one of: {', '.join(valid_newline)}")
+
+    if max_preview_chars < 0:
+        raise ValueError("max_preview_chars must be non-negative")
+
+    import hashlib
+
+    _cp_to_line_col = codepoint_index_to_line_column
+    _detect_newline_fn = detect_newline_style
+
+    findings: list[dict[str, str]] = []
+
+    # Prepare text and old for matching based on mode
+    def _normalize_for_match(s: str, m: str) -> str:
+        if m == "nfc":
+            return normalize_unicode(s, "NFC")
+        elif m == "nfkc":
+            return normalize_unicode(s, "NFKC")
+        elif m == "casefold":
+            return casefold_text(s)
+        elif m == "whitespace_collapse":
+            return re.sub(r"\s+", " ", s)
+        return s
+
+    text_norm = _normalize_for_match(text, mode)
+    old_norm = _normalize_for_match(old, mode)
+
+    # Find all matches (non-overlapping)
+    positions: list[dict[str, int]] = []
+    search_start = 0
+    while search_start <= len(text_norm):
+        idx = text_norm.find(old_norm, search_start)
+        if idx == -1:
+            break
+        byte_start = len(text[:idx].encode("utf-8"))
+        byte_end = len(text[:idx + len(old)].encode("utf-8"))
+        cp_line, cp_col = _cp_to_line_col(text, idx, 1, 1)
+        positions.append({
+            "codepoint_index": idx,
+            "byte_start": byte_start,
+            "byte_end": byte_end,
+            "line": cp_line,
+            "column": cp_col,
+        })
+        search_start = idx + len(old_norm) if len(old_norm) > 0 else idx + 1
+
+    match_count = len(positions)
+    unique_match = match_count == 1
+    would_change = match_count > 0
+
+    # Expected count check
+    expected_count_met = True
+    if expected_count is not None:
+        if match_count != expected_count:
+            expected_count_met = False
+            if match_count == 0:
+                findings.append({
+                    "kind": "no_match",
+                    "message": f"Expected {expected_count} match(es) but found 0",
+                })
+            else:
+                findings.append({
+                    "kind": "count_mismatch",
+                    "message": f"Expected {expected_count} match(es) but found {match_count}",
+                })
+
+    # Ambiguity warning
+    if not allow_multiple and match_count > 1:
+        findings.append({
+            "kind": "ambiguous_replacement",
+            "message": f"Found {match_count} matches but allow_multiple is false; replacement is ambiguous",
+        })
+
+    if match_count == 0:
+        findings.append({
+            "kind": "no_match",
+            "message": "No matches found; replacement would not change text",
+        })
+
+    # Build changed text for fingerprinting and preview
+    if would_change:
+        changed_text = text_norm.replace(old_norm, new) if mode != "whitespace_collapse" else re.sub(r"\s+", " ", text).replace(re.sub(r"\s+", " ", old), new)
+        if mode in ("nfc", "nfkc", "casefold"):
+            # Rebuild from original
+            if mode == "casefold":
+                # casefold matching but keep original casing elsewhere
+                parts = []
+                last = 0
+                for pos in positions:
+                    parts.append(text[last:pos["codepoint_index"]])
+                    parts.append(new)
+                    last = pos["codepoint_index"] + len(old)
+                parts.append(text[last:])
+                changed_text = "".join(parts)
+            else:
+                parts = []
+                last = 0
+                for pos in positions:
+                    parts.append(text[last:pos["codepoint_index"]])
+                    parts.append(new)
+                    last = pos["codepoint_index"] + len(old)
+                parts.append(text[last:])
+                changed_text = "".join(parts)
+    else:
+        changed_text = text
+
+    # Compute fingerprints
+    before_fp = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    after_fp = hashlib.sha256(changed_text.encode("utf-8")).hexdigest()[:16]
+
+    # Newline style detection
+    newline_before = _detect_newline_fn(text)
+    newline_after = _detect_newline_fn(changed_text)
+
+    # Previews
+    preview_before = ""
+    preview_after = ""
+    if return_preview:
+        cap = min(max_preview_chars, MAX_PREVIEW_CHARS)
+        preview_before = text[:cap]
+        preview_after = changed_text[:cap]
+        if len(text) > cap:
+            findings.append({
+                "kind": "preview_truncated",
+                "message": f"Preview before truncated at {cap} characters",
+            })
+        if len(changed_text) > cap:
+            findings.append({
+                "kind": "preview_truncated",
+                "message": f"Preview after truncated at {cap} characters",
+            })
+
+    return TextReplaceCheckResult(
+        match_count=match_count,
+        unique_match=unique_match,
+        expected_count_met=expected_count_met,
+        would_change=would_change,
+        positions=positions,
+        changed_text_fingerprint=after_fp,
+        newline_style_before=newline_before,
+        newline_style_after=newline_after,
+        preview_before=preview_before,
+        preview_after=preview_after,
+        findings=findings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# line_range_extract
+# ---------------------------------------------------------------------------
+
+class LineRangeExtractResult(TypedDict):
+    """Result of line_range_extract."""
+    line_count_total: int
+    start_line: int
+    end_line: int
+    valid_range: bool
+    text: str
+    lines: list[dict[str, Any]]
+    byte_start: int
+    byte_end: int
+    char_start: int
+    char_end: int
+    newline_style: str
+    ends_with_newline: bool
+    fingerprint: str
+    findings: list[dict[str, str]]
+
+
+def line_range_extract(
+    text: str,
+    start_line: int,
+    end_line: int,
+    line_base: int = 1,
+    include_line_numbers: bool = False,
+    include_fingerprint: bool = True,
+) -> LineRangeExtractResult:
+    """Extract exact line ranges and return stable offsets/fingerprints.
+
+    Args:
+        text: Input string.
+        start_line: First line to extract.
+        end_line: Last line to extract (inclusive).
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+        include_line_numbers: If True, include line number in each line dict.
+        include_fingerprint: If True, compute SHA-256 fingerprint.
+
+    Returns:
+        LineRangeExtractResult with extracted text, offsets, and metadata.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+
+    if start_line > end_line:
+        raise ValueError(f"start_line ({start_line}) must be <= end_line ({end_line})")
+
+    import hashlib
+
+    _detect_newline_lr = detect_newline_style
+
+    findings: list[dict[str, str]] = []
+
+    # Split text into lines (preserving content)
+    lines_raw = text.split("\n")
+    # Remove trailing empty if text ends with newline
+    if text.endswith("\n"):
+        total_lines = len(lines_raw) - 1  # last element is empty
+    else:
+        total_lines = len(lines_raw)
+
+    if total_lines == 0:
+        total_lines = 1  # Empty text still has line 1
+
+    # Convert to 1-based for comparison
+    start_1based = start_line + (1 - line_base)
+    end_1based = end_line + (1 - line_base)
+
+    valid_range = True
+    if start_1based < 1:
+        valid_range = False
+        findings.append({
+            "kind": "out_of_range",
+            "message": f"start_line {start_line} is before the first line",
+        })
+    if end_1based > total_lines:
+        valid_range = False
+        findings.append({
+            "kind": "out_of_range",
+            "message": f"end_line {end_line} exceeds total lines ({total_lines})",
+        })
+
+    if not valid_range:
+        # Clamp to valid range
+        start_1based = max(1, start_1based)
+        end_1based = min(total_lines, end_1based)
+
+    # Compute byte/char offsets for the line range
+    # Find start of start_line
+    char_start = 0
+    current_line = 1
+    for i, ch in enumerate(text):
+        if current_line == start_1based:
+            char_start = i
+            break
+        if ch == "\n":
+            current_line += 1
+    else:
+        # start_line not found, use end of text
+        char_start = len(text)
+
+    # Find end of end_line (exclusive, up to and including newline if present)
+    char_end = len(text)
+    current_line = 1
+    found_start = False
+    for i, ch in enumerate(text):
+        if current_line == start_1based and not found_start:
+            found_start = True
+        if ch == "\n":
+            if current_line == end_1based:
+                char_end = i + 1  # include the newline
+                break
+            current_line += 1
+
+    # Ensure char_end is at least char_start
+    if char_end < char_start:
+        char_end = char_start
+
+    byte_start = len(text[:char_start].encode("utf-8"))
+    byte_end = len(text[:char_end].encode("utf-8"))
+
+    # Extract lines
+    extracted_lines: list[dict[str, Any]] = []
+    extracted_text_parts: list[str] = []
+    for i in range(start_1based - 1, min(end_1based, len(lines_raw))):
+        line_text = lines_raw[i] if i < len(lines_raw) else ""
+        line_dict: dict[str, Any] = {"text": line_text}
+        if include_line_numbers:
+            line_dict["line"] = i + line_base
+        extracted_lines.append(line_dict)
+        extracted_text_parts.append(line_text)
+
+    extracted_text = "\n".join(extracted_text_parts)
+
+    # Fingerprint
+    fingerprint = ""
+    if include_fingerprint:
+        fingerprint = hashlib.sha256(extracted_text.encode("utf-8")).hexdigest()[:16]
+
+    newline_style = _detect_newline_lr(text)
+    ends_with_newline = text.endswith("\n")
+
+    return LineRangeExtractResult(
+        line_count_total=total_lines,
+        start_line=start_line,
+        end_line=end_line,
+        valid_range=valid_range,
+        text=extracted_text,
+        lines=extracted_lines,
+        byte_start=byte_start,
+        byte_end=byte_end,
+        char_start=char_start,
+        char_end=char_end,
+        newline_style=newline_style,
+        ends_with_newline=ends_with_newline,
+        fingerprint=fingerprint,
+        findings=findings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# line_range_compare
+# ---------------------------------------------------------------------------
+
+class LineRangeCompareResult(TypedDict):
+    """Result of line_range_compare."""
+    equal: bool
+    left_fingerprint: str
+    right_fingerprint: str
+    diff_summary: str
+    first_difference: dict[str, Any] | None
+
+
+def line_range_compare(
+    left_text: str,
+    right_text: str,
+    start_line: int,
+    end_line: int,
+    line_base: int = 1,
+    comparison_mode: str = "exact",
+) -> LineRangeCompareResult:
+    """Compare a line range from two text inputs.
+
+    Args:
+        left_text: First text input.
+        right_text: Second text input.
+        start_line: First line to compare.
+        end_line: Last line to compare (inclusive).
+        line_base: Base for line numbers.
+        comparison_mode: "exact", "ignore_trailing_whitespace", or "normalize_newlines".
+
+    Returns:
+        LineRangeCompareResult with equality, fingerprints, and diff info.
+    """
+    for label, t in [("left_text", left_text), ("right_text", right_text)]:
+        if len(t) > MAX_TEXT_LENGTH:
+            raise ValueError(f"{label} length {len(t)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+
+    valid_modes = {"exact", "ignore_trailing_whitespace", "normalize_newlines"}
+    if comparison_mode not in valid_modes:
+        raise ValueError(f"Invalid comparison_mode: {comparison_mode}. Use one of: {', '.join(valid_modes)}")
+
+    import hashlib
+
+    def _extract_lines(t: str) -> list[str]:
+        raw = t.split("\n")
+        if t.endswith("\n"):
+            return raw[:-1]  # drop trailing empty
+        return raw
+
+    left_lines = _extract_lines(left_text)
+    right_lines = _extract_lines(right_text)
+
+    total_left = len(left_lines) or 1
+    total_right = len(right_lines) or 1
+
+    # Clamp to available range
+    start_1based = start_line + (1 - line_base)
+    end_1based = end_line + (1 - line_base)
+
+    left_slice = left_lines[max(0, start_1based - 1):end_1based]
+    right_slice = right_lines[max(0, start_1based - 1):end_1based]
+
+    def _normalize_for_compare(s: str, mode: str) -> str:
+        if mode == "ignore_trailing_whitespace":
+            return s.rstrip()
+        elif mode == "normalize_newlines":
+            # After splitting by \n, trailing \r should be stripped
+            return s.rstrip("\r")
+        return s
+
+    left_norm = [_normalize_for_compare(l, comparison_mode) for l in left_slice]
+    right_norm = [_normalize_for_compare(r, comparison_mode) for r in right_slice]
+
+    equal = left_norm == right_norm
+
+    left_text_slice = "\n".join(left_slice)
+    right_text_slice = "\n".join(right_slice)
+    left_fp = hashlib.sha256(left_text_slice.encode("utf-8")).hexdigest()[:16]
+    right_fp = hashlib.sha256(right_text_slice.encode("utf-8")).hexdigest()[:16]
+
+    diff_summary = "equal" if equal else "different"
+    first_diff: dict[str, Any] | None = None
+
+    if not equal:
+        for i, (l, r) in enumerate(zip(left_norm, right_norm)):
+            if l != r:
+                first_diff = {
+                    "line_offset": i,
+                    "line_number": start_1based + i,
+                    "left": left_slice[i],
+                    "right": right_slice[i],
+                }
+                diff_summary = f"differ at line {start_1based + i}"
+                break
+        if first_diff is None and len(left_norm) != len(right_norm):
+            min_len = min(len(left_norm), len(right_norm))
+            diff_summary = f"different lengths: {len(left_norm)} vs {len(right_norm)} lines"
+            if min_len < max(len(left_norm), len(right_norm)):
+                idx = min_len
+                first_diff = {
+                    "line_offset": idx,
+                    "line_number": start_1based + idx,
+                    "left": left_slice[idx] if idx < len(left_slice) else None,
+                    "right": right_slice[idx] if idx < len(right_slice) else None,
+                }
+
+    return LineRangeCompareResult(
+        equal=equal,
+        left_fingerprint=left_fp,
+        right_fingerprint=right_fp,
+        diff_summary=diff_summary,
+        first_difference=first_diff,
+    )
+
+# === exact/confusables.py ===
+# Confusables table: codepoint string -> substitution codepoint string(s).
+# e.g., 'U+0410' (Cyrillic A) -> 'U+0041' (Latin A)
+# Names are derived at runtime via unicodedata.name().
+
+CONFUSABLES: dict[str, str] = {
+    "U+0022": "U+0027 U+0027",
+    "U+0025": "U+00BA U+002F U+2080",
+    "U+0030": "U+004F",
+    "U+0031": "U+006C",
+    "U+0049": "U+006C",
+    "U+0060": "U+0027",
+    "U+006D": "U+0072 U+006E",
+    "U+007C": "U+006C",
+    "U+00A0": "U+0020",
+    "U+00A2": "U+0063 U+0338",
+    "U+00A5": "U+0059 U+0335",
+    "U+00AF": "U+02C9",
+    "U+00B4": "U+0027",
+    "U+00B5": "U+03BC",
+    "U+00B8": "U+002C",
+    "U+00C6": "U+0041 U+0045",
+    "U+00C7": "U+0043 U+0326",
+    "U+00D0": "U+0044 U+0335",
+    "U+00D7": "U+0078",
+    "U+00D8": "U+004F U+0338",
+    "U+00E6": "U+0061 U+0065",
+    "U+00E7": "U+0063 U+0326",
+    "U+00F0": "U+2202 U+0335",
+    "U+00F6": "U+0629",
+    "U+00F8": "U+006F U+0338",
+    "U+00FE": "U+0070",
+    "U+0110": "U+0044 U+0335",
+    "U+0111": "U+0064 U+0335",
+    "U+011A": "U+0114",
+    "U+011B": "U+0115",
+    "U+0126": "U+0048 U+0335",
+    "U+0127": "U+0068 U+0335",
+    "U+0131": "U+0069",
+    "U+0132": "U+006C U+004A",
+    "U+0133": "U+0069 U+006A",
+    "U+013F": "U+006C U+00B7",
+    "U+0140": "U+006C U+00B7",
+    "U+0141": "U+004C U+0338",
+    "U+0142": "U+006C U+0338",
+    "U+0146": "U+0272",
+    "U+0149": "U+0027 U+006E",
+    "U+014B": "U+006E U+0329",
+    "U+0150": "U+00D6",
+    "U+0152": "U+004F U+0045",
+    "U+0153": "U+006F U+0065",
+    "U+0163": "U+01AB",
+    "U+0166": "U+0054 U+0335",
+    "U+0167": "U+0074 U+0335",
+    "U+017F": "U+0066",
+    "U+0180": "U+0062 U+0335",
+    "U+0181": "U+0027 U+0042",
+    "U+0182": "U+0062 U+0304",
+    "U+0183": "U+0062 U+0304",
+    "U+0184": "U+0062",
+    "U+0187": "U+0043 U+0027",
+    "U+0189": "U+0044 U+0335",
+    "U+018A": "U+0027 U+0044",
+    "U+018C": "U+0064 U+0304",
+    "U+018D": "U+0067",
+    "U+0191": "U+0046 U+0326",
+    "U+0192": "U+0066",
+    "U+0193": "U+0047 U+0027",
+    "U+0196": "U+006C",
+    "U+0197": "U+006C U+0335",
+    "U+0198": "U+004B U+0027",
+    "U+0199": "U+006B U+0314",
+    "U+019A": "U+006C U+0335",
+    "U+019B": "U+03BB U+0338",
+    "U+019D": "U+004E U+0326",
+    "U+019E": "U+006E U+0329",
+    "U+019F": "U+004F U+0335",
+    "U+01A0": "U+004F U+0027",
+    "U+01A1": "U+006F U+0027",
+    "U+01A4": "U+0027 U+0050",
+    "U+01A5": "U+0070 U+0314",
+    "U+01A6": "U+0052",
+    "U+01A7": "U+0032",
+    "U+01AC": "U+0027 U+0054",
+    "U+01AD": "U+0074 U+0314",
+    "U+01AE": "U+0054 U+0328",
+    "U+01B3": "U+0027 U+0059",
+    "U+01B4": "U+0079 U+0314",
+    "U+01B5": "U+005A U+0335",
+    "U+01B6": "U+007A U+0335",
+    "U+01B7": "U+0033",
+    "U+01BB": "U+0032 U+0335",
+    "U+01BC": "U+0035",
+    "U+01BD": "U+0073",
+    "U+01BF": "U+0070",
+    "U+01C0": "U+006C",
+    "U+01C1": "U+006C U+006C",
+    "U+01C3": "U+0021",
+    "U+01C4": "U+0044 U+017D",
+    "U+01C5": "U+0044 U+017E",
+    "U+01C6": "U+0064 U+017E",
+    "U+01C7": "U+004C U+004A",
+    "U+01C8": "U+004C U+006A",
+    "U+01C9": "U+006C U+006A",
+    "U+01CA": "U+004E U+004A",
+    "U+01CB": "U+004E U+006A",
+    "U+01CC": "U+006E U+006A",
+    "U+01CD": "U+0102",
+    "U+01CE": "U+0103",
+    "U+01CF": "U+012C",
+    "U+01D0": "U+012D",
+    "U+01D1": "U+014E",
+    "U+01D2": "U+014F",
+    "U+01D3": "U+016C",
+    "U+01D4": "U+016D",
+    "U+01E4": "U+0047 U+0335",
+    "U+01E5": "U+0067 U+0335",
+    "U+01E6": "U+011E",
+    "U+01E7": "U+011F",
+    "U+01F1": "U+0044 U+005A",
+    "U+01F2": "U+0044 U+007A",
+    "U+01F3": "U+0064 U+007A",
+    "U+01F5": "U+0123",
+    "U+01FE": "U+004F U+0338 U+0301",
+    "U+021A": "U+0162",
+    "U+021B": "U+01AB",
+    "U+021C": "U+0033",
+    "U+0222": "U+0038",
+    "U+0223": "U+0038",
+    "U+0224": "U+005A U+0326",
+    "U+0225": "U+007A U+0326",
+    "U+0226": "U+00C5",
+    "U+0227": "U+00E5",
+    "U+023C": "U+0063 U+0338",
+    "U+023E": "U+0054 U+0338",
+    "U+0241": "U+003F",
+    "U+0244": "U+0055 U+0335",
+    "U+0246": "U+0045 U+0338",
+    "U+0247": "U+0065 U+0338",
+    "U+0248": "U+004A U+0335",
+    "U+0249": "U+006A U+0335",
+    "U+024D": "U+0072 U+0335",
+    "U+024E": "U+0059 U+0335",
+    "U+024F": "U+0079 U+0335",
+    "U+0251": "U+0061",
+    "U+0253": "U+0062 U+0314",
+    "U+0256": "U+0064 U+0328",
+    "U+0257": "U+0064 U+0314",
+    "U+0259": "U+01DD",
+    "U+025A": "U+01DD U+02DE",
+    "U+025B": "U+A793",
+    "U+0260": "U+0067 U+0314",
+    "U+0261": "U+0067",
+    "U+0263": "U+0079",
+    "U+0266": "U+0068 U+0314",
+    "U+0268": "U+0069 U+0335",
+    "U+0269": "U+0069",
+    "U+026A": "U+0069",
+    "U+026B": "U+006C U+0334",
+    "U+026D": "U+006C U+0328",
+    "U+026E": "U+006C U+021D",
+    "U+026F": "U+0077",
+    "U+0271": "U+0072 U+006E U+0326",
+    "U+0273": "U+006E U+0328",
+    "U+0275": "U+006F U+0335",
+    "U+0276": "U+006F U+1D07",
+    "U+027C": "U+0072 U+0329",
+    "U+027D": "U+0072 U+0328",
+    "U+0282": "U+0073 U+0328",
+    "U+028B": "U+0075",
+    "U+028F": "U+0079",
+    "U+0290": "U+007A U+0328",
+    "U+0292": "U+021D",
+    "U+0294": "U+003F",
+    "U+0295": "U+A7CE",
+    "U+02A0": "U+0071 U+0314",
+    "U+02A3": "U+0064 U+007A",
+    "U+02A4": "U+0064 U+021D",
+    "U+02A5": "U+0064 U+0291",
+    "U+02A6": "U+0074 U+0073",
+    "U+02A7": "U+0074 U+0283",
+    "U+02A8": "U+0074 U+0255",
+    "U+02A9": "U+0066 U+006E U+0329",
+    "U+02AA": "U+006C U+0073",
+    "U+02AB": "U+006C U+007A",
+    "U+02B3": "U+18F4",
+    "U+02B9": "U+0027",
+    "U+02BA": "U+0027 U+0027",
+    "U+02BB": "U+0027",
+    "U+02BC": "U+0027",
+    "U+02BD": "U+0027",
+    "U+02BE": "U+0027",
+    "U+02BF": "U+0559",
+    "U+02C2": "U+003C",
+    "U+02C3": "U+003E",
+    "U+02C4": "U+005E",
+    "U+02C6": "U+005E",
+    "U+02C8": "U+0027",
+    "U+02CA": "U+0027",
+    "U+02CB": "U+0027",
+    "U+02D0": "U+003A",
+    "U+02D3": "U+0559",
+    "U+02D7": "U+002D",
+    "U+02D8": "U+02C7",
+    "U+02D9": "U+0971",
+    "U+02DA": "U+00B0",
+    "U+02DB": "U+0069",
+    "U+02DC": "U+007E",
+    "U+02DD": "U+0027 U+0027",
+    "U+02E1": "U+18F3",
+    "U+02E2": "U+18F5",
+    "U+02E4": "U+02C1",
+    "U+02EE": "U+0027 U+0027",
+    "U+02F4": "U+0027",
+    "U+02F6": "U+0027 U+0027",
+    "U+02F8": "U+003A",
+    "U+02FB": "U+02EA",
+    "U+0305": "U+0304",
+    "U+030C": "U+0306",
+    "U+030D": "U+0670",
+    "U+0310": "U+0306 U+0307",
+    "U+0311": "U+0302",
+    "U+0315": "U+0313",
+    "U+0317": "U+0650",
+    "U+031A": "U+1AE9",
+    "U+0320": "U+0331",
+    "U+0321": "U+0326",
+    "U+0322": "U+0328",
+    "U+0327": "U+0326",
+    "U+0336": "U+0335",
+    "U+0337": "U+0338",
+    "U+0339": "U+0326",
+    "U+0340": "U+0300",
+    "U+0341": "U+0301",
+    "U+0342": "U+0303",
+    "U+0343": "U+0313",
+    "U+0345": "U+0328",
+    "U+0347": "U+0333",
+    "U+0348": "U+10EFA",
+    "U+0357": "U+0350",
+    "U+0358": "U+0307",
+    "U+0366": "U+030A",
+    "U+036E": "U+0306",
+    "U+0370": "U+2C75",
+    "U+0374": "U+0027",
+    "U+0375": "U+02CF",
+    "U+0376": "U+0418",
+    "U+0377": "U+1D0E",
+    "U+037A": "U+0069",
+    "U+037B": "U+0254",
+    "U+037D": "U+A73F",
+    "U+037E": "U+003B",
+    "U+037F": "U+004A",
+    "U+0384": "U+0027",
+    "U+0387": "U+00B7",
+    "U+0391": "U+0041",
+    "U+0392": "U+0042",
+    "U+0395": "U+0045",
+    "U+0396": "U+005A",
+    "U+0397": "U+0048",
+    "U+0398": "U+004F U+0335",
+    "U+0399": "U+006C",
+    "U+039A": "U+004B",
+    "U+039B": "U+0245",
+    "U+039C": "U+004D",
+    "U+039D": "U+004E",
+    "U+039F": "U+004F",
+    "U+03A1": "U+0050",
+    "U+03A3": "U+01A9",
+    "U+03A4": "U+0054",
+    "U+03A5": "U+0059",
+    "U+03A7": "U+0058",
+    "U+03B1": "U+0061",
+    "U+03B2": "U+00DF",
+    "U+03B3": "U+0079",
+    "U+03B4": "U+1E9F",
+    "U+03B5": "U+A793",
+    "U+03B7": "U+006E U+0329",
+    "U+03B8": "U+004F U+0335",
+    "U+03B9": "U+0069",
+    "U+03BA": "U+0138",
+    "U+03BD": "U+0076",
+    "U+03BF": "U+006F",
+    "U+03C1": "U+0070",
+    "U+03C3": "U+006F",
+    "U+03C4": "U+1D1B",
+    "U+03C5": "U+0075",
+    "U+03C6": "U+0278",
+    "U+03D0": "U+00DF",
+    "U+03D1": "U+004F U+0335",
+    "U+03D2": "U+0059",
+    "U+03D5": "U+0278",
+    "U+03D6": "U+03C0",
+    "U+03DB": "U+03C2",
+    "U+03DC": "U+0046",
+    "U+03E4": "U+0427",
+    "U+03E5": "U+0447",
+    "U+03E8": "U+0032",
+    "U+03E9": "U+01A8",
+    "U+03EC": "U+0036",
+    "U+03ED": "U+006F",
+    "U+03F0": "U+0138",
+    "U+03F1": "U+0070",
+    "U+03F2": "U+0063",
+    "U+03F3": "U+006A",
+    "U+03F4": "U+004F U+0335",
+    "U+03F5": "U+A793",
+    "U+03F7": "U+00DE",
+    "U+03F8": "U+0070",
+    "U+03F9": "U+0043",
+    "U+03FA": "U+004D",
+    "U+03FD": "U+0186",
+    "U+03FF": "U+A73E",
+    "U+0404": "U+A792",
+    "U+0405": "U+0053",
+    "U+0406": "U+006C",
+    "U+0408": "U+004A",
+    "U+0410": "U+0041",
+    "U+0411": "U+0062 U+0304",
+    "U+0412": "U+0042",
+    "U+0413": "U+0393",
+    "U+0415": "U+0045",
+    "U+0417": "U+0033",
+    "U+0419": "U+040D",
+    "U+041A": "U+004B",
+    "U+041B": "U+0245",
+    "U+041C": "U+004D",
+    "U+041D": "U+0048",
+    "U+041E": "U+004F",
+    "U+041F": "U+03A0",
+    "U+0420": "U+0050",
+    "U+0421": "U+0043",
+    "U+0422": "U+0054",
+    "U+0423": "U+0059",
+    "U+0424": "U+03A6",
+    "U+0425": "U+0058",
+    "U+042B": "U+0062 U+006C",
+    "U+042C": "U+0062",
+    "U+042E": "U+006C U+004F",
+    "U+0430": "U+0061",
+    "U+0431": "U+0036",
+    "U+0432": "U+0299",
+    "U+0433": "U+0072",
+    "U+0435": "U+0065",
+    "U+0437": "U+025C",
+    "U+0438": "U+1D0E",
+    "U+043A": "U+0138",
+    "U+043C": "U+028D",
+    "U+043D": "U+029C",
+    "U+043E": "U+006F",
+    "U+043F": "U+03C0",
+    "U+0440": "U+0070",
+    "U+0441": "U+0063",
+    "U+0442": "U+1D1B",
+    "U+0443": "U+0079",
+    "U+0444": "U+0278",
+    "U+0445": "U+0078",
+    "U+0448": "U+0077",
+    "U+044A": "U+02C9 U+0062",
+    "U+044B": "U+0185 U+0069",
+    "U+044C": "U+0185",
+    "U+044F": "U+1D19",
+    "U+0454": "U+A793",
+    "U+0455": "U+0073",
+    "U+0456": "U+0069",
+    "U+0458": "U+006A",
+    "U+045B": "U+0068 U+0335",
+    "U+045D": "U+0439",
+    "U+045F": "U+0075 U+0329",
+    "U+0461": "U+0077",
+    "U+0462": "U+0062 U+0335",
+    "U+0463": "U+0062 U+0335",
+    "U+0470": "U+03A8",
+    "U+0471": "U+03C8",
+    "U+0472": "U+004F U+0335",
+    "U+0473": "U+006F U+0335",
+    "U+0474": "U+0056",
+    "U+0475": "U+0076",
+    "U+047C": "U+0460 U+0486 U+0487",
+    "U+047D": "U+0077 U+0486 U+0487",
+    "U+048A": "U+040D U+0326",
+    "U+048B": "U+0439 U+0326",
+    "U+048C": "U+0062 U+0335",
+    "U+048D": "U+0062 U+0335",
+    "U+0490": "U+0393 U+0027",
+    "U+0491": "U+0072 U+0027",
+    "U+0492": "U+0393 U+0335",
+    "U+0493": "U+0072 U+0335",
+    "U+0496": "U+0416 U+0329",
+    "U+0497": "U+0436 U+0329",
+    "U+0498": "U+0033 U+0326",
+    "U+0499": "U+025C U+0326",
+    "U+049A": "U+004B U+0329",
+    "U+049B": "U+0138 U+0329",
+    "U+049E": "U+004B U+0335",
+    "U+049F": "U+0138 U+0335",
+    "U+04A2": "U+0048 U+0329",
+    "U+04A3": "U+029C U+0329",
+    "U+04AA": "U+0043 U+0326",
+    "U+04AB": "U+0063 U+0326",
+    "U+04AC": "U+0054 U+0329",
+    "U+04AD": "U+1D1B U+0329",
+    "U+04AE": "U+0059",
+    "U+04AF": "U+0079",
+    "U+04B0": "U+0059 U+0335",
+    "U+04B1": "U+0079 U+0335",
+    "U+04B2": "U+0058 U+0329",
+    "U+04BB": "U+0068",
+    "U+04BD": "U+0065",
+    "U+04BE": "U+04BC U+0328",
+    "U+04BF": "U+0065 U+0328",
+    "U+04C0": "U+006C",
+    "U+04C5": "U+0245 U+0326",
+    "U+04C6": "U+043B U+0326",
+    "U+04C7": "U+0048 U+0326",
+    "U+04C8": "U+029C U+0326",
+    "U+04C9": "U+0048 U+0326",
+    "U+04CA": "U+029C U+0326",
+    "U+04CB": "U+04B6",
+    "U+04CC": "U+04B7",
+    "U+04CD": "U+004D U+0326",
+    "U+04CE": "U+028D U+0326",
+    "U+04CF": "U+006C",
+    "U+04D4": "U+0041 U+0045",
+    "U+04D5": "U+0061 U+0065",
+    "U+04D8": "U+018F",
+    "U+04D9": "U+01DD",
+    "U+04E0": "U+0033",
+    "U+04E1": "U+021D",
+    "U+04E8": "U+004F U+0335",
+    "U+04E9": "U+006F U+0335",
+    "U+0501": "U+0064",
+    "U+050A": "U+01F6",
+    "U+050C": "U+0047",
+    "U+050D": "U+0262",
+    "U+0510": "U+0190",
+    "U+0511": "U+A793",
+    "U+051B": "U+0071",
+    "U+051C": "U+0057",
+    "U+051D": "U+0077",
+    "U+053B": "U+12AE",
+    "U+0544": "U+1206",
+    "U+054A": "U+1323",
+    "U+054C": "U+1261",
+    "U+054D": "U+0055",
+    "U+054F": "U+0053",
+    "U+0553": "U+03A6",
+    "U+0555": "U+004F",
+    "U+055A": "U+0027",
+    "U+055D": "U+0027",
+    "U+0561": "U+0077",
+    "U+0563": "U+0071",
+    "U+0566": "U+0071",
+    "U+056E": "U+1E9F",
+    "U+0570": "U+0068",
+    "U+0572": "U+006E U+0329",
+    "U+0575": "U+0237",
+    "U+0578": "U+006E",
+    "U+057A": "U+0270",
+    "U+057C": "U+006E",
+    "U+057D": "U+0075",
+    "U+0581": "U+0067",
+    "U+0582": "U+0069",
+    "U+0584": "U+0066",
+    "U+0585": "U+006F",
+    "U+0587": "U+0565 U+0069",
+    "U+0589": "U+003A",
+    "U+059C": "U+0301",
+    "U+059D": "U+0301",
+    "U+05A4": "U+059A",
+    "U+05A8": "U+0599",
+    "U+05AD": "U+0596",
+    "U+05AE": "U+0598",
+    "U+05AF": "U+030A",
+    "U+05B4": "U+0323",
+    "U+05B9": "U+0307",
+    "U+05BA": "U+0307",
+    "U+05C0": "U+006C",
+    "U+05C1": "U+0307",
+    "U+05C2": "U+0307",
+    "U+05C3": "U+003A",
+    "U+05C4": "U+0307",
+    "U+05C5": "U+0323",
+    "U+05D5": "U+006C",
+    "U+05D8": "U+0076",
+    "U+05D9": "U+0027",
+    "U+05DF": "U+006C",
+    "U+05E1": "U+006F",
+    "U+05F0": "U+006C U+006C",
+    "U+05F1": "U+006C U+0027",
+    "U+05F2": "U+0027 U+0027",
+    "U+05F3": "U+0027",
+    "U+05F4": "U+0027 U+0027",
+    "U+0609": "U+00BA U+002F U+2080 U+2080",
+    "U+060A": "U+00BA U+002F U+2080 U+2080 U+2080",
+    "U+060D": "U+002C",
+    "U+060F": "U+0639",
+    "U+0618": "U+0301",
+    "U+0619": "U+0313",
+    "U+061A": "U+0650",
+    "U+0623": "U+006C U+0674",
+    "U+0624": "U+0648 U+0674",
+    "U+0625": "U+006C U+0655",
+    "U+0626": "U+0649 U+0674",
+    "U+0627": "U+006C",
+    "U+062B": "U+0649 U+06DB",
+    "U+0634": "U+0633 U+06DB",
+    "U+063D": "U+0649 U+0302",
+    "U+063F": "U+0649 U+06DB",
+    "U+0647": "U+006F",
+    "U+064A": "U+0649",
+    "U+064B": "U+030B",
+    "U+064E": "U+0301",
+    "U+064F": "U+0313",
+    "U+0652": "U+030A",
+    "U+0653": "U+0303",
+    "U+0656": "U+0329",
+    "U+0657": "U+0312",
+    "U+0658": "U+0306",
+    "U+0659": "U+0304",
+    "U+065A": "U+0306",
+    "U+065B": "U+0302",
+    "U+065C": "U+0323",
+    "U+065D": "U+0314",
+    "U+065F": "U+0655",
+    "U+0660": "U+002E",
+    "U+0661": "U+006C",
+    "U+0665": "U+006F",
+    "U+0667": "U+0056",
+    "U+0668": "U+0245",
+    "U+066A": "U+00BA U+002F U+2080",
+    "U+066B": "U+002C",
+    "U+066C": "U+060C",
+    "U+066D": "U+002A",
+    "U+066E": "U+0649",
+    "U+066F": "U+06A1",
+    "U+0672": "U+006C U+0674",
+    "U+0673": "U+006C U+0655",
+    "U+0675": "U+006C U+0674",
+    "U+0676": "U+0648 U+0674",
+    "U+0677": "U+0648 U+0313 U+0674",
+    "U+0678": "U+0649 U+0674",
+    "U+0679": "U+0649 U+0615",
+    "U+067A": "U+062A",
+    "U+067E": "U+0649 U+06DB",
+    "U+0681": "U+062D U+0654",
+    "U+0685": "U+062D U+06DB",
+    "U+0688": "U+062F U+0615",
+    "U+068B": "U+068A U+0615",
+    "U+068E": "U+062F U+06DB",
+    "U+068F": "U+062F U+06DB",
+    "U+0691": "U+0631 U+0615",
+    "U+0692": "U+0631 U+0306",
+    "U+0698": "U+0631 U+06DB",
+    "U+069E": "U+0635 U+06DB",
+    "U+069F": "U+0637 U+06DB",
+    "U+06A4": "U+06A1 U+06DB",
+    "U+06A7": "U+0641",
+    "U+06A8": "U+06A1 U+06DB",
+    "U+06A9": "U+0643",
+    "U+06AA": "U+0643",
+    "U+06AD": "U+0643 U+06DB",
+    "U+06B4": "U+06AF U+06DB",
+    "U+06B5": "U+0644 U+0306",
+    "U+06B7": "U+0644 U+06DB",
+    "U+06BA": "U+0649",
+    "U+06BB": "U+0649 U+0615",
+    "U+06BD": "U+0649 U+06DB",
+    "U+06BE": "U+006F",
+    "U+06C1": "U+006F",
+    "U+06C2": "U+06C0",
+    "U+06C3": "U+0629",
+    "U+06C6": "U+0648 U+0306",
+    "U+06C7": "U+0648 U+0313",
+    "U+06C8": "U+0648 U+0670",
+    "U+06C9": "U+0648 U+0302",
+    "U+06CB": "U+0648 U+06DB",
+    "U+06CC": "U+0649",
+    "U+06CE": "U+0649 U+0306",
+    "U+06D0": "U+067B",
+    "U+06D1": "U+0649 U+06DB",
+    "U+06D2": "U+0649",
+    "U+06D4": "U+002D",
+    "U+06D5": "U+006F",
+    "U+06DF": "U+030A",
+    "U+06E8": "U+0306 U+0307",
+    "U+06EC": "U+0307",
+    "U+06EE": "U+062F U+0302",
+    "U+06EF": "U+0631 U+0302",
+    "U+06F0": "U+002E",
+    "U+06F1": "U+006C",
+    "U+06F2": "U+0662",
+    "U+06F3": "U+0663",
+    "U+06F4": "U+0664",
+    "U+06F5": "U+006F",
+    "U+06F6": "U+0666",
+    "U+06F7": "U+0056",
+    "U+06F8": "U+0245",
+    "U+06F9": "U+0669",
+    "U+06FD": "U+0621 U+10EFA",
+    "U+06FE": "U+0645 U+10EFA",
+    "U+06FF": "U+006F U+0302",
+    "U+0701": "U+002E",
+    "U+0702": "U+002E",
+    "U+0703": "U+003A",
+    "U+0704": "U+003A",
+    "U+0740": "U+0307",
+    "U+0741": "U+0307",
+    "U+0742": "U+073C",
+    "U+0747": "U+0301",
+    "U+0751": "U+0628 U+06DB",
+    "U+0752": "U+0649 U+06DB",
+    "U+0756": "U+0649 U+0306",
+    "U+0762": "U+06AC",
+    "U+0763": "U+0643 U+06DB",
+    "U+0767": "U+0754",
+    "U+0768": "U+0646 U+0615",
+    "U+0769": "U+0646 U+0306",
+    "U+076C": "U+0631 U+0654",
+    "U+0771": "U+0697 U+0615",
+    "U+0772": "U+062D U+0654",
+    "U+077E": "U+0633 U+0302",
+    "U+07C0": "U+004F",
+    "U+07CA": "U+006C",
+    "U+07EB": "U+0304",
+    "U+07ED": "U+0307",
+    "U+07EE": "U+0302",
+    "U+07F3": "U+0308",
+    "U+07F4": "U+0027",
+    "U+07F5": "U+0027",
+    "U+07FA": "U+005F",
+    "U+088F": "U+0649 U+030A",
+    "U+08A1": "U+0628 U+0654",
+    "U+08A4": "U+06A2 U+06DB",
+    "U+08A7": "U+0645 U+06DB",
+    "U+08A8": "U+0649 U+0654",
+    "U+08A9": "U+0754",
+    "U+08AE": "U+062F U+0324 U+0323",
+    "U+08AF": "U+0635 U+0324 U+0323",
+    "U+08B0": "U+06AF",
+    "U+08B1": "U+0648",
+    "U+08B2": "U+0632 U+0302",
+    "U+08B6": "U+0628 U+06E2",
+    "U+08B7": "U+0649 U+06DB U+06E2",
+    "U+08B9": "U+0631 U+0306 U+0307",
+    "U+08BA": "U+0649 U+0306 U+0307",
+    "U+08BB": "U+06A1",
+    "U+08BC": "U+06A1",
+    "U+08BD": "U+0649",
+    "U+08BE": "U+0649 U+06DB U+0306",
+    "U+08BF": "U+062A U+0306",
+    "U+08C0": "U+0649 U+0615 U+0306",
+    "U+08C1": "U+0686 U+0306",
+    "U+08C2": "U+0643 U+0306",
+    "U+08E5": "U+064C",
+    "U+08E8": "U+064C",
+    "U+08EA": "U+0307",
+    "U+08EB": "U+0308",
+    "U+08ED": "U+0323",
+    "U+08EE": "U+0324",
+    "U+08F0": "U+030B",
+    "U+08F1": "U+064C",
+    "U+08F2": "U+064D",
+    "U+08F3": "U+0313",
+    "U+08F8": "U+0350",
+    "U+08F9": "U+0354",
+    "U+08FA": "U+0355",
+    "U+08FF": "U+0350",
+    "U+0900": "U+0352",
+    "U+0901": "U+0306 U+0307",
+    "U+0902": "U+0307",
+    "U+0903": "U+003A",
+    "U+0904": "U+0905 U+0946",
+    "U+0906": "U+0905 U+093E",
+    "U+0908": "U+0930 U+094D U+0907",
+    "U+090D": "U+090F U+0306",
+    "U+090E": "U+090F U+0946",
+    "U+0910": "U+090F U+11B64",
+    "U+0911": "U+0905 U+093E U+0306",
+    "U+0912": "U+0905 U+093E U+0946",
+    "U+0913": "U+0905 U+093E U+11B64",
+    "U+0914": "U+0905 U+093E U+0948",
+    "U+093B": "U+093E U+093A",
+    "U+093C": "U+0323",
+    "U+093F": "U+09BF",
+    "U+0945": "U+0306",
+    "U+0947": "U+11B64",
+    "U+0949": "U+093E U+0306",
+    "U+0952": "U+0331",
+    "U+0953": "U+0300",
+    "U+0954": "U+0301",
+    "U+0956": "U+11B62",
+    "U+0957": "U+11B63",
+    "U+0965": "U+0964 U+0964",
+    "U+0966": "U+006F",
+    "U+0967": "U+0669",
+    "U+0969": "U+0033",
+    "U+0972": "U+0905 U+0306",
+    "U+0973": "U+0905 U+093A",
+    "U+0974": "U+0905 U+093E U+093A",
+    "U+0975": "U+0905 U+094F",
+    "U+097D": "U+003F",
+    "U+0981": "U+0306 U+0307",
+    "U+0986": "U+0985 U+09BE",
+    "U+09BC": "U+0323",
+    "U+09E0": "U+098B U+09C3",
+    "U+09E1": "U+098B U+09C3",
+    "U+09E6": "U+006F",
+    "U+09EA": "U+0038",
+    "U+09ED": "U+0039",
+    "U+09F0": "U+09B0",
+    "U+0A02": "U+0307",
+    "U+0A03": "U+0983",
+    "U+0A06": "U+0A05 U+0A3E",
+    "U+0A07": "U+092A U+094D U+091F U+09BF",
+    "U+0A08": "U+092A U+094D U+091F U+0A40",
+    "U+0A09": "U+0A73 U+11B62",
+    "U+0A0A": "U+0A73 U+11B63",
+    "U+0A0F": "U+092A U+094D U+091F U+11B64",
+    "U+0A10": "U+0A05 U+0948",
+    "U+0A14": "U+0A05 U+0A4C",
+    "U+0A15": "U+0935",
+    "U+0A1C": "U+0924 U+094D U+0924",
+    "U+0A1F": "U+091F",
+    "U+0A20": "U+0920",
+    "U+0A24": "U+0909",
+    "U+0A27": "U+092A",
+    "U+0A2B": "U+0922",
+    "U+0A2E": "U+092D",
+    "U+0A35": "U+0939",
+    "U+0A38": "U+092E",
+    "U+0A3C": "U+0323",
+    "U+0A3F": "U+09BF",
+    "U+0A41": "U+11B62",
+    "U+0A42": "U+11B63",
+    "U+0A47": "U+11B64",
+    "U+0A48": "U+0948",
+    "U+0A4B": "U+0946",
+    "U+0A4D": "U+094D",
+    "U+0A66": "U+006F",
+    "U+0A67": "U+0039",
+    "U+0A6A": "U+0038",
+    "U+0A72": "U+092A U+094D U+091F",
+    "U+0A81": "U+0306 U+0307",
+    "U+0A82": "U+0307",
+    "U+0A83": "U+003A",
+    "U+0A86": "U+0A85 U+0ABE",
+    "U+0A8D": "U+0A85 U+0AC5",
+    "U+0A8F": "U+0A85 U+0AC7",
+    "U+0A90": "U+0A85 U+0AC8",
+    "U+0A91": "U+0A85 U+0ABE U+0AC5",
+    "U+0A93": "U+0A85 U+0ABE U+0AC7",
+    "U+0A94": "U+0A85 U+0ABE U+0AC8",
+    "U+0AAA": "U+0447",
+    "U+0AB0": "U+0968",
+    "U+0ABC": "U+0323",
+    "U+0ABD": "U+093D",
+    "U+0AC1": "U+0941",
+    "U+0AC2": "U+0942",
+    "U+0ACD": "U+094D",
+    "U+0AE6": "U+006F",
+    "U+0AE8": "U+0968",
+    "U+0AE9": "U+0033",
+    "U+0AEA": "U+096A",
+    "U+0AEB": "U+0447",
+    "U+0AEE": "U+096E",
+    "U+0AF0": "U+0970",
+    "U+0B01": "U+0306 U+0307",
+    "U+0B03": "U+0038",
+    "U+0B06": "U+0B05 U+0B3E",
+    "U+0B20": "U+004F",
+    "U+0B3C": "U+0323",
+    "U+0B66": "U+006F",
+    "U+0B68": "U+0039",
+    "U+0B82": "U+030A",
+    "U+0B8A": "U+0B89 U+0BB3",
+    "U+0B94": "U+0B92 U+0BB3",
+    "U+0B9C": "U+0B90",
+    "U+0BB0": "U+0B88",
+    "U+0BB8": "U+0BB6",
+    "U+0BBE": "U+0B88",
+    "U+0BC8": "U+0BA9",
+    "U+0BCA": "U+0BC6 U+0B88",
+    "U+0BCB": "U+0BC7 U+0B88",
+    "U+0BCC": "U+0BC6 U+0BB3",
+    "U+0BCD": "U+0307",
+    "U+0BD7": "U+0BB3",
+    "U+0BE6": "U+006F",
+    "U+0BE7": "U+0B95",
+    "U+0BE8": "U+0B89",
+    "U+0BEA": "U+0B9A",
+    "U+0BEB": "U+0B88 U+0BC1",
+    "U+0BEC": "U+0B9A U+0BC1",
+    "U+0BED": "U+0B8E",
+    "U+0BEE": "U+0B85",
+    "U+0BF0": "U+0BAF",
+    "U+0BF2": "U+0B9A U+0BC2",
+    "U+0BF4": "U+0BAE U+0BC0",
+    "U+0BF5": "U+0BF3",
+    "U+0BF7": "U+0B8E U+0BB5",
+    "U+0BF8": "U+0BB7",
+    "U+0BFA": "U+0BA8 U+0BC0",
+    "U+0C00": "U+0306 U+0307",
+    "U+0C02": "U+006F",
+    "U+0C03": "U+0983",
+    "U+0C13": "U+0C12 U+0C55",
+    "U+0C14": "U+0C12 U+0C4C",
+    "U+0C16": "U+0C96 U+0323",
+    "U+0C20": "U+0C30 U+05BC",
+    "U+0C22": "U+0C21 U+0323",
+    "U+0C25": "U+0C27 U+05BC",
+    "U+0C2D": "U+0C2C U+0323",
+    "U+0C2E": "U+0C35 U+0C41",
+    "U+0C37": "U+0C35 U+0323",
+    "U+0C39": "U+0C35 U+0C3E",
+    "U+0C42": "U+0C41 U+0C3E",
+    "U+0C44": "U+0C43 U+0C3E",
+    "U+0C60": "U+0C0B U+0C3E",
+    "U+0C61": "U+0C0C U+0C3E",
+    "U+0C66": "U+006F",
+    "U+0C81": "U+0306 U+0307",
+    "U+0C82": "U+006F",
+    "U+0C83": "U+0983",
+    "U+0C85": "U+0C05",
+    "U+0C86": "U+0C06",
+    "U+0C87": "U+0C07",
+    "U+0C90": "U+0C10",
+    "U+0C92": "U+0C12",
+    "U+0C93": "U+0C12 U+0C55",
+    "U+0C94": "U+0C12 U+0C4C",
+    "U+0C97": "U+0C17",
+    "U+0C9C": "U+0C1C",
+    "U+0C9D": "U+0C1D",
+    "U+0C9E": "U+0C1E",
+    "U+0C9F": "U+0C1F",
+    "U+0CA3": "U+0C23",
+    "U+0CA6": "U+0C26",
+    "U+0CA8": "U+0C28",
+    "U+0CAF": "U+0C2F",
+    "U+0CB0": "U+0C30",
+    "U+0CB1": "U+0C31",
+    "U+0CB2": "U+0C32",
+    "U+0CB3": "U+0C33",
+    "U+0CBF": "U+0C3F",
+    "U+0CC1": "U+0C41",
+    "U+0CC3": "U+0C43",
+    "U+0CDC": "U+0C5C",
+    "U+0CE1": "U+0C8C U+0CBE",
+    "U+0CE6": "U+004F",
+    "U+0CE7": "U+0C67",
+    "U+0CE8": "U+0C68",
+    "U+0CEF": "U+0C6F",
+    "U+0D01": "U+0306 U+0307",
+    "U+0D02": "U+006F",
+    "U+0D03": "U+0983",
+    "U+0D08": "U+0D07 U+0D57",
+    "U+0D09": "U+0B89",
+    "U+0D0A": "U+0B89 U+0D57",
+    "U+0D0C": "U+0D28 U+0D41",
+    "U+0D10": "U+0BC6 U+0D0E",
+    "U+0D13": "U+0D12 U+0D3E",
+    "U+0D14": "U+0D12 U+0D57",
+    "U+0D16": "U+0BB5",
+    "U+0D19": "U+0D28 U+0D41",
+    "U+0D1C": "U+0B90",
+    "U+0D1F": "U+0073",
+    "U+0D20": "U+006F",
+    "U+0D23": "U+0BA3",
+    "U+0D25": "U+0BAE",
+    "U+0D31": "U+0D30",
+    "U+0D34": "U+0BB4",
+    "U+0D36": "U+0BB6",
+    "U+0D3A": "U+0B9F U+0BBF",
+    "U+0D3F": "U+0BBF",
+    "U+0D40": "U+0BBF",
+    "U+0D42": "U+0D41",
+    "U+0D43": "U+0D41",
+    "U+0D46": "U+0BC6",
+    "U+0D47": "U+0BC7",
+    "U+0D48": "U+0BC6 U+0BC6",
+    "U+0D4E": "U+0971",
+    "U+0D5A": "U+0D28 U+0D4D U+0D2E",
+    "U+0D5F": "U+006F U+0D30 U+006F",
+    "U+0D61": "U+0D1E",
+    "U+0D66": "U+006F",
+    "U+0D6A": "U+0D30 U+0D4D",
+    "U+0D6B": "U+0D26 U+0D4D U+0D30",
+    "U+0D6C": "U+0D28 U+0D4D U+0D28",
+    "U+0D6D": "U+0039",
+    "U+0D6E": "U+0D35 U+0D4D U+0D30",
+    "U+0D6F": "U+0D28 U+0D4D",
+    "U+0D76": "U+0D39 U+0D4D U+0D2E",
+    "U+0D79": "U+0D28 U+0D41",
+    "U+0D7A": "U+0BA3 U+0D4D",
+    "U+0D7B": "U+0D28 U+0D4D",
+    "U+0D7C": "U+0D30 U+0D4D",
+    "U+0D7D": "U+0D32 U+0D4D",
+    "U+0D7E": "U+0D33 U+0D4D",
+    "U+0D82": "U+006F",
+    "U+0D83": "U+0983",
+    "U+0D8D": "U+0DC3 U+0DD8",
+    "U+0D92": "U+0D91 U+0DCA",
+    "U+0D93": "U+0D91 U+0DD9",
+    "U+0DB5": "U+0D91",
+    "U+0DB6": "U+0D9B",
+    "U+0DB9": "U+0D94",
+    "U+0DC0": "U+0DA0",
+    "U+0DC4": "U+0DB7",
+    "U+0DE9": "U+0DE8 U+0DCF",
+    "U+0DEA": "U+0DA2",
+    "U+0DEB": "U+0DAF",
+    "U+0DEF": "U+0DE8 U+0DD3",
+    "U+0E03": "U+0E02",
+    "U+0E0B": "U+0E0A",
+    "U+0E0F": "U+0E0E",
+    "U+0E14": "U+0E04",
+    "U+0E15": "U+0E04",
+    "U+0E17": "U+0E11",
+    "U+0E21": "U+0E06",
+    "U+0E26": "U+0E20",
+    "U+0E33": "U+030A U+0E32",
+    "U+0E41": "U+0E40 U+0E40",
+    "U+0E45": "U+0E32",
+    "U+0E4D": "U+030A",
+    "U+0E50": "U+006F",
+    "U+0E88": "U+0E08",
+    "U+0E8D": "U+0E22",
+    "U+0E9A": "U+0E1A",
+    "U+0E9B": "U+0E1B",
+    "U+0E9D": "U+0E1D",
+    "U+0E9E": "U+0E1E",
+    "U+0E9F": "U+0E1F",
+    "U+0EB3": "U+030A U+0EB2",
+    "U+0EB8": "U+0E38",
+    "U+0EB9": "U+0E39",
+    "U+0EC8": "U+0E48",
+    "U+0EC9": "U+0E49",
+    "U+0ECA": "U+0E4A",
+    "U+0ECB": "U+0E4B",
+    "U+0ECD": "U+030A",
+    "U+0ED0": "U+006F",
+    "U+0EDC": "U+0EAB U+0E99",
+    "U+0EDD": "U+0EAB U+0EA1",
+    "U+0F00": "U+0F68 U+0F7C U+0F7E",
+    "U+0F02": "U+0F60 U+0F74 U+0F82 U+0F7F",
+    "U+0F03": "U+0F60 U+0F74 U+0F82 U+0F14",
+    "U+0F0C": "U+0F0B",
+    "U+0F0E": "U+0F0D U+0F0D",
+    "U+0F1B": "U+0F1A U+0F1A",
+    "U+0F1E": "U+0F1D U+0F1D",
+    "U+0F1F": "U+0F1A U+0F1D",
+    "U+0F37": "U+0325",
+    "U+0F6A": "U+0F62",
+    "U+0F77": "U+0FB2 U+0F71 U+0F80",
+    "U+0F79": "U+0FB3 U+0F71 U+0F80",
+    "U+0F7B": "U+0F7A U+0F7A",
+    "U+0F7D": "U+0F7C U+0F7C",
+    "U+0FCE": "U+0F1D U+0F1A",
+    "U+0FD5": "U+5350",
+    "U+0FD6": "U+534D",
+    "U+1000": "U+0D30 U+102C",
+    "U+1002": "U+0D30",
+    "U+1004": "U+0063",
+    "U+1010": "U+006F U+102C",
+    "U+101D": "U+006F",
+    "U+101F": "U+1015 U+102C",
+    "U+1023": "U+0D30 U+102C U+1039 U+0D30 U+102C",
+    "U+1029": "U+101E U+103C",
+    "U+102A": "U+101E U+103C U+0B47 U+102C U+103A",
+    "U+1031": "U+0B47",
+    "U+1036": "U+030A",
+    "U+1038": "U+0983",
+    "U+1040": "U+006F",
+    "U+104B": "U+104A U+104A",
+    "U+105A": "U+0063",
+    "U+1061": "U+101B U+103E",
+    "U+1065": "U+1041",
+    "U+1066": "U+1015 U+103E",
+    "U+106F": "U+1015 U+102C U+103E",
+    "U+1070": "U+1003 U+103E",
+    "U+107E": "U+107D U+103E",
+    "U+1081": "U+0D30 U+103E",
+    "U+109E": "U+1083 U+030A",
+    "U+10A0": "U+A786",
+    "U+10D7": "U+006F U+102C",
+    "U+10D8": "U+0D30",
+    "U+10E7": "U+0079",
+    "U+10F3": "U+021D",
+    "U+10FF": "U+006F",
+    "U+1101": "U+1100 U+1100",
+    "U+1104": "U+1103 U+1103",
+    "U+1108": "U+1107 U+1107",
+    "U+110A": "U+1109 U+1109",
+    "U+110D": "U+110C U+110C",
+    "U+1113": "U+1102 U+1100",
+    "U+1114": "U+1102 U+1102",
+    "U+1115": "U+1102 U+1103",
+    "U+1116": "U+1102 U+1107",
+    "U+1117": "U+1103 U+1100",
+    "U+1118": "U+1105 U+1102",
+    "U+1119": "U+1105 U+1105",
+    "U+111A": "U+1105 U+1112",
+    "U+111B": "U+1105 U+110B",
+    "U+111C": "U+1106 U+1107",
+    "U+111D": "U+1106 U+110B",
+    "U+111E": "U+1107 U+1100",
+    "U+111F": "U+1107 U+1102",
+    "U+1120": "U+1107 U+1103",
+    "U+1121": "U+1107 U+1109",
+    "U+1122": "U+1107 U+1109 U+1100",
+    "U+1123": "U+1107 U+1109 U+1103",
+    "U+1124": "U+1107 U+1109 U+1107",
+    "U+1125": "U+1107 U+1109 U+1109",
+    "U+1126": "U+1107 U+1109 U+110C",
+    "U+1127": "U+1107 U+110C",
+    "U+1128": "U+1107 U+110E",
+    "U+1129": "U+1107 U+1110",
+    "U+112A": "U+1107 U+1111",
+    "U+112B": "U+1107 U+110B",
+    "U+112C": "U+1107 U+1107 U+110B",
+    "U+112D": "U+1109 U+1100",
+    "U+112E": "U+1109 U+1102",
+    "U+112F": "U+1109 U+1103",
+    "U+1130": "U+1109 U+1105",
+    "U+1131": "U+1109 U+1106",
+    "U+1132": "U+1109 U+1107",
+    "U+1133": "U+1109 U+1107 U+1100",
+    "U+1134": "U+1109 U+1109 U+1109",
+    "U+1135": "U+1109 U+110B",
+    "U+1136": "U+1109 U+110C",
+    "U+1137": "U+1109 U+110E",
+    "U+1138": "U+1109 U+110F",
+    "U+1139": "U+1109 U+1110",
+    "U+113A": "U+1109 U+1111",
+    "U+113B": "U+1105 U+1112",
+    "U+113D": "U+113C U+113C",
+    "U+113F": "U+113E U+113E",
+    "U+1141": "U+110B U+1100",
+    "U+1142": "U+110B U+1103",
+    "U+1143": "U+110B U+1106",
+    "U+1144": "U+110B U+1107",
+    "U+1145": "U+110B U+1109",
+    "U+1146": "U+110B U+1140",
+    "U+1147": "U+110B U+110B",
+    "U+1148": "U+110B U+110C",
+    "U+1149": "U+110B U+110E",
+    "U+114A": "U+110B U+1110",
+    "U+114B": "U+110B U+1111",
+    "U+114D": "U+110C U+110B",
+    "U+114F": "U+114E U+114E",
+    "U+1151": "U+1150 U+1150",
+    "U+1152": "U+110E U+110F",
+    "U+1153": "U+110E U+1112",
+    "U+1156": "U+1111 U+1107",
+    "U+1157": "U+1111 U+110B",
+    "U+1158": "U+1112 U+1112",
+    "U+115A": "U+1100 U+1103",
+    "U+115B": "U+1102 U+1109",
+    "U+115C": "U+1102 U+110C",
+    "U+115D": "U+1102 U+1112",
+    "U+115E": "U+1103 U+1105",
+    "U+1162": "U+1161 U+4E28",
+    "U+1164": "U+1163 U+4E28",
+    "U+1166": "U+1165 U+4E28",
+    "U+1168": "U+1167 U+4E28",
+    "U+116A": "U+1169 U+1161",
+    "U+116B": "U+1169 U+1161 U+4E28",
+    "U+116C": "U+1169 U+4E28",
+    "U+116F": "U+116E U+1165",
+    "U+1170": "U+116E U+1165 U+4E28",
+    "U+1171": "U+116E U+4E28",
+    "U+1173": "U+30FC",
+    "U+1174": "U+30FC U+4E28",
+    "U+1175": "U+4E28",
+    "U+1176": "U+1161 U+1169",
+    "U+1177": "U+1161 U+116E",
+    "U+1178": "U+1163 U+1169",
+    "U+1179": "U+1163 U+116D",
+    "U+117A": "U+1165 U+1169",
+    "U+117B": "U+1165 U+116E",
+    "U+117C": "U+1165 U+30FC",
+    "U+117D": "U+1167 U+1169",
+    "U+117E": "U+1167 U+116E",
+    "U+117F": "U+1169 U+1165",
+    "U+1180": "U+1169 U+1165 U+4E28",
+    "U+1181": "U+1169 U+1167 U+4E28",
+    "U+1182": "U+1169 U+1169",
+    "U+1183": "U+1169 U+116E",
+    "U+1184": "U+116D U+1163",
+    "U+1185": "U+116D U+1163 U+4E28",
+    "U+1186": "U+116D U+1163",
+    "U+1187": "U+116D U+1169",
+    "U+1188": "U+116D U+4E28",
+    "U+1189": "U+116E U+1161",
+    "U+118A": "U+116E U+1161 U+4E28",
+    "U+118B": "U+116E U+1165 U+30FC",
+    "U+118C": "U+116E U+1167 U+4E28",
+    "U+118D": "U+116E U+116E",
+    "U+118E": "U+1172 U+1161",
+    "U+118F": "U+1172 U+1165",
+    "U+1190": "U+1172 U+1165 U+4E28",
+    "U+1191": "U+1172 U+1167",
+    "U+1192": "U+1172 U+1167 U+4E28",
+    "U+1193": "U+1172 U+116E",
+    "U+1194": "U+1172 U+4E28",
+    "U+1195": "U+30FC U+116E",
+    "U+1196": "U+30FC U+30FC",
+    "U+1197": "U+30FC U+4E28 U+116E",
+    "U+1198": "U+4E28 U+1161",
+    "U+1199": "U+4E28 U+1163",
+    "U+119A": "U+4E28 U+1169",
+    "U+119B": "U+4E28 U+116E",
+    "U+119C": "U+4E28 U+30FC",
+    "U+119D": "U+4E28 U+119E",
+    "U+119F": "U+119E U+1165",
+    "U+11A0": "U+119E U+116E",
+    "U+11A1": "U+119E U+4E28",
+    "U+11A2": "U+119E U+119E",
+    "U+11A3": "U+1161 U+30FC",
+    "U+11A4": "U+1163 U+116E",
+    "U+11A5": "U+1167 U+1163",
+    "U+11A6": "U+1169 U+1163",
+    "U+11A7": "U+1169 U+1163 U+4E28",
+    "U+11A8": "U+1100",
+    "U+11A9": "U+1100 U+1100",
+    "U+11AA": "U+1100 U+1109",
+    "U+11AB": "U+1102",
+    "U+11AC": "U+1102 U+110C",
+    "U+11AD": "U+1102 U+1112",
+    "U+11AE": "U+1103",
+    "U+11AF": "U+1105",
+    "U+11B0": "U+1105 U+1100",
+    "U+11B1": "U+1105 U+1106",
+    "U+11B2": "U+1105 U+1107",
+    "U+11B3": "U+1105 U+1109",
+    "U+11B4": "U+1105 U+1110",
+    "U+11B5": "U+1105 U+1111",
+    "U+11B6": "U+1105 U+1112",
+    "U+11B7": "U+1106",
+    "U+11B8": "U+1107",
+    "U+11B9": "U+1107 U+1109",
+    "U+11BA": "U+1109",
+    "U+11BB": "U+1109 U+1109",
+    "U+11BC": "U+110B",
+    "U+11BD": "U+110C",
+    "U+11BE": "U+110E",
+    "U+11BF": "U+110F",
+    "U+11C0": "U+1110",
+    "U+11C1": "U+1111",
+    "U+11C2": "U+1112",
+    "U+11C3": "U+1100 U+1105",
+    "U+11C4": "U+1100 U+1109 U+1100",
+    "U+11C5": "U+1102 U+1100",
+    "U+11C6": "U+1102 U+1103",
+    "U+11C7": "U+1102 U+1109",
+    "U+11C8": "U+1102 U+1140",
+    "U+11C9": "U+1102 U+1110",
+    "U+11CA": "U+1103 U+1100",
+    "U+11CB": "U+1103 U+1105",
+    "U+11CC": "U+1105 U+1100 U+1109",
+    "U+11CD": "U+1105 U+1102",
+    "U+11CE": "U+1105 U+1103",
+    "U+11CF": "U+1105 U+1103 U+1112",
+    "U+11D0": "U+1105 U+1105",
+    "U+11D1": "U+1105 U+1106 U+1100",
+    "U+11D2": "U+1105 U+1106 U+1109",
+    "U+11D3": "U+1105 U+1107 U+1109",
+    "U+11D4": "U+1105 U+1107 U+1112",
+    "U+11D5": "U+1105 U+1107 U+110B",
+    "U+11D6": "U+1105 U+1109 U+1109",
+    "U+11D7": "U+1105 U+1140",
+    "U+11D8": "U+1105 U+110F",
+    "U+11D9": "U+1105 U+1159",
+    "U+11DA": "U+1106 U+1100",
+    "U+11DB": "U+1106 U+1105",
+    "U+11DC": "U+1106 U+1107",
+    "U+11DD": "U+1106 U+1109",
+    "U+11DE": "U+1106 U+1109 U+1109",
+    "U+11DF": "U+1106 U+1140",
+    "U+11E0": "U+1106 U+110E",
+    "U+11E1": "U+1106 U+1112",
+    "U+11E2": "U+1106 U+110B",
+    "U+11E3": "U+1107 U+1105",
+    "U+11E4": "U+1107 U+1111",
+    "U+11E5": "U+1107 U+1112",
+    "U+11E6": "U+1107 U+110B",
+    "U+11E7": "U+1109 U+1100",
+    "U+11E8": "U+1109 U+1103",
+    "U+11E9": "U+1109 U+1105",
+    "U+11EA": "U+1109 U+1107",
+    "U+11EB": "U+1140",
+    "U+11EC": "U+110B U+1100",
+    "U+11ED": "U+110B U+1100 U+1100",
+    "U+11EE": "U+110B U+110B",
+    "U+11EF": "U+110B U+110F",
+    "U+11F0": "U+114C",
+    "U+11F1": "U+110B U+1109",
+    "U+11F2": "U+110B U+1140",
+    "U+11F3": "U+1111 U+1107",
+    "U+11F4": "U+1111 U+110B",
+    "U+11F5": "U+1112 U+1102",
+    "U+11F6": "U+1112 U+1105",
+    "U+11F7": "U+1112 U+1106",
+    "U+11F8": "U+1112 U+1107",
+    "U+11F9": "U+1159",
+    "U+11FA": "U+1100 U+1102",
+    "U+11FB": "U+1100 U+1107",
+    "U+11FC": "U+1100 U+110E",
+    "U+11FD": "U+1100 U+110F",
+    "U+11FE": "U+1100 U+1112",
+    "U+11FF": "U+1102 U+1102",
+    "U+1200": "U+0055",
+    "U+1223": "U+0270",
+    "U+1240": "U+03A6",
+    "U+1260": "U+0548",
+    "U+1294": "U+0571",
+    "U+12D0": "U+004F",
+    "U+13A0": "U+0044",
+    "U+13A1": "U+0052",
+    "U+13A2": "U+0054",
+    "U+13A4": "U+004F U+0027",
+    "U+13A5": "U+0069",
+    "U+13A8": "U+2C75",
+    "U+13A9": "U+0059",
+    "U+13AA": "U+0041",
+    "U+13AB": "U+004A",
+    "U+13AC": "U+0045",
+    "U+13AE": "U+003F",
+    "U+13B0": "U+2C75",
+    "U+13B1": "U+0393",
+    "U+13B3": "U+0057",
+    "U+13B7": "U+004D",
+    "U+13BB": "U+0048",
+    "U+13BD": "U+0059",
+    "U+13BE": "U+004F U+0335",
+    "U+13BF": "U+01AB",
+    "U+13C0": "U+0047",
+    "U+13C2": "U+0068",
+    "U+13C3": "U+005A",
+    "U+13C7": "U+0460",
+    "U+13CB": "U+0190",
+    "U+13CC": "U+0055 U+0335",
+    "U+13CE": "U+0034",
+    "U+13CF": "U+0062",
+    "U+13D2": "U+0052",
+    "U+13D4": "U+0057",
+    "U+13D5": "U+0053",
+    "U+13D9": "U+0056",
+    "U+13DA": "U+0053",
+    "U+13DE": "U+004C",
+    "U+13DF": "U+0043",
+    "U+13E2": "U+0050",
+    "U+13E6": "U+004B",
+    "U+13E7": "U+0064",
+    "U+13EB": "U+004F U+0335",
+    "U+13EE": "U+0036",
+    "U+13F0": "U+00DF",
+    "U+13F2": "U+0068 U+0314",
+    "U+13F3": "U+0047",
+    "U+13F4": "U+0042",
+    "U+13FB": "U+0262",
+    "U+13FC": "U+0299",
+    "U+1400": "U+003D",
+    "U+1403": "U+0394",
+    "U+140C": "U+00B7 U+1401",
+    "U+140D": "U+1401 U+00B7",
+    "U+140E": "U+00B7 U+0394",
+    "U+140F": "U+0394 U+00B7",
+    "U+1410": "U+00B7 U+1404",
+    "U+1411": "U+1404 U+00B7",
+    "U+1412": "U+00B7 U+1405",
+    "U+1413": "U+1405 U+00B7",
+    "U+1414": "U+00B7 U+1406",
+    "U+1415": "U+1406 U+00B7",
+    "U+1417": "U+00B7 U+140A",
+    "U+1418": "U+140A U+00B7",
+    "U+1419": "U+00B7 U+140B",
+    "U+141A": "U+140B U+00B7",
+    "U+1427": "U+00B7",
+    "U+142B": "U+1401 U+1420",
+    "U+142C": "U+0394 U+1420",
+    "U+142D": "U+1405 U+1420",
+    "U+142E": "U+140A U+1420",
+    "U+142F": "U+0056",
+    "U+1431": "U+0245",
+    "U+1433": "U+003E",
+    "U+1437": "U+00B7 U+003E",
+    "U+1438": "U+003C",
+    "U+143A": "U+00B7 U+0056",
+    "U+143B": "U+0056 U+00B7",
+    "U+143C": "U+00B7 U+0245",
+    "U+143D": "U+0245 U+00B7",
+    "U+143E": "U+00B7 U+1432",
+    "U+143F": "U+1432 U+00B7",
+    "U+1440": "U+00B7 U+003E",
+    "U+1441": "U+003E U+00B7",
+    "U+1442": "U+00B7 U+1434",
+    "U+1443": "U+1434 U+00B7",
+    "U+1444": "U+00B7 U+003C",
+    "U+1445": "U+003C U+00B7",
+    "U+1446": "U+00B7 U+1439",
+    "U+1447": "U+1439 U+00B7",
+    "U+144A": "U+0027",
+    "U+144C": "U+0055",
+    "U+144E": "U+0548",
+    "U+1454": "U+00B7 U+1450",
+    "U+1457": "U+00B7 U+0055",
+    "U+1458": "U+0055 U+00B7",
+    "U+1459": "U+00B7 U+0548",
+    "U+145A": "U+0548 U+00B7",
+    "U+145B": "U+00B7 U+144F",
+    "U+145C": "U+144F U+00B7",
+    "U+145D": "U+00B7 U+1450",
+    "U+145E": "U+1450 U+00B7",
+    "U+145F": "U+00B7 U+1451",
+    "U+1460": "U+1451 U+00B7",
+    "U+1461": "U+00B7 U+1455",
+    "U+1462": "U+1455 U+00B7",
+    "U+1463": "U+00B7 U+1456",
+    "U+1464": "U+1456 U+00B7",
+    "U+1467": "U+0055 U+0027",
+    "U+1468": "U+0548 U+0027",
+    "U+1469": "U+1450 U+0027",
+    "U+146A": "U+1455 U+0027",
+    "U+146D": "U+0050",
+    "U+146F": "U+0064",
+    "U+1472": "U+0062",
+    "U+1473": "U+0062 U+0307",
+    "U+1474": "U+00B7 U+146B",
+    "U+1475": "U+146B U+00B7",
+    "U+1476": "U+00B7 U+0050",
+    "U+1477": "U+0070 U+00B7",
+    "U+1478": "U+00B7 U+146E",
+    "U+1479": "U+146E U+00B7",
+    "U+147A": "U+00B7 U+0064",
+    "U+147B": "U+0064 U+00B7",
+    "U+147C": "U+00B7 U+1470",
+    "U+147D": "U+1470 U+00B7",
+    "U+147E": "U+00B7 U+0062",
+    "U+147F": "U+0062 U+00B7",
+    "U+1480": "U+00B7 U+0062 U+0307",
+    "U+1481": "U+0062 U+0307 U+00B7",
+    "U+1485": "U+146B U+0027",
+    "U+1486": "U+0050 U+0027",
+    "U+1487": "U+0064 U+0027",
+    "U+1488": "U+0062 U+0027",
+    "U+148D": "U+004A",
+    "U+1492": "U+00B7 U+1489",
+    "U+1493": "U+1489 U+00B7",
+    "U+1494": "U+00B7 U+148B",
+    "U+1495": "U+148B U+00B7",
+    "U+1496": "U+00B7 U+148C",
+    "U+1497": "U+148C U+00B7",
+    "U+1498": "U+00B7 U+004A",
+    "U+1499": "U+004A U+00B7",
+    "U+149A": "U+00B7 U+148E",
+    "U+149B": "U+148E U+00B7",
+    "U+149C": "U+00B7 U+1490",
+    "U+149D": "U+1490 U+00B7",
+    "U+149E": "U+00B7 U+1491",
+    "U+149F": "U+1491 U+00B7",
+    "U+14A5": "U+0393",
+    "U+14AA": "U+004C",
+    "U+14AC": "U+00B7 U+14A3",
+    "U+14AD": "U+14A3 U+00B7",
+    "U+14AE": "U+00B7 U+0393",
+    "U+14AF": "U+0393 U+00B7",
+    "U+14B0": "U+00B7 U+14A6",
+    "U+14B1": "U+14A6 U+00B7",
+    "U+14B2": "U+00B7 U+14A7",
+    "U+14B3": "U+14A7 U+00B7",
+    "U+14B4": "U+00B7 U+14A8",
+    "U+14B5": "U+14A8 U+00B7",
+    "U+14B6": "U+00B7 U+004C",
+    "U+14B7": "U+006C U+00B7",
+    "U+14B8": "U+00B7 U+14AB",
+    "U+14B9": "U+14AB U+00B7",
+    "U+14BF": "U+0032",
+    "U+14C9": "U+00B7 U+14C0",
+    "U+14CA": "U+14C0 U+00B7",
+    "U+14CB": "U+00B7 U+14C7",
+    "U+14CC": "U+14C7 U+00B7",
+    "U+14CD": "U+00B7 U+14C8",
+    "U+14CE": "U+14C8 U+00B7",
+    "U+14D1": "U+1421",
+    "U+14DC": "U+00B7 U+14D3",
+    "U+14DD": "U+14D3 U+00B7",
+    "U+14DE": "U+00B7 U+14D5",
+    "U+14DF": "U+14D5 U+00B7",
+    "U+14E0": "U+00B7 U+14D6",
+    "U+14E1": "U+14D6 U+00B7",
+    "U+14E2": "U+00B7 U+14D7",
+    "U+14E3": "U+14D7 U+00B7",
+    "U+14E4": "U+00B7 U+14D8",
+    "U+14E5": "U+14D8 U+00B7",
+    "U+14E6": "U+00B7 U+14DA",
+    "U+14E7": "U+14DA U+00B7",
+    "U+14E8": "U+00B7 U+14DB",
+    "U+14E9": "U+14DB U+00B7",
+    "U+14F6": "U+00B7 U+14ED",
+    "U+14F7": "U+14ED U+00B7",
+    "U+14F8": "U+00B7 U+14EF",
+    "U+14F9": "U+14EF U+00B7",
+    "U+14FA": "U+00B7 U+14F0",
+    "U+14FB": "U+14F0 U+00B7",
+    "U+14FC": "U+00B7 U+14F1",
+    "U+14FD": "U+14F1 U+00B7",
+    "U+14FE": "U+00B7 U+14F2",
+    "U+14FF": "U+14F2 U+00B7",
+    "U+1500": "U+00B7 U+14F4",
+    "U+1501": "U+14F4 U+00B7",
+    "U+1502": "U+00B7 U+14F5",
+    "U+1503": "U+14F5 U+00B7",
+    "U+150C": "U+150B U+003C",
+    "U+150D": "U+150B U+1455",
+    "U+150E": "U+150B U+0062",
+    "U+150F": "U+150B U+1490",
+    "U+1517": "U+00B7 U+1510",
+    "U+1518": "U+1510 U+00B7",
+    "U+1519": "U+00B7 U+1511",
+    "U+151A": "U+1511 U+00B7",
+    "U+151B": "U+00B7 U+1512",
+    "U+151C": "U+1512 U+00B7",
+    "U+151D": "U+00B7 U+1513",
+    "U+151E": "U+1513 U+00B7",
+    "U+151F": "U+00B7 U+1514",
+    "U+1520": "U+1514 U+00B7",
+    "U+1521": "U+00B7 U+1515",
+    "U+1522": "U+1515 U+00B7",
+    "U+1523": "U+00B7 U+1516",
+    "U+1524": "U+1516 U+00B7",
+    "U+152F": "U+00B7 U+0034",
+    "U+1530": "U+0034 U+00B7",
+    "U+1531": "U+00B7 U+1528",
+    "U+1532": "U+1528 U+00B7",
+    "U+1533": "U+00B7 U+1529",
+    "U+1534": "U+1529 U+00B7",
+    "U+1535": "U+00B7 U+152A",
+    "U+1536": "U+152A U+00B7",
+    "U+1537": "U+00B7 U+152B",
+    "U+1538": "U+152B U+00B7",
+    "U+1539": "U+00B7 U+152D",
+    "U+153A": "U+152D U+00B7",
+    "U+153B": "U+00B7 U+152E",
+    "U+153C": "U+152E U+00B7",
+    "U+1540": "U+1429",
+    "U+1541": "U+0078",
+    "U+154E": "U+00B7 U+154C",
+    "U+154F": "U+154C U+00B7",
+    "U+155B": "U+00B7 U+155A",
+    "U+155C": "U+155A U+00B7",
+    "U+1568": "U+00B7 U+1567",
+    "U+1569": "U+1567 U+00B7",
+    "U+1577": "U+1E9F",
+    "U+157C": "U+0048",
+    "U+157D": "U+0078",
+    "U+157E": "U+1550 U+146C",
+    "U+157F": "U+1550 U+0050",
+    "U+1580": "U+1550 U+146E",
+    "U+1581": "U+1550 U+0064",
+    "U+1582": "U+1550 U+1470",
+    "U+1583": "U+1550 U+0062",
+    "U+1584": "U+1550 U+0062 U+0307",
+    "U+1585": "U+1550 U+1483",
+    "U+1587": "U+0052",
+    "U+158E": "U+1595 U+148A",
+    "U+158F": "U+1595 U+148B",
+    "U+1590": "U+1595 U+148C",
+    "U+1591": "U+1595 U+004A",
+    "U+1592": "U+1595 U+148E",
+    "U+1593": "U+1595 U+1490",
+    "U+1594": "U+1595 U+1491",
+    "U+15AF": "U+0062",
+    "U+15B4": "U+0046",
+    "U+15B5": "U+2132",
+    "U+15B7": "U+A7FB",
+    "U+15C4": "U+2C6F",
+    "U+15C5": "U+0041",
+    "U+15DE": "U+0044",
+    "U+15EA": "U+0044",
+    "U+15EF": "U+0460",
+    "U+15F0": "U+004D",
+    "U+15F7": "U+0042",
+    "U+1602": "U+1490",
+    "U+1603": "U+1489",
+    "U+1604": "U+14D3",
+    "U+1607": "U+14DA",
+    "U+1622": "U+1543",
+    "U+1623": "U+1546",
+    "U+1624": "U+154A",
+    "U+162E": "U+01B1",
+    "U+162F": "U+03A9",
+    "U+1634": "U+01B1",
+    "U+1635": "U+03A9",
+    "U+166D": "U+0058",
+    "U+166E": "U+0078",
+    "U+166F": "U+1550 U+146B",
+    "U+1670": "U+1595 U+1489",
+    "U+1671": "U+1596 U+148B",
+    "U+1672": "U+1596 U+148C",
+    "U+1673": "U+1596 U+004A",
+    "U+1674": "U+1596 U+148E",
+    "U+1675": "U+1596 U+1490",
+    "U+1676": "U+1596 U+1491",
+    "U+1677": "U+15A7 U+00B7",
+    "U+1678": "U+15A8 U+00B7",
+    "U+1679": "U+15A9 U+00B7",
+    "U+167A": "U+15AA U+00B7",
+    "U+167B": "U+15AB U+00B7",
+    "U+167C": "U+15AC U+00B7",
+    "U+167D": "U+15AD U+00B7",
+    "U+1680": "U+0020",
+    "U+16B2": "U+003C",
+    "U+16B7": "U+0058",
+    "U+16C1": "U+006C",
+    "U+16C2": "U+16BD",
+    "U+16CC": "U+0027",
+    "U+16D5": "U+004B",
+    "U+16D6": "U+004D",
+    "U+16D8": "U+03A8",
+    "U+16E1": "U+16BC",
+    "U+16EB": "U+00B7",
+    "U+16EC": "U+003A",
+    "U+16ED": "U+002B",
+    "U+16F0": "U+03A6",
+    "U+1734": "U+1715",
+    "U+1735": "U+002F",
+    "U+178F": "U+178A",
+    "U+17A3": "U+17A2",
+    "U+17B7": "U+0E34",
+    "U+17B8": "U+0E35",
+    "U+17B9": "U+0E36",
+    "U+17BA": "U+0E37",
+    "U+17C6": "U+030A",
+    "U+17CB": "U+0E48",
+    "U+17D3": "U+030A",
+    "U+17D4": "U+0E2F",
+    "U+17D5": "U+0E5A",
+    "U+17D9": "U+0E4F",
+    "U+17DA": "U+0E5B",
+    "U+17E0": "U+006F",
+    "U+1803": "U+003A",
+    "U+1809": "U+003A",
+    "U+1855": "U+1835",
+    "U+1896": "U+185C",
+    "U+18B3": "U+00B7 U+18B1",
+    "U+18B6": "U+00B7 U+18B4",
+    "U+18B9": "U+00B7 U+18B8",
+    "U+18C2": "U+00B7 U+18C0",
+    "U+18C6": "U+00B7 U+14C2",
+    "U+18C7": "U+14C2 U+00B7",
+    "U+18C8": "U+00B7 U+14C3",
+    "U+18C9": "U+14C3 U+00B7",
+    "U+18CA": "U+00B7 U+14C4",
+    "U+18CB": "U+14C4 U+00B7",
+    "U+18CC": "U+00B7 U+14C5",
+    "U+18CD": "U+14C5 U+00B7",
+    "U+18CE": "U+00B7 U+1543",
+    "U+18CF": "U+00B7 U+1546",
+    "U+18D0": "U+00B7 U+1547",
+    "U+18D1": "U+00B7 U+1548",
+    "U+18D2": "U+00B7 U+1549",
+    "U+18D3": "U+00B7 U+154B",
+    "U+18DB": "U+18F5",
+    "U+18DC": "U+18DF U+141E",
+    "U+18DD": "U+141E U+18DF",
+    "U+18E0": "U+1543 U+00B7",
+    "U+18E3": "U+155E U+00B7",
+    "U+18E4": "U+1566 U+00B7",
+    "U+18E5": "U+156B U+00B7",
+    "U+18E8": "U+1586 U+00B7",
+    "U+18EA": "U+1597 U+00B7",
+    "U+18ED": "U+0460 U+00B7",
+    "U+18F0": "U+15F4 U+00B7",
+    "U+18F2": "U+161B U+00B7",
+    "U+19D0": "U+199E",
+    "U+19D1": "U+19B1",
+    "U+1A80": "U+1A45",
+    "U+1A90": "U+1A45",
+    "U+1AA9": "U+1AA8 U+1AA8",
+    "U+1AAB": "U+1AAA U+1AA8",
+    "U+1AB4": "U+06DB",
+    "U+1AB7": "U+0328",
+    "U+1AD9": "U+1AC6",
+    "U+1AE2": "U+0304",
+    "U+1AE7": "U+1AE5",
+    "U+1AE8": "U+0304 U+0304",
+    "U+1B52": "U+1B0D",
+    "U+1B53": "U+1B11",
+    "U+1B58": "U+1B28",
+    "U+1B5C": "U+1B50",
+    "U+1B5F": "U+1B5E U+1B5E",
+    "U+1C3C": "U+1C3B U+1C3B",
+    "U+1C7F": "U+1C7E U+1C7E",
+    "U+1CD0": "U+0302",
+    "U+1CD2": "U+0304",
+    "U+1CD3": "U+0027 U+0027",
+    "U+1CD5": "U+032B",
+    "U+1CD8": "U+032E",
+    "U+1CD9": "U+032D",
+    "U+1CDA": "U+030E",
+    "U+1CDC": "U+0329",
+    "U+1CDD": "U+0323",
+    "U+1CDE": "U+0324",
+    "U+1CED": "U+0316",
+    "U+1D04": "U+0063",
+    "U+1D08": "U+025C",
+    "U+1D0B": "U+0138",
+    "U+1D0D": "U+028D",
+    "U+1D0F": "U+006F",
+    "U+1D10": "U+0254",
+    "U+1D11": "U+006F",
+    "U+1D14": "U+01DD U+006F",
+    "U+1D1C": "U+0075",
+    "U+1D20": "U+0076",
+    "U+1D21": "U+0077",
+    "U+1D22": "U+007A",
+    "U+1D24": "U+01A8",
+    "U+1D26": "U+0072",
+    "U+1D27": "U+028C",
+    "U+1D28": "U+03C0",
+    "U+1D29": "U+1D18",
+    "U+1D2B": "U+043B",
+    "U+1D3E": "U+18D6",
+    "U+1D52": "U+00BA",
+    "U+1D6B": "U+0075 U+0065",
+    "U+1D6E": "U+0066 U+0334",
+    "U+1D6F": "U+0072 U+006E U+0334",
+    "U+1D70": "U+006E U+0334",
+    "U+1D72": "U+0072 U+0334",
+    "U+1D73": "U+027E U+0334",
+    "U+1D74": "U+0073 U+0334",
+    "U+1D75": "U+0074 U+0334",
+    "U+1D76": "U+007A U+0334",
+    "U+1D78": "U+1D34",
+    "U+1D7B": "U+0069 U+0335",
+    "U+1D7C": "U+0069 U+0335",
+    "U+1D7D": "U+0070 U+0335",
+    "U+1D7E": "U+0075 U+0335",
+    "U+1D7F": "U+028A U+0335",
+    "U+1D83": "U+0067",
+    "U+1D8C": "U+0079",
+    "U+1D90": "U+024B",
+    "U+1D9F": "U+1D4B",
+    "U+1DA2": "U+1D4D",
+    "U+1DBA": "U+18D4",
+    "U+1DBB": "U+1646",
+    "U+1DE8": "U+1ADA",
+    "U+1DEE": "U+2DEC",
+    "U+1E43": "U+AB51",
+    "U+1E9A": "U+1EA3",
+    "U+1E9D": "U+0066",
+    "U+1E9E": "U+00DF",
+    "U+1EFF": "U+0079",
+    "U+1F7D": "U+1FF4",
+    "U+1FBD": "U+0027",
+    "U+1FBE": "U+0069",
+    "U+1FBF": "U+0027",
+    "U+1FC0": "U+007E",
+    "U+1FEF": "U+0027",
+    "U+1FF6": "U+13EF",
+    "U+1FFD": "U+0027",
+    "U+1FFE": "U+0027",
+    "U+2000": "U+0020",
+    "U+2001": "U+0020",
+    "U+2002": "U+0020",
+    "U+2003": "U+0020",
+    "U+2004": "U+0020",
+    "U+2005": "U+0020",
+    "U+2006": "U+0020",
+    "U+2007": "U+0020",
+    "U+2008": "U+0020",
+    "U+2009": "U+0020",
+    "U+200A": "U+0020",
+    "U+2010": "U+002D",
+    "U+2011": "U+002D",
+    "U+2012": "U+002D",
+    "U+2013": "U+002D",
+    "U+2014": "U+30FC",
+    "U+2015": "U+30FC",
+    "U+2016": "U+006C U+006C",
+    "U+2018": "U+0027",
+    "U+2019": "U+0027",
+    "U+201A": "U+002C",
+    "U+201B": "U+0027",
+    "U+201C": "U+0027 U+0027",
+    "U+201D": "U+0027 U+0027",
+    "U+201F": "U+0027 U+0027",
+    "U+2022": "U+00B7",
+    "U+2024": "U+002E",
+    "U+2025": "U+002E U+002E",
+    "U+2026": "U+002E U+002E U+002E",
+    "U+2027": "U+00B7",
+    "U+2028": "U+0020",
+    "U+2029": "U+0020",
+    "U+202F": "U+0020",
+    "U+2030": "U+00BA U+002F U+2080 U+2080",
+    "U+2031": "U+00BA U+002F U+2080 U+2080 U+2080",
+    "U+2032": "U+0027",
+    "U+2033": "U+0027 U+0027",
+    "U+2034": "U+0027 U+0027 U+0027",
+    "U+2035": "U+0027",
+    "U+2036": "U+0027 U+0027",
+    "U+2037": "U+0027 U+0027 U+0027",
+    "U+2039": "U+003C",
+    "U+203A": "U+003E",
+    "U+203C": "U+0021 U+0021",
+    "U+203E": "U+02C9",
+    "U+2041": "U+002F",
+    "U+2043": "U+002D",
+    "U+2044": "U+002F",
+    "U+2047": "U+003F U+003F",
+    "U+2048": "U+003F U+0021",
+    "U+2049": "U+0021 U+003F",
+    "U+204E": "U+002A",
+    "U+2052": "U+00BA U+002F U+2080",
+    "U+2053": "U+007E",
+    "U+2057": "U+0027 U+0027 U+0027 U+0027",
+    "U+205A": "U+003A",
+    "U+205D": "U+2D57",
+    "U+205E": "U+2D42",
+    "U+205F": "U+0020",
+    "U+2070": "U+00BA",
+    "U+2079": "U+A770",
+    "U+20A1": "U+0043 U+20EB",
+    "U+20A4": "U+00A3",
+    "U+20A5": "U+0072 U+006E U+0338",
+    "U+20A8": "U+0052 U+0073",
+    "U+20A9": "U+0057 U+0335",
+    "U+20AB": "U+0064 U+0335 U+0331",
+    "U+20AC": "U+A792",
+    "U+20AD": "U+004B U+0335",
+    "U+20AE": "U+0054 U+20EB",
+    "U+20B6": "U+006C U+0074",
+    "U+20BD": "U+0554",
+    "U+20C1": "U+0631 U+0649 U+006C U+0644",
+    "U+20DB": "U+06DB",
+    "U+2100": "U+0061 U+002F U+0063",
+    "U+2101": "U+0061 U+002F U+0073",
+    "U+2102": "U+0043",
+    "U+2103": "U+00B0 U+0043",
+    "U+2105": "U+0063 U+002F U+006F",
+    "U+2106": "U+0063 U+002F U+0075",
+    "U+2107": "U+0190",
+    "U+2108": "U+042D",
+    "U+2109": "U+00B0 U+0046",
+    "U+210A": "U+0067",
+    "U+210B": "U+0048",
+    "U+210C": "U+0048",
+    "U+210D": "U+0048",
+    "U+210E": "U+0068",
+    "U+210F": "U+0068 U+0335",
+    "U+2110": "U+006C",
+    "U+2111": "U+006C",
+    "U+2112": "U+004C",
+    "U+2113": "U+006C",
+    "U+2115": "U+004E",
+    "U+2116": "U+004E U+006F",
+    "U+2119": "U+0050",
+    "U+211A": "U+0051",
+    "U+211B": "U+0052",
+    "U+211C": "U+0052",
+    "U+211D": "U+0052",
+    "U+2121": "U+0054 U+0045 U+004C",
+    "U+2124": "U+005A",
+    "U+2126": "U+03A9",
+    "U+2127": "U+01B1",
+    "U+2128": "U+005A",
+    "U+2129": "U+027F",
+    "U+212A": "U+004B",
+    "U+212C": "U+0042",
+    "U+212D": "U+0043",
+    "U+212E": "U+0065",
+    "U+212F": "U+0065",
+    "U+2130": "U+0045",
+    "U+2131": "U+0046",
+    "U+2133": "U+004D",
+    "U+2134": "U+006F",
+    "U+2135": "U+05D0",
+    "U+2136": "U+05D1",
+    "U+2137": "U+05D2",
+    "U+2138": "U+05D3",
+    "U+2139": "U+0069",
+    "U+213B": "U+0046 U+0041 U+0058",
+    "U+213C": "U+03C0",
+    "U+213D": "U+0079",
+    "U+213E": "U+0393",
+    "U+213F": "U+03A0",
+    "U+2140": "U+01A9",
+    "U+2141": "U+A4E8",
+    "U+2142": "U+A4F6",
+    "U+2143": "U+16F00",
+    "U+2145": "U+0044",
+    "U+2146": "U+0064",
+    "U+2147": "U+0065",
+    "U+2148": "U+0069",
+    "U+2149": "U+006A",
+    "U+2160": "U+006C",
+    "U+2161": "U+006C U+006C",
+    "U+2162": "U+006C U+006C U+006C",
+    "U+2163": "U+006C U+0056",
+    "U+2164": "U+0056",
+    "U+2165": "U+0056 U+006C",
+    "U+2166": "U+0056 U+006C U+006C",
+    "U+2167": "U+0056 U+006C U+006C U+006C",
+    "U+2168": "U+006C U+0058",
+    "U+2169": "U+0058",
+    "U+216A": "U+0058 U+006C",
+    "U+216B": "U+0058 U+006C U+006C",
+    "U+216C": "U+004C",
+    "U+216D": "U+0043",
+    "U+216E": "U+0044",
+    "U+216F": "U+004D",
+    "U+2170": "U+0069",
+    "U+2171": "U+0069 U+0069",
+    "U+2172": "U+0069 U+0069 U+0069",
+    "U+2173": "U+0069 U+0076",
+    "U+2174": "U+0076",
+    "U+2175": "U+0076 U+0069",
+    "U+2176": "U+0076 U+0069 U+0069",
+    "U+2177": "U+0076 U+0069 U+0069 U+0069",
+    "U+2178": "U+0069 U+0078",
+    "U+2179": "U+0078",
+    "U+217A": "U+0078 U+0069",
+    "U+217B": "U+0078 U+0069 U+0069",
+    "U+217C": "U+006C",
+    "U+217D": "U+0063",
+    "U+217E": "U+0064",
+    "U+217F": "U+0072 U+006E",
+    "U+2183": "U+0186",
+    "U+2184": "U+0254",
+    "U+2191": "U+16CF",
+    "U+2195": "U+16E8",
+    "U+21B5": "U+21B2",
+    "U+21BA": "U+1F10E",
+    "U+21BE": "U+16DA",
+    "U+21BF": "U+16D0",
+    "U+21C4": "U+1F8D0",
+    "U+21CC": "U+1F8D1",
+    "U+2200": "U+2C6F",
+    "U+2203": "U+018E",
+    "U+2206": "U+0394",
+    "U+220F": "U+03A0",
+    "U+2211": "U+01A9",
+    "U+2212": "U+002D",
+    "U+2214": "U+002B U+0307",
+    "U+2215": "U+002F",
+    "U+2216": "U+005C",
+    "U+2217": "U+002A",
+    "U+2218": "U+00B0",
+    "U+2219": "U+00B7",
+    "U+221E": "U+006F U+006F",
+    "U+2223": "U+006C",
+    "U+2225": "U+006C U+006C",
+    "U+2228": "U+0076",
+    "U+2229": "U+0548",
+    "U+222A": "U+0055",
+    "U+222B": "U+0283",
+    "U+222C": "U+0283 U+0283",
+    "U+222D": "U+0283 U+0283 U+0283",
+    "U+222F": "U+222E U+222E",
+    "U+2230": "U+222E U+222E U+222E",
+    "U+2236": "U+003A",
+    "U+2238": "U+002D U+0307",
+    "U+223C": "U+007E",
+    "U+2250": "U+003D U+0307",
+    "U+2251": "U+003D U+0307 U+0323",
+    "U+2257": "U+003D U+030A",
+    "U+2259": "U+003D U+0302",
+    "U+225A": "U+003D U+0306",
+    "U+225E": "U+003D U+036B",
+    "U+2263": "U+2261",
+    "U+226A": "U+003C U+003C",
+    "U+226B": "U+003E U+003E",
+    "U+2282": "U+1455",
+    "U+2283": "U+1450",
+    "U+2295": "U+102A8",
+    "U+2296": "U+004F U+0335",
+    "U+2299": "U+0298",
+    "U+229D": "U+004F U+0335",
+    "U+22A4": "U+0054",
+    "U+22A5": "U+A4D5",
+    "U+22C0": "U+2227",
+    "U+22C1": "U+0076",
+    "U+22C2": "U+0548",
+    "U+22C3": "U+0055",
+    "U+22C4": "U+16DC",
+    "U+22C5": "U+00B7",
+    "U+22C8": "U+16DE",
+    "U+22D6": "U+003C U+00B7",
+    "U+22D7": "U+00B7 U+003E",
+    "U+22D8": "U+003C U+003C U+003C",
+    "U+22D9": "U+003E U+003E U+003E",
+    "U+22EE": "U+2D57",
+    "U+22EF": "U+00B7 U+00B7 U+00B7",
+    "U+22F4": "U+A793",
+    "U+22FF": "U+0045",
+    "U+2300": "U+2205",
+    "U+2325": "U+2324",
+    "U+2329": "U+276C",
+    "U+232A": "U+276D",
+    "U+2341": "U+303C",
+    "U+2359": "U+0394 U+0332",
+    "U+235A": "U+16DC U+0332",
+    "U+235C": "U+00B0 U+0332",
+    "U+235F": "U+229B",
+    "U+2361": "U+0054 U+0308",
+    "U+2362": "U+2207 U+0308",
+    "U+2363": "U+22C6 U+0308",
+    "U+2364": "U+00B0 U+0308",
+    "U+2365": "U+0629",
+    "U+2368": "U+007E U+0308",
+    "U+2369": "U+1435",
+    "U+236B": "U+2207 U+0334",
+    "U+236C": "U+004F U+0335",
+    "U+2373": "U+0069",
+    "U+2374": "U+0070",
+    "U+2375": "U+03C9",
+    "U+2376": "U+0061 U+0332",
+    "U+2377": "U+A793 U+0332",
+    "U+2378": "U+0069 U+0332",
+    "U+2379": "U+03C9 U+0332",
+    "U+237A": "U+0061",
+    "U+237F": "U+16BD",
+    "U+239C": "U+4E28",
+    "U+239F": "U+4E28",
+    "U+23A2": "U+4E28",
+    "U+23A5": "U+4E28",
+    "U+23AA": "U+4E28",
+    "U+23AE": "U+4E28",
+    "U+23C1": "U+2355",
+    "U+23C2": "U+234E",
+    "U+23C3": "U+234B",
+    "U+23C6": "U+236D",
+    "U+23E8": "U+2081 U+2080",
+    "U+23FC": "U+23FB",
+    "U+23FD": "U+006C",
+    "U+23FE": "U+263E",
+    "U+244A": "U+005C U+005C",
+    "U+2460": "U+2780",
+    "U+2461": "U+2781",
+    "U+2462": "U+2782",
+    "U+2463": "U+2783",
+    "U+2464": "U+2784",
+    "U+2465": "U+2785",
+    "U+2466": "U+2786",
+    "U+2467": "U+2787",
+    "U+2468": "U+2788",
+    "U+2469": "U+2789",
+    "U+2474": "U+0028 U+006C U+0029",
+    "U+2475": "U+0028 U+0032 U+0029",
+    "U+2476": "U+0028 U+0033 U+0029",
+    "U+2477": "U+0028 U+0034 U+0029",
+    "U+2478": "U+0028 U+0035 U+0029",
+    "U+2479": "U+0028 U+0036 U+0029",
+    "U+247A": "U+0028 U+0037 U+0029",
+    "U+247B": "U+0028 U+0038 U+0029",
+    "U+247C": "U+0028 U+0039 U+0029",
+    "U+247D": "U+0028 U+006C U+004F U+0029",
+    "U+247E": "U+0028 U+006C U+006C U+0029",
+    "U+247F": "U+0028 U+006C U+0032 U+0029",
+    "U+2480": "U+0028 U+006C U+0033 U+0029",
+    "U+2481": "U+0028 U+006C U+0034 U+0029",
+    "U+2482": "U+0028 U+006C U+0035 U+0029",
+    "U+2483": "U+0028 U+006C U+0036 U+0029",
+    "U+2484": "U+0028 U+006C U+0037 U+0029",
+    "U+2485": "U+0028 U+006C U+0038 U+0029",
+    "U+2486": "U+0028 U+006C U+0039 U+0029",
+    "U+2487": "U+0028 U+0032 U+004F U+0029",
+    "U+2488": "U+006C U+002E",
+    "U+2489": "U+0032 U+002E",
+    "U+248A": "U+0033 U+002E",
+    "U+248B": "U+0034 U+002E",
+    "U+248C": "U+0035 U+002E",
+    "U+248D": "U+0036 U+002E",
+    "U+248E": "U+0037 U+002E",
+    "U+248F": "U+0038 U+002E",
+    "U+2490": "U+0039 U+002E",
+    "U+2491": "U+006C U+004F U+002E",
+    "U+2492": "U+006C U+006C U+002E",
+    "U+2493": "U+006C U+0032 U+002E",
+    "U+2494": "U+006C U+0033 U+002E",
+    "U+2495": "U+006C U+0034 U+002E",
+    "U+2496": "U+006C U+0035 U+002E",
+    "U+2497": "U+006C U+0036 U+002E",
+    "U+2498": "U+006C U+0037 U+002E",
+    "U+2499": "U+006C U+0038 U+002E",
+    "U+249A": "U+006C U+0039 U+002E",
+    "U+249B": "U+0032 U+004F U+002E",
+    "U+249C": "U+0028 U+0061 U+0029",
+    "U+249D": "U+0028 U+0062 U+0029",
+    "U+249E": "U+0028 U+0063 U+0029",
+    "U+249F": "U+0028 U+0064 U+0029",
+    "U+24A0": "U+0028 U+0065 U+0029",
+    "U+24A1": "U+0028 U+0066 U+0029",
+    "U+24A2": "U+0028 U+0067 U+0029",
+    "U+24A3": "U+0028 U+0068 U+0029",
+    "U+24A4": "U+0028 U+0069 U+0029",
+    "U+24A5": "U+0028 U+006A U+0029",
+    "U+24A6": "U+0028 U+006B U+0029",
+    "U+24A7": "U+0028 U+006C U+0029",
+    "U+24A8": "U+0028 U+0072 U+006E U+0029",
+    "U+24A9": "U+0028 U+006E U+0029",
+    "U+24AA": "U+0028 U+006F U+0029",
+    "U+24AB": "U+0028 U+0070 U+0029",
+    "U+24AC": "U+0028 U+0071 U+0029",
+    "U+24AD": "U+0028 U+0072 U+0029",
+    "U+24AE": "U+0028 U+0073 U+0029",
+    "U+24AF": "U+0028 U+0074 U+0029",
+    "U+24B0": "U+0028 U+0075 U+0029",
+    "U+24B1": "U+0028 U+0076 U+0029",
+    "U+24B2": "U+0028 U+0077 U+0029",
+    "U+24B3": "U+0028 U+0078 U+0029",
+    "U+24B4": "U+0028 U+0079 U+0029",
+    "U+24B5": "U+0028 U+007A U+0029",
+    "U+24B8": "U+00A9",
+    "U+24C5": "U+2117",
+    "U+24C7": "U+00AE",
+    "U+24DB": "U+24BE",
+    "U+24EA": "U+1F10D",
+    "U+2500": "U+30FC",
+    "U+2501": "U+30FC",
+    "U+2503": "U+2502",
+    "U+250F": "U+250C",
+    "U+2523": "U+251C",
+    "U+256A": "U+01C2",
+    "U+2571": "U+002F",
+    "U+2573": "U+0058",
+    "U+2588": "U+220E",
+    "U+2590": "U+258C",
+    "U+2594": "U+02C9",
+    "U+2597": "U+2596",
+    "U+259D": "U+2598",
+    "U+25A0": "U+220E",
+    "U+25B1": "U+23E5",
+    "U+25B3": "U+0394",
+    "U+25B7": "U+22B3",
+    "U+25B8": "U+25B6",
+    "U+25BA": "U+25B6",
+    "U+25BD": "U+102BC",
+    "U+25C1": "U+22B2",
+    "U+25C7": "U+16DC",
+    "U+25CA": "U+16DC",
+    "U+25CB": "U+00B0",
+    "U+25CE": "U+233E",
+    "U+25E0": "U+2312",
+    "U+25E6": "U+00B0",
+    "U+2609": "U+0298",
+    "U+2610": "U+25A1",
+    "U+2625": "U+1099E",
+    "U+2630": "U+039E",
+    "U+2638": "U+2388",
+    "U+264E": "U+224F",
+    "U+2657": "U+1FA55",
+    "U+265D": "U+1FA57",
+    "U+2662": "U+16DC",
+    "U+2669": "U+1D158 U+1D165",
+    "U+266A": "U+1D158 U+1D165 U+1D16E",
+    "U+26AC": "U+0970",
+    "U+2768": "U+0028",
+    "U+2769": "U+0029",
+    "U+276E": "U+003C",
+    "U+276F": "U+003E",
+    "U+2772": "U+0028",
+    "U+2773": "U+0029",
+    "U+2774": "U+007B",
+    "U+2775": "U+007D",
+    "U+2795": "U+002B",
+    "U+2796": "U+002D",
+    "U+2797": "U+00F7",
+    "U+27C2": "U+A4D5",
+    "U+27C8": "U+005C U+1455",
+    "U+27C9": "U+1450 U+002F",
+    "U+27CB": "U+002F",
+    "U+27CD": "U+005C",
+    "U+27D9": "U+0054",
+    "U+27E8": "U+276C",
+    "U+27E9": "U+276D",
+    "U+28FF": "U+1CEE0",
+    "U+292B": "U+0078",
+    "U+292C": "U+0078",
+    "U+2963": "U+16D0 U+16DA",
+    "U+2965": "U+21C3 U+21C2",
+    "U+296E": "U+16D0 U+21C2",
+    "U+296F": "U+21C3 U+16DA",
+    "U+2999": "U+2D42",
+    "U+29B0": "U+2349",
+    "U+29B5": "U+1CEF0",
+    "U+29BE": "U+233E",
+    "U+29C4": "U+303C",
+    "U+29C5": "U+2342",
+    "U+29C7": "U+233B",
+    "U+29D6": "U+102C0",
+    "U+29D9": "U+299A",
+    "U+29F4": "U+003A U+2192",
+    "U+29F5": "U+005C",
+    "U+29F6": "U+002F U+0304",
+    "U+29F8": "U+002F",
+    "U+29F9": "U+005C",
+    "U+2A00": "U+0298",
+    "U+2A01": "U+102A8",
+    "U+2A02": "U+2297",
+    "U+2A03": "U+228D",
+    "U+2A04": "U+228E",
+    "U+2A05": "U+2293",
+    "U+2A06": "U+2294",
+    "U+2A0C": "U+0283 U+0283 U+0283 U+0283",
+    "U+2A1D": "U+16DE",
+    "U+2A20": "U+003E U+003E",
+    "U+2A21": "U+16DA",
+    "U+2A22": "U+002B U+030A",
+    "U+2A23": "U+002B U+0302",
+    "U+2A24": "U+002B U+0303",
+    "U+2A25": "U+002B U+0323",
+    "U+2A26": "U+002B U+0330",
+    "U+2A27": "U+002B U+2082",
+    "U+2A29": "U+002D U+0313",
+    "U+2A2A": "U+002D U+0323",
+    "U+2A2F": "U+0078",
+    "U+2A30": "U+0078 U+0307",
+    "U+2A3D": "U+2319",
+    "U+2A3E": "U+2A1F",
+    "U+2A3F": "U+2210",
+    "U+2A6A": "U+007E U+0307",
+    "U+2A6E": "U+003D U+20F0",
+    "U+2A74": "U+003A U+003A U+003D",
+    "U+2A75": "U+003D U+003D",
+    "U+2A76": "U+003D U+003D U+003D",
+    "U+2AA5": "U+003E U+003C",
+    "U+2AAA": "U+15D5",
+    "U+2AAB": "U+15D2",
+    "U+2AD7": "U+1450 U+1455",
+    "U+2AFB": "U+002F U+002F U+002F",
+    "U+2AFD": "U+002F U+002F",
+    "U+2B96": "U+003D U+1AB2",
+    "U+2BEC": "U+219E",
+    "U+2BED": "U+219F",
+    "U+2BEE": "U+21A0",
+    "U+2BEF": "U+21A1",
+    "U+2C67": "U+0048 U+0329",
+    "U+2C69": "U+004B U+0329",
+    "U+2C82": "U+0042",
+    "U+2C83": "U+0299",
+    "U+2C84": "U+0393",
+    "U+2C85": "U+0072",
+    "U+2C86": "U+0394",
+    "U+2C88": "U+A792",
+    "U+2C89": "U+A793",
+    "U+2C8B": "U+03C2",
+    "U+2C8C": "U+2C6B",
+    "U+2C8D": "U+2C6C",
+    "U+2C8E": "U+0048",
+    "U+2C8F": "U+029C",
+    "U+2C90": "U+004F U+0335",
+    "U+2C91": "U+006F U+0335",
+    "U+2C92": "U+006C",
+    "U+2C93": "U+0069",
+    "U+2C94": "U+004B",
+    "U+2C95": "U+0138",
+    "U+2C96": "U+03BB",
+    "U+2C97": "U+028C",
+    "U+2C98": "U+004D",
+    "U+2C99": "U+028D",
+    "U+2C9A": "U+004E",
+    "U+2C9B": "U+0274",
+    "U+2C9C": "U+0033",
+    "U+2C9D": "U+0293",
+    "U+2C9E": "U+004F",
+    "U+2C9F": "U+006F",
+    "U+2CA0": "U+03A0",
+    "U+2CA1": "U+03C0",
+    "U+2CA2": "U+0050",
+    "U+2CA3": "U+0070",
+    "U+2CA4": "U+0043",
+    "U+2CA5": "U+0063",
+    "U+2CA6": "U+0054",
+    "U+2CA7": "U+1D1B",
+    "U+2CA8": "U+0059",
+    "U+2CA9": "U+0079",
+    "U+2CAA": "U+03A6",
+    "U+2CAB": "U+0278",
+    "U+2CAC": "U+0058",
+    "U+2CAD": "U+03C7",
+    "U+2CAE": "U+03A8",
+    "U+2CAF": "U+03C8",
+    "U+2CB0": "U+A64C",
+    "U+2CB1": "U+03C9",
+    "U+2CB2": "U+002D U+0307",
+    "U+2CB3": "U+002D U+0307",
+    "U+2CB4": "U+003C U+00B7",
+    "U+2CB5": "U+003C U+00B7",
+    "U+2CB6": "U+039E",
+    "U+2CB7": "U+2261",
+    "U+2CBA": "U+002D",
+    "U+2CBB": "U+002D",
+    "U+2CBC": "U+0428",
+    "U+2CBD": "U+0077",
+    "U+2CC0": "U+0554",
+    "U+2CC1": "U+03FC",
+    "U+2CC4": "U+0033",
+    "U+2CC5": "U+021D",
+    "U+2CC6": "U+002F",
+    "U+2CC7": "U+002F",
+    "U+2CCA": "U+0039",
+    "U+2CCB": "U+0039",
+    "U+2CCC": "U+0033",
+    "U+2CCD": "U+021D",
+    "U+2CCE": "U+0050",
+    "U+2CCF": "U+0070",
+    "U+2CD0": "U+004C",
+    "U+2CD1": "U+029F",
+    "U+2CD2": "U+0036",
+    "U+2CD3": "U+0036",
+    "U+2CDC": "U+0036",
+    "U+2CDD": "U+1E9F",
+    "U+2CE0": "U+0278",
+    "U+2CE1": "U+0278",
+    "U+2CE4": "U+03D7",
+    "U+2CE8": "U+0554",
+    "U+2CE9": "U+2627",
+    "U+2CF9": "U+005C U+005C",
+    "U+2D31": "U+004F U+0335",
+    "U+2D37": "U+0245",
+    "U+2D38": "U+0056",
+    "U+2D39": "U+0045",
+    "U+2D3A": "U+018E",
+    "U+2D41": "U+004F U+0338",
+    "U+2D48": "U+00B7 U+00B7 U+00B7",
+    "U+2D49": "U+01A9",
+    "U+2D4F": "U+006C",
+    "U+2D51": "U+0021",
+    "U+2D54": "U+004F",
+    "U+2D55": "U+0051",
+    "U+2D59": "U+0298",
+    "U+2D5D": "U+0058",
+    "U+2D60": "U+0394",
+    "U+2D63": "U+16EF",
+    "U+2DE8": "U+1DDF",
+    "U+2DEA": "U+030A",
+    "U+2DED": "U+0368",
+    "U+2DEE": "U+1ADB",
+    "U+2DEF": "U+036F",
+    "U+2DF6": "U+0363",
+    "U+2DF7": "U+0364",
+    "U+2E1A": "U+002D U+0308",
+    "U+2E1E": "U+007E U+0307",
+    "U+2E1F": "U+007E U+0323",
+    "U+2E26": "U+1455",
+    "U+2E27": "U+1450",
+    "U+2E28": "U+0028 U+0028",
+    "U+2E29": "U+0029 U+0029",
+    "U+2E2A": "U+2235",
+    "U+2E2B": "U+2234",
+    "U+2E2C": "U+2237",
+    "U+2E2E": "U+061F",
+    "U+2E30": "U+00B0",
+    "U+2E31": "U+00B7",
+    "U+2E32": "U+060C",
+    "U+2E35": "U+061B",
+    "U+2E39": "U+1E9F",
+    "U+2E3D": "U+2D42",
+    "U+2E3F": "U+00B6",
+    "U+2E40": "U+003D",
+    "U+2E82": "U+4E5B",
+    "U+2E83": "U+4E5A",
+    "U+2E85": "U+4EBB",
+    "U+2E89": "U+5202",
+    "U+2E8B": "U+353E",
+    "U+2E8E": "U+5140",
+    "U+2E8F": "U+5C23",
+    "U+2E90": "U+5C22",
+    "U+2E92": "U+5DF3",
+    "U+2E93": "U+5E7A",
+    "U+2E94": "U+5F51",
+    "U+2E96": "U+5FC4",
+    "U+2E97": "U+38FA",
+    "U+2E98": "U+624C",
+    "U+2E99": "U+6535",
+    "U+2E9B": "U+65E1",
+    "U+2E9E": "U+6B7A",
+    "U+2E9F": "U+6BCD",
+    "U+2EA0": "U+6C11",
+    "U+2EA1": "U+6C35",
+    "U+2EA2": "U+6C3A",
+    "U+2EA3": "U+706C",
+    "U+2EA4": "U+722B",
+    "U+2EA6": "U+4E2C",
+    "U+2EA8": "U+72AD",
+    "U+2EAB": "U+7F52",
+    "U+2EAD": "U+793B",
+    "U+2EAF": "U+7CF9",
+    "U+2EB1": "U+7F53",
+    "U+2EB2": "U+7F52",
+    "U+2EB9": "U+8002",
+    "U+2EBA": "U+8080",
+    "U+2EBE": "U+8279",
+    "U+2EBF": "U+8279",
+    "U+2EC0": "U+8279",
+    "U+2EC1": "U+864E",
+    "U+2EC2": "U+8864",
+    "U+2EC3": "U+8980",
+    "U+2EC4": "U+897F",
+    "U+2EC5": "U+89C1",
+    "U+2EC8": "U+8BA0",
+    "U+2EC9": "U+8D1D",
+    "U+2ECB": "U+8F66",
+    "U+2ECC": "U+8FB6",
+    "U+2ECD": "U+8FB6",
+    "U+2ECF": "U+961D",
+    "U+2ED0": "U+9485",
+    "U+2ED1": "U+1110 U+30FC U+1102 U+110C",
+    "U+2ED2": "U+9578",
+    "U+2ED3": "U+957F",
+    "U+2ED4": "U+95E8",
+    "U+2ED6": "U+961D",
+    "U+2ED8": "U+9752",
+    "U+2ED9": "U+97E6",
+    "U+2EDA": "U+9875",
+    "U+2EDB": "U+98CE",
+    "U+2EDC": "U+98DE",
+    "U+2EDD": "U+98DF",
+    "U+2EDF": "U+98E0",
+    "U+2EE0": "U+9963",
+    "U+2EE2": "U+9A6C",
+    "U+2EE4": "U+9B3C",
+    "U+2EE5": "U+9C7C",
+    "U+2EE8": "U+9EA6",
+    "U+2EE9": "U+9EC4",
+    "U+2EEB": "U+6589",
+    "U+2EEC": "U+9F50",
+    "U+2EED": "U+6B6F",
+    "U+2EEE": "U+9F7F",
+    "U+2EEF": "U+7ADC",
+    "U+2EF0": "U+9F99",
+    "U+2EF2": "U+4E80",
+    "U+2EF3": "U+9F9F",
+    "U+2F00": "U+30FC",
+    "U+2F01": "U+4E28",
+    "U+2F02": "U+005C",
+    "U+2F03": "U+002F",
+    "U+2F04": "U+4E59",
+    "U+2F05": "U+4E85",
+    "U+2F06": "U+4E8C",
+    "U+2F07": "U+4EA0",
+    "U+2F08": "U+4EBA",
+    "U+2F09": "U+513F",
+    "U+2F0A": "U+5165",
+    "U+2F0B": "U+516B",
+    "U+2F0C": "U+5182",
+    "U+2F0D": "U+5196",
+    "U+2F0E": "U+51AB",
+    "U+2F0F": "U+51E0",
+    "U+2F10": "U+51F5",
+    "U+2F11": "U+5200",
+    "U+2F12": "U+529B",
+    "U+2F13": "U+52F9",
+    "U+2F14": "U+5315",
+    "U+2F15": "U+531A",
+    "U+2F16": "U+5338",
+    "U+2F17": "U+5341",
+    "U+2F18": "U+535C",
+    "U+2F19": "U+5369",
+    "U+2F1A": "U+5382",
+    "U+2F1B": "U+53B6",
+    "U+2F1C": "U+53C8",
+    "U+2F1D": "U+53E3",
+    "U+2F1E": "U+53E3",
+    "U+2F1F": "U+571F",
+    "U+2F20": "U+571F",
+    "U+2F21": "U+5902",
+    "U+2F22": "U+590A",
+    "U+2F23": "U+5915",
+    "U+2F24": "U+5927",
+    "U+2F25": "U+5973",
+    "U+2F26": "U+5B50",
+    "U+2F27": "U+5B80",
+    "U+2F28": "U+5BF8",
+    "U+2F29": "U+5C0F",
+    "U+2F2A": "U+5C22",
+    "U+2F2B": "U+5C38",
+    "U+2F2C": "U+5C6E",
+    "U+2F2D": "U+5C71",
+    "U+2F2E": "U+5DDB",
+    "U+2F2F": "U+5DE5",
+    "U+2F30": "U+5DF1",
+    "U+2F31": "U+5DFE",
+    "U+2F32": "U+5E72",
+    "U+2F33": "U+5E7A",
+    "U+2F34": "U+5E7F",
+    "U+2F35": "U+5EF4",
+    "U+2F36": "U+5EFE",
+    "U+2F37": "U+5F0B",
+    "U+2F38": "U+5F13",
+    "U+2F39": "U+5F50",
+    "U+2F3A": "U+5F61",
+    "U+2F3B": "U+5F73",
+    "U+2F3C": "U+5FC3",
+    "U+2F3D": "U+6208",
+    "U+2F3E": "U+6236",
+    "U+2F3F": "U+624B",
+    "U+2F40": "U+652F",
+    "U+2F41": "U+6534",
+    "U+2F42": "U+6587",
+    "U+2F43": "U+6597",
+    "U+2F44": "U+65A4",
+    "U+2F45": "U+65B9",
+    "U+2F46": "U+65E0",
+    "U+2F47": "U+65E5",
+    "U+2F48": "U+66F0",
+    "U+2F49": "U+6708",
+    "U+2F4A": "U+6728",
+    "U+2F4B": "U+6B20",
+    "U+2F4C": "U+6B62",
+    "U+2F4D": "U+6B79",
+    "U+2F4E": "U+6BB3",
+    "U+2F4F": "U+6BCB",
+    "U+2F50": "U+6BD4",
+    "U+2F51": "U+6BDB",
+    "U+2F52": "U+6C0F",
+    "U+2F53": "U+6C14",
+    "U+2F54": "U+6C34",
+    "U+2F55": "U+706B",
+    "U+2F56": "U+722A",
+    "U+2F57": "U+7236",
+    "U+2F58": "U+723B",
+    "U+2F59": "U+1102 U+116E U+4E28",
+    "U+2F5A": "U+7247",
+    "U+2F5B": "U+7259",
+    "U+2F5C": "U+725B",
+    "U+2F5D": "U+72AC",
+    "U+2F5E": "U+7384",
+    "U+2F5F": "U+7389",
+    "U+2F60": "U+74DC",
+    "U+2F61": "U+74E6",
+    "U+2F62": "U+7518",
+    "U+2F63": "U+751F",
+    "U+2F64": "U+7528",
+    "U+2F65": "U+7530",
+    "U+2F66": "U+758B",
+    "U+2F67": "U+7592",
+    "U+2F68": "U+7676",
+    "U+2F69": "U+767D",
+    "U+2F6A": "U+76AE",
+    "U+2F6B": "U+76BF",
+    "U+2F6C": "U+76EE",
+    "U+2F6D": "U+77DB",
+    "U+2F6E": "U+77E2",
+    "U+2F6F": "U+77F3",
+    "U+2F70": "U+793A",
+    "U+2F71": "U+79B8",
+    "U+2F72": "U+79BE",
+    "U+2F73": "U+7A74",
+    "U+2F74": "U+7ACB",
+    "U+2F75": "U+7AF9",
+    "U+2F76": "U+7C73",
+    "U+2F77": "U+7CF8",
+    "U+2F78": "U+7F36",
+    "U+2F79": "U+7F51",
+    "U+2F7A": "U+7F8A",
+    "U+2F7B": "U+7FBD",
+    "U+2F7C": "U+8001",
+    "U+2F7D": "U+800C",
+    "U+2F7E": "U+8012",
+    "U+2F7F": "U+8033",
+    "U+2F80": "U+807F",
+    "U+2F81": "U+8089",
+    "U+2F82": "U+81E3",
+    "U+2F83": "U+81EA",
+    "U+2F84": "U+81F3",
+    "U+2F85": "U+81FC",
+    "U+2F86": "U+820C",
+    "U+2F87": "U+821B",
+    "U+2F88": "U+821F",
+    "U+2F89": "U+826E",
+    "U+2F8A": "U+8272",
+    "U+2F8B": "U+8278",
+    "U+2F8C": "U+864D",
+    "U+2F8D": "U+866B",
+    "U+2F8E": "U+8840",
+    "U+2F8F": "U+884C",
+    "U+2F90": "U+8863",
+    "U+2F91": "U+897E",
+    "U+2F92": "U+898B",
+    "U+2F93": "U+89D2",
+    "U+2F94": "U+8A00",
+    "U+2F95": "U+8C37",
+    "U+2F96": "U+8C46",
+    "U+2F97": "U+8C55",
+    "U+2F98": "U+8C78",
+    "U+2F99": "U+8C9D",
+    "U+2F9A": "U+8D64",
+    "U+2F9B": "U+8D70",
+    "U+2F9C": "U+8DB3",
+    "U+2F9D": "U+8EAB",
+    "U+2F9E": "U+8ECA",
+    "U+2F9F": "U+8F9B",
+    "U+2FA0": "U+8FB0",
+    "U+2FA1": "U+8FB5",
+    "U+2FA2": "U+9091",
+    "U+2FA3": "U+9149",
+    "U+2FA4": "U+91C6",
+    "U+2FA5": "U+91CC",
+    "U+2FA6": "U+91D1",
+    "U+2FA7": "U+1110 U+30FC U+1102 U+110C",
+    "U+2FA8": "U+9580",
+    "U+2FA9": "U+961C",
+    "U+2FAA": "U+96B6",
+    "U+2FAB": "U+96B9",
+    "U+2FAC": "U+96E8",
+    "U+2FAD": "U+9751",
+    "U+2FAE": "U+975E",
+    "U+2FAF": "U+9762",
+    "U+2FB0": "U+9769",
+    "U+2FB1": "U+97CB",
+    "U+2FB2": "U+97ED",
+    "U+2FB3": "U+97F3",
+    "U+2FB4": "U+9801",
+    "U+2FB5": "U+98A8",
+    "U+2FB6": "U+98DB",
+    "U+2FB7": "U+98DF",
+    "U+2FB8": "U+9996",
+    "U+2FB9": "U+9999",
+    "U+2FBA": "U+99AC",
+    "U+2FBB": "U+9AA8",
+    "U+2FBC": "U+9AD8",
+    "U+2FBD": "U+9ADF",
+    "U+2FBE": "U+9B25",
+    "U+2FBF": "U+9B2F",
+    "U+2FC0": "U+9B32",
+    "U+2FC1": "U+9B3C",
+    "U+2FC2": "U+9B5A",
+    "U+2FC3": "U+9CE5",
+    "U+2FC4": "U+9E75",
+    "U+2FC5": "U+9E7F",
+    "U+2FC6": "U+9EA5",
+    "U+2FC7": "U+9EBB",
+    "U+2FC8": "U+9EC3",
+    "U+2FC9": "U+9ECD",
+    "U+2FCA": "U+9ED1",
+    "U+2FCB": "U+9EF9",
+    "U+2FCC": "U+9EFD",
+    "U+2FCD": "U+9F0E",
+    "U+2FCE": "U+9F13",
+    "U+2FCF": "U+9F20",
+    "U+2FD0": "U+9F3B",
+    "U+2FD1": "U+9F4A",
+    "U+2FD2": "U+9F52",
+    "U+2FD3": "U+9F8D",
+    "U+2FD4": "U+9F9C",
+    "U+2FD5": "U+9FA0",
+    "U+3002": "U+02F3",
+    "U+3003": "U+0027 U+0027",
+    "U+3007": "U+004F",
+    "U+3008": "U+276C",
+    "U+3009": "U+276D",
+    "U+3012": "U+20B8",
+    "U+3014": "U+0028",
+    "U+3015": "U+0029",
+    "U+301A": "U+27E6",
+    "U+301B": "U+27E7",
+    "U+302C": "U+0309",
+    "U+302D": "U+0325",
+    "U+3033": "U+002F",
+    "U+3036": "U+20B8",
+    "U+3038": "U+5341",
+    "U+3039": "U+5344",
+    "U+303A": "U+5345",
+    "U+304F": "U+276C",
+    "U+309A": "U+030A",
+    "U+309B": "U+FF9E",
+    "U+309C": "U+FF9F",
+    "U+30A0": "U+003D",
+    "U+30A4": "U+4EBB",
+    "U+30A8": "U+5DE5",
+    "U+30AB": "U+529B",
+    "U+30BF": "U+5915",
+    "U+30C8": "U+535C",
+    "U+30CB": "U+4E8C",
+    "U+30CE": "U+002F",
+    "U+30CF": "U+516B",
+    "U+30D8": "U+3078",
+    "U+30ED": "U+53E3",
+    "U+30FB": "U+00B7",
+    "U+3126": "U+513F",
+    "U+3131": "U+1100",
+    "U+3132": "U+1100 U+1100",
+    "U+3133": "U+1100 U+1109",
+    "U+3134": "U+1102",
+    "U+3135": "U+1102 U+110C",
+    "U+3136": "U+1102 U+1112",
+    "U+3137": "U+1103",
+    "U+3138": "U+1103 U+1103",
+    "U+3139": "U+1105",
+    "U+313A": "U+1105 U+1100",
+    "U+313B": "U+1105 U+1106",
+    "U+313C": "U+1105 U+1107",
+    "U+313D": "U+1105 U+1109",
+    "U+313E": "U+1105 U+1110",
+    "U+313F": "U+1105 U+1111",
+    "U+3140": "U+1105 U+1112",
+    "U+3141": "U+1106",
+    "U+3142": "U+1107",
+    "U+3143": "U+1107 U+1107",
+    "U+3144": "U+1107 U+1109",
+    "U+3145": "U+1109",
+    "U+3146": "U+1109 U+1109",
+    "U+3147": "U+110B",
+    "U+3148": "U+110C",
+    "U+3149": "U+110C U+110C",
+    "U+314A": "U+110E",
+    "U+314B": "U+110F",
+    "U+314C": "U+1110",
+    "U+314D": "U+1111",
+    "U+314E": "U+1112",
+    "U+314F": "U+1161",
+    "U+3150": "U+1161 U+4E28",
+    "U+3151": "U+1163",
+    "U+3152": "U+1163 U+4E28",
+    "U+3153": "U+1165",
+    "U+3154": "U+1165 U+4E28",
+    "U+3155": "U+1167",
+    "U+3156": "U+1167 U+4E28",
+    "U+3157": "U+1169",
+    "U+3158": "U+1169 U+1161",
+    "U+3159": "U+1169 U+1161 U+4E28",
+    "U+315A": "U+1169 U+4E28",
+    "U+315B": "U+116D",
+    "U+315C": "U+116E",
+    "U+315D": "U+116E U+1165",
+    "U+315E": "U+116E U+1165 U+4E28",
+    "U+315F": "U+116E U+4E28",
+    "U+3160": "U+1172",
+    "U+3161": "U+30FC",
+    "U+3162": "U+30FC U+4E28",
+    "U+3163": "U+4E28",
+    "U+3164": "U+1160",
+    "U+3165": "U+1102 U+1102",
+    "U+3166": "U+1102 U+1103",
+    "U+3167": "U+1102 U+1109",
+    "U+3168": "U+1102 U+1140",
+    "U+3169": "U+1105 U+1100 U+1109",
+    "U+316A": "U+1105 U+1103",
+    "U+316B": "U+1105 U+1107 U+1109",
+    "U+316C": "U+1105 U+1140",
+    "U+316D": "U+1105 U+1159",
+    "U+316E": "U+1106 U+1107",
+    "U+316F": "U+1106 U+1109",
+    "U+3170": "U+1106 U+1140",
+    "U+3171": "U+1106 U+110B",
+    "U+3172": "U+1107 U+1100",
+    "U+3173": "U+1107 U+1103",
+    "U+3174": "U+1107 U+1109 U+1100",
+    "U+3175": "U+1107 U+1109 U+1103",
+    "U+3176": "U+1107 U+110C",
+    "U+3177": "U+1107 U+1110",
+    "U+3178": "U+1107 U+110B",
+    "U+3179": "U+1107 U+1107 U+110B",
+    "U+317A": "U+1109 U+1100",
+    "U+317B": "U+1109 U+1102",
+    "U+317C": "U+1109 U+1103",
+    "U+317D": "U+1109 U+1107",
+    "U+317E": "U+1109 U+110C",
+    "U+317F": "U+1140",
+    "U+3180": "U+110B U+110B",
+    "U+3181": "U+114C",
+    "U+3182": "U+110B U+1109",
+    "U+3183": "U+110B U+1140",
+    "U+3184": "U+1111 U+110B",
+    "U+3185": "U+1112 U+1112",
+    "U+3186": "U+1159",
+    "U+3187": "U+116D U+1163",
+    "U+3188": "U+116D U+1163 U+4E28",
+    "U+3189": "U+116D U+4E28",
+    "U+318A": "U+1172 U+1167",
+    "U+318B": "U+1172 U+1167 U+4E28",
+    "U+318C": "U+1172 U+4E28",
+    "U+318D": "U+119E",
+    "U+318E": "U+119E U+4E28",
+    "U+31D0": "U+30FC",
+    "U+31D1": "U+4E28",
+    "U+31D3": "U+002F",
+    "U+31D4": "U+005C",
+    "U+31D6": "U+4E5B",
+    "U+31DA": "U+4E85",
+    "U+31DB": "U+276C",
+    "U+31DF": "U+4E5A",
+    "U+31E0": "U+4E59",
+    "U+3200": "U+0028 U+1100 U+0029",
+    "U+3201": "U+0028 U+1102 U+0029",
+    "U+3202": "U+0028 U+1103 U+0029",
+    "U+3203": "U+0028 U+1105 U+0029",
+    "U+3204": "U+0028 U+1106 U+0029",
+    "U+3205": "U+0028 U+1107 U+0029",
+    "U+3206": "U+0028 U+1109 U+0029",
+    "U+3207": "U+0028 U+110B U+0029",
+    "U+3208": "U+0028 U+110C U+0029",
+    "U+3209": "U+0028 U+110E U+0029",
+    "U+320A": "U+0028 U+110F U+0029",
+    "U+320B": "U+0028 U+1110 U+0029",
+    "U+320C": "U+0028 U+1111 U+0029",
+    "U+320D": "U+0028 U+1112 U+0029",
+    "U+320E": "U+0028 U+AC00 U+0029",
+    "U+320F": "U+0028 U+B098 U+0029",
+    "U+3210": "U+0028 U+B2E4 U+0029",
+    "U+3211": "U+0028 U+B77C U+0029",
+    "U+3212": "U+0028 U+B9C8 U+0029",
+    "U+3213": "U+0028 U+BC14 U+0029",
+    "U+3214": "U+0028 U+C0AC U+0029",
+    "U+3215": "U+0028 U+C544 U+0029",
+    "U+3216": "U+0028 U+C790 U+0029",
+    "U+3217": "U+0028 U+CC28 U+0029",
+    "U+3218": "U+0028 U+CE74 U+0029",
+    "U+3219": "U+0028 U+D0C0 U+0029",
+    "U+321A": "U+0028 U+D30C U+0029",
+    "U+321B": "U+0028 U+D558 U+0029",
+    "U+321C": "U+0028 U+C8FC U+0029",
+    "U+321D": "U+0028 U+C624 U+C804 U+0029",
+    "U+321E": "U+0028 U+C624 U+D6C4 U+0029",
+    "U+3220": "U+0028 U+30FC U+0029",
+    "U+3221": "U+0028 U+4E8C U+0029",
+    "U+3222": "U+0028 U+4E09 U+0029",
+    "U+3223": "U+0028 U+56DB U+0029",
+    "U+3224": "U+0028 U+4E94 U+0029",
+    "U+3225": "U+0028 U+516D U+0029",
+    "U+3226": "U+0028 U+4E03 U+0029",
+    "U+3227": "U+0028 U+516B U+0029",
+    "U+3228": "U+0028 U+4E5D U+0029",
+    "U+3229": "U+0028 U+5341 U+0029",
+    "U+322A": "U+0028 U+6708 U+0029",
+    "U+322B": "U+0028 U+706B U+0029",
+    "U+322C": "U+0028 U+6C34 U+0029",
+    "U+322D": "U+0028 U+6728 U+0029",
+    "U+322E": "U+0028 U+91D1 U+0029",
+    "U+322F": "U+0028 U+571F U+0029",
+    "U+3230": "U+0028 U+65E5 U+0029",
+    "U+3231": "U+0028 U+682A U+0029",
+    "U+3232": "U+0028 U+6709 U+0029",
+    "U+3233": "U+0028 U+793E U+0029",
+    "U+3234": "U+0028 U+540D U+0029",
+    "U+3235": "U+0028 U+7279 U+0029",
+    "U+3236": "U+0028 U+8CA1 U+0029",
+    "U+3237": "U+0028 U+795D U+0029",
+    "U+3238": "U+0028 U+52B4 U+0029",
+    "U+3239": "U+0028 U+4EE3 U+0029",
+    "U+323A": "U+0028 U+547C U+0029",
+    "U+323B": "U+0028 U+5B66 U+0029",
+    "U+323C": "U+0028 U+76E3 U+0029",
+    "U+323D": "U+0028 U+4F01 U+0029",
+    "U+323E": "U+0028 U+8CC7 U+0029",
+    "U+323F": "U+0028 U+5354 U+0029",
+    "U+3240": "U+0028 U+796D U+0029",
+    "U+3241": "U+0028 U+4F11 U+0029",
+    "U+3242": "U+0028 U+81EA U+0029",
+    "U+3243": "U+0028 U+81F3 U+0029",
+    "U+32C0": "U+006C U+6708",
+    "U+32C1": "U+0032 U+6708",
+    "U+32C2": "U+0033 U+6708",
+    "U+32C3": "U+0034 U+6708",
+    "U+32C4": "U+0035 U+6708",
+    "U+32C5": "U+0036 U+6708",
+    "U+32C6": "U+0037 U+6708",
+    "U+32C7": "U+0038 U+6708",
+    "U+32C8": "U+0039 U+6708",
+    "U+32C9": "U+006C U+004F U+6708",
+    "U+32CA": "U+006C U+006C U+6708",
+    "U+32CB": "U+006C U+0032 U+6708",
+    "U+3358": "U+004F U+70B9",
+    "U+3359": "U+006C U+70B9",
+    "U+335A": "U+0032 U+70B9",
+    "U+335B": "U+0033 U+70B9",
+    "U+335C": "U+0034 U+70B9",
+    "U+335D": "U+0035 U+70B9",
+    "U+335E": "U+0036 U+70B9",
+    "U+335F": "U+0037 U+70B9",
+    "U+3360": "U+0038 U+70B9",
+    "U+3361": "U+0039 U+70B9",
+    "U+3362": "U+006C U+004F U+70B9",
+    "U+3363": "U+006C U+006C U+70B9",
+    "U+3364": "U+006C U+0032 U+70B9",
+    "U+3365": "U+006C U+0033 U+70B9",
+    "U+3366": "U+006C U+0034 U+70B9",
+    "U+3367": "U+006C U+0035 U+70B9",
+    "U+3368": "U+006C U+0036 U+70B9",
+    "U+3369": "U+006C U+0037 U+70B9",
+    "U+336A": "U+006C U+0038 U+70B9",
+    "U+336B": "U+006C U+0039 U+70B9",
+    "U+336C": "U+0032 U+004F U+70B9",
+    "U+336D": "U+0032 U+006C U+70B9",
+    "U+336E": "U+0032 U+0032 U+70B9",
+    "U+336F": "U+0032 U+0033 U+70B9",
+    "U+3370": "U+0032 U+0034 U+70B9",
+    "U+33E0": "U+006C U+65E5",
+    "U+33E1": "U+0032 U+65E5",
+    "U+33E2": "U+0033 U+65E5",
+    "U+33E3": "U+0034 U+65E5",
+    "U+33E4": "U+0035 U+65E5",
+    "U+33E5": "U+0036 U+65E5",
+    "U+33E6": "U+0037 U+65E5",
+    "U+33E7": "U+0038 U+65E5",
+    "U+33E8": "U+0039 U+65E5",
+    "U+33E9": "U+006C U+004F U+65E5",
+    "U+33EA": "U+006C U+006C U+65E5",
+    "U+33EB": "U+006C U+0032 U+65E5",
+    "U+33EC": "U+006C U+0033 U+65E5",
+    "U+33ED": "U+006C U+0034 U+65E5",
+    "U+33EE": "U+006C U+0035 U+65E5",
+    "U+33EF": "U+006C U+0036 U+65E5",
+    "U+33F0": "U+006C U+0037 U+65E5",
+    "U+33F1": "U+006C U+0038 U+65E5",
+    "U+33F2": "U+006C U+0039 U+65E5",
+    "U+33F3": "U+0032 U+004F U+65E5",
+    "U+33F4": "U+0032 U+006C U+65E5",
+    "U+33F5": "U+0032 U+0032 U+65E5",
+    "U+33F6": "U+0032 U+0033 U+65E5",
+    "U+33F7": "U+0032 U+0034 U+65E5",
+    "U+33F8": "U+0032 U+0035 U+65E5",
+    "U+33F9": "U+0032 U+0036 U+65E5",
+    "U+33FA": "U+0032 U+0037 U+65E5",
+    "U+33FB": "U+0032 U+0038 U+65E5",
+    "U+33FC": "U+0032 U+0039 U+65E5",
+    "U+33FD": "U+0033 U+004F U+65E5",
+    "U+33FE": "U+0033 U+006C U+65E5",
+    "U+39B3": "U+363D",
+    "U+439B": "U+3588",
+    "U+4420": "U+3B3B",
+    "U+4695": "U+278AE",
+    "U+4E00": "U+30FC",
+    "U+4E15": "U+110C U+1169",
+    "U+4E1B": "U+1109 U+1109 U+30FC",
+    "U+4E36": "U+005C",
+    "U+4E3F": "U+002F",
+    "U+4E8E": "U+1B122",
+    "U+4ECA": "U+1109 U+30FC U+1100",
+    "U+5002": "U+4F75",
+    "U+503C": "U+5024",
+    "U+5152": "U+16FF3",
+    "U+535F": "U+1106 U+1161",
+    "U+5408": "U+1109 U+30FC U+1106",
+    "U+555F": "U+5553",
+    "U+56D7": "U+53E3",
+    "U+586B": "U+5861",
+    "U+58EB": "U+571F",
+    "U+58FF": "U+58AB",
+    "U+5B00": "U+5AAF",
+    "U+5E32": "U+5E21",
+    "U+5E50": "U+3B3A",
+    "U+6138": "U+2B73F",
+    "U+6238": "U+6236",
+    "U+6409": "U+3A41",
+    "U+6663": "U+403F",
+    "U+6669": "U+665A",
+    "U+66F6": "U+3ADA",
+    "U+6726": "U+4443",
+    "U+67FF": "U+676E",
+    "U+69E9": "U+3BA3",
+    "U+6A27": "U+699D",
+    "U+6F59": "U+6E88",
+    "U+723F": "U+1102 U+116E U+4E28",
+    "U+784F": "U+7814",
+    "U+7D76": "U+7D55",
+    "U+80A6": "U+670C",
+    "U+80CA": "U+6710",
+    "U+80D0": "U+670F",
+    "U+80F6": "U+3B35",
+    "U+8101": "U+6713",
+    "U+8127": "U+6718",
+    "U+8141": "U+80FC",
+    "U+81A7": "U+6723",
+    "U+853F": "U+848D",
+    "U+8641": "U+8637",
+    "U+8A1E": "U+46B6",
+    "U+8A7D": "U+8A2E",
+    "U+8B8F": "U+8B86",
+    "U+8C63": "U+8C5C",
+    "U+8D86": "U+8D7F",
+    "U+8DFA": "U+8DE5",
+    "U+8E9B": "U+8E97",
+    "U+8F27": "U+8EFF",
+    "U+90DE": "U+90CE",
+    "U+93AE": "U+93AD",
+    "U+9577": "U+1110 U+30FC U+1102 U+110C",
+    "U+96B8": "U+96B7",
+    "U+9E43": "U+9E42",
+    "U+9ED2": "U+9ED1",
+    "U+9FC3": "U+4039",
+    "U+A494": "U+A2CD",
+    "U+A49C": "U+A0C0",
+    "U+A49E": "U+A04A",
+    "U+A4A7": "U+A458",
+    "U+A4A8": "U+A132",
+    "U+A4AC": "U+A050",
+    "U+A4B0": "U+A3C2",
+    "U+A4BA": "U+A3BF",
+    "U+A4BE": "U+A2B1",
+    "U+A4BF": "U+A259",
+    "U+A4C0": "U+A3AB",
+    "U+A4C2": "U+A3B5",
+    "U+A4D0": "U+0042",
+    "U+A4D1": "U+0050",
+    "U+A4D2": "U+0064",
+    "U+A4D3": "U+0044",
+    "U+A4D4": "U+0054",
+    "U+A4D6": "U+0047",
+    "U+A4D7": "U+004B",
+    "U+A4D9": "U+004A",
+    "U+A4DA": "U+0043",
+    "U+A4DB": "U+0186",
+    "U+A4DC": "U+005A",
+    "U+A4DD": "U+0046",
+    "U+A4DE": "U+2132",
+    "U+A4DF": "U+004D",
+    "U+A4E0": "U+004E",
+    "U+A4E1": "U+004C",
+    "U+A4E2": "U+0053",
+    "U+A4E3": "U+0052",
+    "U+A4E5": "U+0245",
+    "U+A4E6": "U+0056",
+    "U+A4E7": "U+0048",
+    "U+A4EA": "U+0057",
+    "U+A4EB": "U+0058",
+    "U+A4EC": "U+0059",
+    "U+A4ED": "U+1660",
+    "U+A4EE": "U+0041",
+    "U+A4EF": "U+2C6F",
+    "U+A4F0": "U+0045",
+    "U+A4F1": "U+018E",
+    "U+A4F2": "U+006C",
+    "U+A4F3": "U+004F",
+    "U+A4F4": "U+0055",
+    "U+A4F5": "U+0548",
+    "U+A4F7": "U+15E1",
+    "U+A4F8": "U+002E",
+    "U+A4F9": "U+002C",
+    "U+A4FA": "U+002E U+002E",
+    "U+A4FB": "U+002E U+002C",
+    "U+A4FD": "U+003A",
+    "U+A4FE": "U+002D U+002E",
+    "U+A4FF": "U+003D",
+    "U+A60E": "U+002E",
+    "U+A644": "U+0032",
+    "U+A645": "U+01A8",
+    "U+A647": "U+0069",
+    "U+A64D": "U+03C9",
+    "U+A650": "U+042A U+006C",
+    "U+A651": "U+02C9 U+0062 U+0069",
+    "U+A668": "U+0298",
+    "U+A66F": "U+20E9",
+    "U+A67C": "U+0306",
+    "U+A67E": "U+02C7",
+    "U+A695": "U+0068 U+0314",
+    "U+A698": "U+004F U+004F",
+    "U+A699": "U+006F U+006F",
+    "U+A69A": "U+102A8",
+    "U+A6A1": "U+0418",
+    "U+A6B0": "U+16B9",
+    "U+A6B1": "U+2C75",
+    "U+A6CD": "U+02A1",
+    "U+A6CE": "U+0245",
+    "U+A6DB": "U+03A0",
+    "U+A6DF": "U+0056",
+    "U+A6EB": "U+003F",
+    "U+A6EF": "U+0032",
+    "U+A6F0": "U+0302",
+    "U+A6F1": "U+0304",
+    "U+A6F4": "U+A6F3 U+A6F3",
+    "U+A714": "U+02EB",
+    "U+A716": "U+02EA",
+    "U+A728": "U+0054 U+0033",
+    "U+A729": "U+0074 U+021D",
+    "U+A731": "U+0073",
+    "U+A732": "U+0041 U+0041",
+    "U+A733": "U+0061 U+0061",
+    "U+A734": "U+0041 U+004F",
+    "U+A735": "U+0061 U+006F",
+    "U+A736": "U+0041 U+0055",
+    "U+A737": "U+0061 U+0075",
+    "U+A738": "U+0041 U+0056",
+    "U+A739": "U+0061 U+0076",
+    "U+A73A": "U+0041 U+0056",
+    "U+A73B": "U+0061 U+0076",
+    "U+A73C": "U+0041 U+0059",
+    "U+A73D": "U+0061 U+0079",
+    "U+A740": "U+004B U+0335",
+    "U+A74A": "U+004F U+0335",
+    "U+A74B": "U+006F U+0335",
+    "U+A74E": "U+004F U+004F",
+    "U+A74F": "U+006F U+006F",
+    "U+A75A": "U+0032",
+    "U+A761": "U+0077 U+0326",
+    "U+A76A": "U+0033",
+    "U+A76B": "U+021D",
+    "U+A76E": "U+0039",
+    "U+A777": "U+0074 U+0066",
+    "U+A778": "U+0026",
+    "U+A77A": "U+A779",
+    "U+A789": "U+003A",
+    "U+A78C": "U+0027",
+    "U+A78F": "U+00B7",
+    "U+A795": "U+A727",
+    "U+A798": "U+0046",
+    "U+A799": "U+0066",
+    "U+A79A": "U+10412",
+    "U+A79B": "U+1043A",
+    "U+A79D": "U+029A",
+    "U+A79E": "U+A4E4",
+    "U+A79F": "U+0075",
+    "U+A7AB": "U+0033",
+    "U+A7B1": "U+A4D5",
+    "U+A7B2": "U+004A",
+    "U+A7B3": "U+0058",
+    "U+A7B4": "U+0042",
+    "U+A7B5": "U+00DF",
+    "U+A7B6": "U+A64C",
+    "U+A7B7": "U+03C9",
+    "U+A7CF": "U+A7CE",
+    "U+A7D2": "U+A7D3",
+    "U+A7D4": "U+A7D5",
+    "U+A7D6": "U+00DF",
+    "U+A7DA": "U+0245",
+    "U+A7DB": "U+03BB",
+    "U+A7DC": "U+0245 U+0338",
+    "U+A7F1": "U+18F5",
+    "U+A7F7": "U+30FC",
+    "U+A830": "U+0964",
+    "U+A960": "U+1103 U+1106",
+    "U+A961": "U+1103 U+1107",
+    "U+A962": "U+1103 U+1109",
+    "U+A963": "U+1103 U+110C",
+    "U+A964": "U+1105 U+1100",
+    "U+A965": "U+1105 U+1100 U+1100",
+    "U+A966": "U+1105 U+1103",
+    "U+A967": "U+1105 U+1103 U+1103",
+    "U+A968": "U+1105 U+1106",
+    "U+A969": "U+1105 U+1107",
+    "U+A96A": "U+1105 U+1107 U+1107",
+    "U+A96B": "U+1105 U+1107 U+110B",
+    "U+A96C": "U+1105 U+1109",
+    "U+A96D": "U+1105 U+110C",
+    "U+A96E": "U+1105 U+110F",
+    "U+A96F": "U+1106 U+1100",
+    "U+A970": "U+1106 U+1103",
+    "U+A971": "U+1106 U+1109",
+    "U+A972": "U+1107 U+1109 U+1110",
+    "U+A973": "U+1107 U+110F",
+    "U+A974": "U+1107 U+1112",
+    "U+A975": "U+1109 U+1109 U+1107",
+    "U+A976": "U+110B U+1105",
+    "U+A977": "U+110B U+1112",
+    "U+A978": "U+110C U+110C U+1112",
+    "U+A979": "U+1110 U+1110",
+    "U+A97A": "U+1111 U+1112",
+    "U+A97B": "U+1112 U+1109",
+    "U+A97C": "U+1159 U+1159",
+    "U+A992": "U+2C3F",
+    "U+A9A3": "U+A99D",
+    "U+A9C6": "U+A9D0",
+    "U+A9CF": "U+0662",
+    "U+AA53": "U+AA01",
+    "U+AA56": "U+AA23",
+    "U+AB32": "U+0065",
+    "U+AB35": "U+0066",
+    "U+AB3D": "U+006F",
+    "U+AB3E": "U+006F U+0338",
+    "U+AB3F": "U+0254 U+0338",
+    "U+AB41": "U+01DD U+006F U+0338",
+    "U+AB42": "U+01DD U+006F U+0335",
+    "U+AB47": "U+0072",
+    "U+AB48": "U+0072",
+    "U+AB4D": "U+0283",
+    "U+AB4E": "U+0075",
+    "U+AB52": "U+0075",
+    "U+AB53": "U+03C7",
+    "U+AB55": "U+03C7",
+    "U+AB5A": "U+0079",
+    "U+AB60": "U+0459",
+    "U+AB62": "U+0254 U+0065",
+    "U+AB63": "U+0075 U+006F",
+    "U+AB70": "U+1D05",
+    "U+AB71": "U+0280",
+    "U+AB72": "U+1D1B",
+    "U+AB74": "U+006F U+031B",
+    "U+AB75": "U+0069",
+    "U+AB7A": "U+1D00",
+    "U+AB7B": "U+1D0A",
+    "U+AB7C": "U+1D07",
+    "U+AB7E": "U+0242",
+    "U+AB80": "U+2C76",
+    "U+AB81": "U+0072",
+    "U+AB83": "U+0077",
+    "U+AB87": "U+028D",
+    "U+AB8B": "U+029C",
+    "U+AB8E": "U+006F U+0335",
+    "U+AB90": "U+0262",
+    "U+AB93": "U+007A",
+    "U+AB9B": "U+A793",
+    "U+AB9C": "U+0075 U+0335",
+    "U+AB9F": "U+0185",
+    "U+ABA2": "U+0280",
+    "U+ABA9": "U+0076",
+    "U+ABAA": "U+0073",
+    "U+ABAE": "U+029F",
+    "U+ABAF": "U+0063",
+    "U+ABB2": "U+1D18",
+    "U+ABB6": "U+0138",
+    "U+ABBB": "U+006F U+0335",
+    "U+D7B0": "U+1169 U+1167",
+    "U+D7B1": "U+1169 U+1169 U+4E28",
+    "U+D7B2": "U+116D U+1161",
+    "U+D7B3": "U+116D U+1161 U+4E28",
+    "U+D7B4": "U+116D U+1165",
+    "U+D7B5": "U+116E U+1167",
+    "U+D7B6": "U+116E U+4E28 U+4E28",
+    "U+D7B7": "U+1172 U+1161 U+4E28",
+    "U+D7B8": "U+1172 U+1169",
+    "U+D7B9": "U+30FC U+1161",
+    "U+D7BA": "U+30FC U+1165",
+    "U+D7BB": "U+30FC U+1165 U+4E28",
+    "U+D7BC": "U+30FC U+1169",
+    "U+D7BD": "U+4E28 U+1163 U+1169",
+    "U+D7BE": "U+4E28 U+1163 U+4E28",
+    "U+D7BF": "U+4E28 U+1167",
+    "U+D7C0": "U+4E28 U+1167 U+4E28",
+    "U+D7C1": "U+4E28 U+1169 U+4E28",
+    "U+D7C2": "U+4E28 U+116D",
+    "U+D7C3": "U+4E28 U+1172",
+    "U+D7C4": "U+4E28 U+4E28",
+    "U+D7C5": "U+119E U+1161",
+    "U+D7C6": "U+119E U+1165 U+4E28",
+    "U+D7CB": "U+1102 U+1105",
+    "U+D7CC": "U+1102 U+110E",
+    "U+D7CD": "U+1103 U+1103",
+    "U+D7CE": "U+1103 U+1103 U+1107",
+    "U+D7CF": "U+1103 U+1107",
+    "U+D7D0": "U+1103 U+1109",
+    "U+D7D1": "U+1103 U+1109 U+1100",
+    "U+D7D2": "U+1103 U+110C",
+    "U+D7D3": "U+1103 U+110E",
+    "U+D7D4": "U+1103 U+1110",
+    "U+D7D5": "U+1105 U+1100 U+1100",
+    "U+D7D6": "U+1105 U+1100 U+1112",
+    "U+D7D7": "U+1105 U+1105 U+110F",
+    "U+D7D8": "U+1105 U+1106 U+1112",
+    "U+D7D9": "U+1105 U+1107 U+1103",
+    "U+D7DA": "U+1105 U+1107 U+1111",
+    "U+D7DB": "U+1105 U+114C",
+    "U+D7DC": "U+1105 U+1159 U+1112",
+    "U+D7DD": "U+1105 U+110B",
+    "U+D7DE": "U+1106 U+1102",
+    "U+D7DF": "U+1106 U+1102 U+1102",
+    "U+D7E0": "U+1106 U+1106",
+    "U+D7E1": "U+1106 U+1107 U+1109",
+    "U+D7E2": "U+1106 U+110C",
+    "U+D7E3": "U+1107 U+1103",
+    "U+D7E4": "U+1107 U+1105 U+1111",
+    "U+D7E5": "U+1107 U+1106",
+    "U+D7E6": "U+1107 U+1107",
+    "U+D7E7": "U+1107 U+1109 U+1103",
+    "U+D7E8": "U+1107 U+110C",
+    "U+D7E9": "U+1107 U+110E",
+    "U+D7EA": "U+1109 U+1106",
+    "U+D7EB": "U+1109 U+1107 U+110B",
+    "U+D7EC": "U+1109 U+1109 U+1100",
+    "U+D7ED": "U+1109 U+1109 U+1103",
+    "U+D7EE": "U+1109 U+1140",
+    "U+D7EF": "U+1109 U+110C",
+    "U+D7F0": "U+1109 U+110E",
+    "U+D7F1": "U+1109 U+1110",
+    "U+D7F2": "U+1105 U+1112",
+    "U+D7F3": "U+1140 U+1107",
+    "U+D7F4": "U+1140 U+1107 U+110B",
+    "U+D7F5": "U+114C U+1106",
+    "U+D7F6": "U+114C U+1112",
+    "U+D7F7": "U+110C U+1107",
+    "U+D7F8": "U+110C U+1107 U+1107",
+    "U+D7F9": "U+110C U+110C",
+    "U+D7FA": "U+1111 U+1109",
+    "U+D7FB": "U+1111 U+1110",
+    "U+F900": "U+8C48",
+    "U+F901": "U+66F4",
+    "U+F902": "U+8ECA",
+    "U+F903": "U+8CC8",
+    "U+F904": "U+6ED1",
+    "U+F905": "U+4E32",
+    "U+F906": "U+53E5",
+    "U+F907": "U+9F9C",
+    "U+F908": "U+9F9C",
+    "U+F909": "U+5951",
+    "U+F90A": "U+91D1",
+    "U+F90B": "U+5587",
+    "U+F90C": "U+5948",
+    "U+F90D": "U+61F6",
+    "U+F90E": "U+7669",
+    "U+F90F": "U+7F85",
+    "U+F910": "U+863F",
+    "U+F911": "U+87BA",
+    "U+F912": "U+88F8",
+    "U+F913": "U+908F",
+    "U+F914": "U+6A02",
+    "U+F915": "U+6D1B",
+    "U+F916": "U+70D9",
+    "U+F917": "U+73DE",
+    "U+F918": "U+843D",
+    "U+F919": "U+916A",
+    "U+F91A": "U+99F1",
+    "U+F91B": "U+4E82",
+    "U+F91C": "U+5375",
+    "U+F91D": "U+6B04",
+    "U+F91E": "U+721B",
+    "U+F91F": "U+862D",
+    "U+F920": "U+9E1E",
+    "U+F921": "U+5D50",
+    "U+F922": "U+6FEB",
+    "U+F923": "U+85CD",
+    "U+F924": "U+8964",
+    "U+F925": "U+62C9",
+    "U+F926": "U+81D8",
+    "U+F927": "U+881F",
+    "U+F928": "U+5ECA",
+    "U+F929": "U+6717",
+    "U+F92A": "U+6D6A",
+    "U+F92B": "U+72FC",
+    "U+F92C": "U+90CE",
+    "U+F92D": "U+4F86",
+    "U+F92E": "U+51B7",
+    "U+F92F": "U+52DE",
+    "U+F930": "U+64C4",
+    "U+F931": "U+6AD3",
+    "U+F932": "U+7210",
+    "U+F933": "U+76E7",
+    "U+F934": "U+8001",
+    "U+F935": "U+8606",
+    "U+F936": "U+865C",
+    "U+F937": "U+8DEF",
+    "U+F938": "U+9732",
+    "U+F939": "U+9B6F",
+    "U+F93A": "U+9DFA",
+    "U+F93B": "U+788C",
+    "U+F93C": "U+797F",
+    "U+F93D": "U+7DA0",
+    "U+F93E": "U+83C9",
+    "U+F93F": "U+9304",
+    "U+F940": "U+9E7F",
+    "U+F941": "U+8AD6",
+    "U+F942": "U+58DF",
+    "U+F943": "U+5F04",
+    "U+F944": "U+7C60",
+    "U+F945": "U+807E",
+    "U+F946": "U+7262",
+    "U+F947": "U+78CA",
+    "U+F948": "U+8CC2",
+    "U+F949": "U+96F7",
+    "U+F94A": "U+58D8",
+    "U+F94B": "U+5C62",
+    "U+F94C": "U+6A13",
+    "U+F94D": "U+6DDA",
+    "U+F94E": "U+6F0F",
+    "U+F94F": "U+7D2F",
+    "U+F950": "U+7E37",
+    "U+F951": "U+964B",
+    "U+F952": "U+52D2",
+    "U+F953": "U+808B",
+    "U+F954": "U+51DC",
+    "U+F955": "U+51CC",
+    "U+F956": "U+7A1C",
+    "U+F957": "U+7DBE",
+    "U+F958": "U+83F1",
+    "U+F959": "U+9675",
+    "U+F95A": "U+8B80",
+    "U+F95B": "U+62CF",
+    "U+F95C": "U+6A02",
+    "U+F95D": "U+8AFE",
+    "U+F95E": "U+4E39",
+    "U+F95F": "U+5BE7",
+    "U+F960": "U+6012",
+    "U+F961": "U+7387",
+    "U+F962": "U+7570",
+    "U+F963": "U+5317",
+    "U+F964": "U+78FB",
+    "U+F965": "U+4FBF",
+    "U+F966": "U+5FA9",
+    "U+F967": "U+4E0D",
+    "U+F968": "U+6CCC",
+    "U+F969": "U+6578",
+    "U+F96A": "U+7D22",
+    "U+F96B": "U+53C3",
+    "U+F96C": "U+585E",
+    "U+F96D": "U+7701",
+    "U+F96E": "U+8449",
+    "U+F96F": "U+8AAA",
+    "U+F970": "U+6BBA",
+    "U+F971": "U+8FB0",
+    "U+F972": "U+6C88",
+    "U+F973": "U+62FE",
+    "U+F974": "U+82E5",
+    "U+F975": "U+63A0",
+    "U+F976": "U+7565",
+    "U+F977": "U+4EAE",
+    "U+F978": "U+5169",
+    "U+F979": "U+51C9",
+    "U+F97A": "U+6881",
+    "U+F97B": "U+7CE7",
+    "U+F97C": "U+826F",
+    "U+F97D": "U+8AD2",
+    "U+F97E": "U+91CF",
+    "U+F97F": "U+52F5",
+    "U+F980": "U+5442",
+    "U+F981": "U+5973",
+    "U+F982": "U+5EEC",
+    "U+F983": "U+65C5",
+    "U+F984": "U+6FFE",
+    "U+F985": "U+792A",
+    "U+F986": "U+95AD",
+    "U+F987": "U+9A6A",
+    "U+F988": "U+9E97",
+    "U+F989": "U+9ECE",
+    "U+F98A": "U+529B",
+    "U+F98B": "U+66C6",
+    "U+F98C": "U+6B77",
+    "U+F98D": "U+8F62",
+    "U+F98E": "U+5E74",
+    "U+F98F": "U+6190",
+    "U+F990": "U+6200",
+    "U+F991": "U+649A",
+    "U+F992": "U+6F23",
+    "U+F993": "U+7149",
+    "U+F994": "U+7489",
+    "U+F995": "U+79CA",
+    "U+F996": "U+7DF4",
+    "U+F997": "U+806F",
+    "U+F998": "U+8F26",
+    "U+F999": "U+84EE",
+    "U+F99A": "U+9023",
+    "U+F99B": "U+934A",
+    "U+F99C": "U+5217",
+    "U+F99D": "U+52A3",
+    "U+F99E": "U+54BD",
+    "U+F99F": "U+70C8",
+    "U+F9A0": "U+88C2",
+    "U+F9A1": "U+8AAA",
+    "U+F9A2": "U+5EC9",
+    "U+F9A3": "U+5FF5",
+    "U+F9A4": "U+637B",
+    "U+F9A5": "U+6BAE",
+    "U+F9A6": "U+7C3E",
+    "U+F9A7": "U+7375",
+    "U+F9A8": "U+4EE4",
+    "U+F9A9": "U+56F9",
+    "U+F9AA": "U+5BE7",
+    "U+F9AB": "U+5DBA",
+    "U+F9AC": "U+601C",
+    "U+F9AD": "U+73B2",
+    "U+F9AE": "U+7469",
+    "U+F9AF": "U+7F9A",
+    "U+F9B0": "U+8046",
+    "U+F9B1": "U+9234",
+    "U+F9B2": "U+96F6",
+    "U+F9B3": "U+9748",
+    "U+F9B4": "U+9818",
+    "U+F9B5": "U+4F8B",
+    "U+F9B6": "U+79AE",
+    "U+F9B7": "U+91B4",
+    "U+F9B8": "U+96B7",
+    "U+F9B9": "U+60E1",
+    "U+F9BA": "U+4E86",
+    "U+F9BB": "U+50DA",
+    "U+F9BC": "U+5BEE",
+    "U+F9BD": "U+5C3F",
+    "U+F9BE": "U+6599",
+    "U+F9BF": "U+6A02",
+    "U+F9C0": "U+71CE",
+    "U+F9C1": "U+7642",
+    "U+F9C2": "U+84FC",
+    "U+F9C3": "U+907C",
+    "U+F9C4": "U+9F8D",
+    "U+F9C5": "U+6688",
+    "U+F9C6": "U+962E",
+    "U+F9C7": "U+5289",
+    "U+F9C8": "U+677B",
+    "U+F9C9": "U+67F3",
+    "U+F9CA": "U+6D41",
+    "U+F9CB": "U+6E9C",
+    "U+F9CC": "U+7409",
+    "U+F9CD": "U+7559",
+    "U+F9CE": "U+786B",
+    "U+F9CF": "U+7D10",
+    "U+F9D0": "U+985E",
+    "U+F9D1": "U+516D",
+    "U+F9D2": "U+622E",
+    "U+F9D3": "U+9678",
+    "U+F9D4": "U+502B",
+    "U+F9D5": "U+5D19",
+    "U+F9D6": "U+6DEA",
+    "U+F9D7": "U+8F2A",
+    "U+F9D8": "U+5F8B",
+    "U+F9D9": "U+6144",
+    "U+F9DA": "U+6817",
+    "U+F9DB": "U+7387",
+    "U+F9DC": "U+9686",
+    "U+F9DD": "U+5229",
+    "U+F9DE": "U+540F",
+    "U+F9DF": "U+5C65",
+    "U+F9E0": "U+6613",
+    "U+F9E1": "U+674E",
+    "U+F9E2": "U+68A8",
+    "U+F9E3": "U+6CE5",
+    "U+F9E4": "U+7406",
+    "U+F9E5": "U+75E2",
+    "U+F9E6": "U+7F79",
+    "U+F9E7": "U+88CF",
+    "U+F9E8": "U+88E1",
+    "U+F9E9": "U+91CC",
+    "U+F9EA": "U+96E2",
+    "U+F9EB": "U+533F",
+    "U+F9EC": "U+6EBA",
+    "U+F9ED": "U+541D",
+    "U+F9EE": "U+71D0",
+    "U+F9EF": "U+7498",
+    "U+F9F0": "U+85FA",
+    "U+F9F1": "U+96A3",
+    "U+F9F2": "U+9C57",
+    "U+F9F3": "U+9E9F",
+    "U+F9F4": "U+6797",
+    "U+F9F5": "U+6DCB",
+    "U+F9F6": "U+81E8",
+    "U+F9F7": "U+7ACB",
+    "U+F9F8": "U+7B20",
+    "U+F9F9": "U+7C92",
+    "U+F9FA": "U+72C0",
+    "U+F9FB": "U+7099",
+    "U+F9FC": "U+8B58",
+    "U+F9FD": "U+4EC0",
+    "U+F9FE": "U+8336",
+    "U+F9FF": "U+523A",
+    "U+FA00": "U+5207",
+    "U+FA01": "U+5EA6",
+    "U+FA02": "U+62D3",
+    "U+FA03": "U+7CD6",
+    "U+FA04": "U+5B85",
+    "U+FA05": "U+6D1E",
+    "U+FA06": "U+66B4",
+    "U+FA07": "U+8F3B",
+    "U+FA08": "U+884C",
+    "U+FA09": "U+964D",
+    "U+FA0A": "U+898B",
+    "U+FA0B": "U+5ED3",
+    "U+FA0C": "U+5140",
+    "U+FA0D": "U+55C0",
+    "U+FA10": "U+585A",
+    "U+FA12": "U+6674",
+    "U+FA15": "U+51DE",
+    "U+FA16": "U+732A",
+    "U+FA17": "U+76CA",
+    "U+FA18": "U+793C",
+    "U+FA19": "U+795E",
+    "U+FA1A": "U+7965",
+    "U+FA1B": "U+798F",
+    "U+FA1C": "U+9756",
+    "U+FA1D": "U+7CBE",
+    "U+FA1E": "U+7FBD",
+    "U+FA20": "U+8612",
+    "U+FA22": "U+8AF8",
+    "U+FA25": "U+9038",
+    "U+FA26": "U+90FD",
+    "U+FA2A": "U+98EF",
+    "U+FA2B": "U+98FC",
+    "U+FA2C": "U+9928",
+    "U+FA2D": "U+9DB4",
+    "U+FA2E": "U+90CE",
+    "U+FA2F": "U+96B7",
+    "U+FA30": "U+4FAE",
+    "U+FA31": "U+50E7",
+    "U+FA32": "U+514D",
+    "U+FA33": "U+52C9",
+    "U+FA34": "U+52E4",
+    "U+FA35": "U+5351",
+    "U+FA36": "U+559D",
+    "U+FA37": "U+5606",
+    "U+FA38": "U+5668",
+    "U+FA39": "U+5840",
+    "U+FA3A": "U+58A8",
+    "U+FA3B": "U+5C64",
+    "U+FA3C": "U+5C6E",
+    "U+FA3D": "U+6094",
+    "U+FA3E": "U+6168",
+    "U+FA3F": "U+618E",
+    "U+FA40": "U+61F2",
+    "U+FA41": "U+654F",
+    "U+FA42": "U+65E2",
+    "U+FA43": "U+6691",
+    "U+FA44": "U+6885",
+    "U+FA45": "U+6D77",
+    "U+FA46": "U+6E1A",
+    "U+FA47": "U+6F22",
+    "U+FA48": "U+716E",
+    "U+FA49": "U+722B",
+    "U+FA4A": "U+7422",
+    "U+FA4B": "U+7891",
+    "U+FA4C": "U+793E",
+    "U+FA4D": "U+7949",
+    "U+FA4E": "U+7948",
+    "U+FA4F": "U+7950",
+    "U+FA50": "U+7956",
+    "U+FA51": "U+795D",
+    "U+FA52": "U+798D",
+    "U+FA53": "U+798E",
+    "U+FA54": "U+7A40",
+    "U+FA55": "U+7A81",
+    "U+FA56": "U+7BC0",
+    "U+FA57": "U+7DF4",
+    "U+FA58": "U+7E09",
+    "U+FA59": "U+7E41",
+    "U+FA5A": "U+7F72",
+    "U+FA5B": "U+8005",
+    "U+FA5C": "U+81ED",
+    "U+FA5D": "U+8279",
+    "U+FA5E": "U+8279",
+    "U+FA5F": "U+8457",
+    "U+FA60": "U+8910",
+    "U+FA61": "U+8996",
+    "U+FA62": "U+8B01",
+    "U+FA63": "U+8B39",
+    "U+FA64": "U+8CD3",
+    "U+FA65": "U+8D08",
+    "U+FA66": "U+8FB6",
+    "U+FA67": "U+9038",
+    "U+FA68": "U+96E3",
+    "U+FA69": "U+97FF",
+    "U+FA6A": "U+983B",
+    "U+FA6B": "U+6075",
+    "U+FA6C": "U+242EE",
+    "U+FA6D": "U+8218",
+    "U+FA70": "U+4E26",
+    "U+FA71": "U+51B5",
+    "U+FA72": "U+5168",
+    "U+FA73": "U+4F80",
+    "U+FA74": "U+5145",
+    "U+FA75": "U+5180",
+    "U+FA76": "U+52C7",
+    "U+FA77": "U+52FA",
+    "U+FA78": "U+559D",
+    "U+FA79": "U+5555",
+    "U+FA7A": "U+5599",
+    "U+FA7B": "U+55E2",
+    "U+FA7C": "U+585A",
+    "U+FA7D": "U+58B3",
+    "U+FA7E": "U+5944",
+    "U+FA7F": "U+5954",
+    "U+FA80": "U+5A62",
+    "U+FA81": "U+5B28",
+    "U+FA82": "U+5ED2",
+    "U+FA83": "U+5ED9",
+    "U+FA84": "U+5F69",
+    "U+FA85": "U+5FAD",
+    "U+FA86": "U+60D8",
+    "U+FA87": "U+614E",
+    "U+FA88": "U+6108",
+    "U+FA89": "U+618E",
+    "U+FA8A": "U+6160",
+    "U+FA8B": "U+61F2",
+    "U+FA8C": "U+6234",
+    "U+FA8D": "U+63C4",
+    "U+FA8E": "U+641C",
+    "U+FA8F": "U+6452",
+    "U+FA90": "U+6556",
+    "U+FA91": "U+6674",
+    "U+FA92": "U+6717",
+    "U+FA93": "U+671B",
+    "U+FA94": "U+6756",
+    "U+FA95": "U+6B79",
+    "U+FA96": "U+6BBA",
+    "U+FA97": "U+6D41",
+    "U+FA98": "U+6EDB",
+    "U+FA99": "U+6ECB",
+    "U+FA9A": "U+6F22",
+    "U+FA9B": "U+701E",
+    "U+FA9C": "U+716E",
+    "U+FA9D": "U+77A7",
+    "U+FA9E": "U+7235",
+    "U+FA9F": "U+72AF",
+    "U+FAA0": "U+732A",
+    "U+FAA1": "U+7471",
+    "U+FAA2": "U+7506",
+    "U+FAA3": "U+753B",
+    "U+FAA4": "U+761D",
+    "U+FAA5": "U+761F",
+    "U+FAA6": "U+76CA",
+    "U+FAA7": "U+76DB",
+    "U+FAA8": "U+76F4",
+    "U+FAA9": "U+774A",
+    "U+FAAA": "U+7740",
+    "U+FAAB": "U+78CC",
+    "U+FAAC": "U+7AB1",
+    "U+FAAD": "U+7BC0",
+    "U+FAAE": "U+7C7B",
+    "U+FAAF": "U+7D5B",
+    "U+FAB0": "U+7DF4",
+    "U+FAB1": "U+7F3E",
+    "U+FAB2": "U+8005",
+    "U+FAB3": "U+8352",
+    "U+FAB4": "U+83EF",
+    "U+FAB5": "U+8779",
+    "U+FAB6": "U+8941",
+    "U+FAB7": "U+8986",
+    "U+FAB8": "U+8996",
+    "U+FAB9": "U+8ABF",
+    "U+FABA": "U+8AF8",
+    "U+FABB": "U+8ACB",
+    "U+FABC": "U+8B01",
+    "U+FABD": "U+8AFE",
+    "U+FABE": "U+8AED",
+    "U+FABF": "U+8B39",
+    "U+FAC0": "U+8B8A",
+    "U+FAC1": "U+8D08",
+    "U+FAC2": "U+8F38",
+    "U+FAC3": "U+9072",
+    "U+FAC4": "U+9199",
+    "U+FAC5": "U+9276",
+    "U+FAC6": "U+967C",
+    "U+FAC7": "U+96E3",
+    "U+FAC8": "U+9756",
+    "U+FAC9": "U+97DB",
+    "U+FACA": "U+97FF",
+    "U+FACB": "U+980B",
+    "U+FACC": "U+983B",
+    "U+FACD": "U+9B12",
+    "U+FACE": "U+9F9C",
+    "U+FACF": "U+2284A",
+    "U+FAD0": "U+22844",
+    "U+FAD1": "U+233D5",
+    "U+FAD2": "U+3B9D",
+    "U+FAD3": "U+4018",
+    "U+FAD4": "U+4039",
+    "U+FAD5": "U+25249",
+    "U+FAD6": "U+25CD0",
+    "U+FAD7": "U+27ED3",
+    "U+FAD8": "U+9F43",
+    "U+FAD9": "U+9F8E",
+    "U+FB00": "U+0066 U+0066",
+    "U+FB01": "U+0066 U+0069",
+    "U+FB02": "U+0066 U+006C",
+    "U+FB03": "U+0066 U+0066 U+0069",
+    "U+FB04": "U+0066 U+0066 U+006C",
+    "U+FB06": "U+0073 U+0074",
+    "U+FB13": "U+0574 U+0576",
+    "U+FB14": "U+0574 U+0565",
+    "U+FB15": "U+0574 U+056B",
+    "U+FB16": "U+057E U+0576",
+    "U+FB17": "U+0574 U+056D",
+    "U+FB20": "U+05E2",
+    "U+FB21": "U+05D0",
+    "U+FB22": "U+05D3",
+    "U+FB23": "U+05D4",
+    "U+FB24": "U+05DB",
+    "U+FB25": "U+05DC",
+    "U+FB26": "U+05DD",
+    "U+FB27": "U+05E8",
+    "U+FB28": "U+05EA",
+    "U+FB29": "U+002D U+0307",
+    "U+FB2B": "U+FB2A",
+    "U+FB2D": "U+FB2C",
+    "U+FB2F": "U+FB2E",
+    "U+FB30": "U+FB2E",
+    "U+FB39": "U+FB1D",
+    "U+FB49": "U+FB2A",
+    "U+FB4F": "U+05D0 U+05DC",
+    "U+FB50": "U+0671",
+    "U+FB51": "U+0671",
+    "U+FB52": "U+067B",
+    "U+FB53": "U+067B",
+    "U+FB54": "U+067B",
+    "U+FB55": "U+067B",
+    "U+FB56": "U+0649 U+06DB",
+    "U+FB57": "U+0649 U+06DB",
+    "U+FB58": "U+0649 U+06DB",
+    "U+FB59": "U+0649 U+06DB",
+    "U+FB5A": "U+0680",
+    "U+FB5B": "U+0680",
+    "U+FB5C": "U+0680",
+    "U+FB5D": "U+0680",
+    "U+FB5E": "U+062A",
+    "U+FB5F": "U+062A",
+    "U+FB60": "U+062A",
+    "U+FB61": "U+062A",
+    "U+FB62": "U+067F",
+    "U+FB63": "U+067F",
+    "U+FB64": "U+067F",
+    "U+FB65": "U+067F",
+    "U+FB66": "U+0649 U+0615",
+    "U+FB67": "U+0649 U+0615",
+    "U+FB68": "U+0649 U+0615",
+    "U+FB69": "U+0649 U+0615",
+    "U+FB6A": "U+06A1 U+06DB",
+    "U+FB6B": "U+06A1 U+06DB",
+    "U+FB6C": "U+06A1 U+06DB",
+    "U+FB6D": "U+06A1 U+06DB",
+    "U+FB6E": "U+06A6",
+    "U+FB6F": "U+06A6",
+    "U+FB70": "U+06A6",
+    "U+FB71": "U+06A6",
+    "U+FB72": "U+0684",
+    "U+FB73": "U+0684",
+    "U+FB74": "U+0684",
+    "U+FB75": "U+0684",
+    "U+FB76": "U+0683",
+    "U+FB77": "U+0683",
+    "U+FB78": "U+0683",
+    "U+FB79": "U+0683",
+    "U+FB7A": "U+0686",
+    "U+FB7B": "U+0686",
+    "U+FB7C": "U+0686",
+    "U+FB7D": "U+0686",
+    "U+FB7E": "U+0687",
+    "U+FB7F": "U+0687",
+    "U+FB80": "U+0687",
+    "U+FB81": "U+0687",
+    "U+FB82": "U+068D",
+    "U+FB83": "U+068D",
+    "U+FB84": "U+068C",
+    "U+FB85": "U+068C",
+    "U+FB86": "U+062F U+06DB",
+    "U+FB87": "U+062F U+06DB",
+    "U+FB88": "U+062F U+0615",
+    "U+FB89": "U+062F U+0615",
+    "U+FB8A": "U+0631 U+06DB",
+    "U+FB8B": "U+0631 U+06DB",
+    "U+FB8C": "U+0631 U+0615",
+    "U+FB8D": "U+0631 U+0615",
+    "U+FB8E": "U+0643",
+    "U+FB8F": "U+0643",
+    "U+FB90": "U+0643",
+    "U+FB91": "U+0643",
+    "U+FB92": "U+06AF",
+    "U+FB93": "U+06AF",
+    "U+FB94": "U+06AF",
+    "U+FB95": "U+06AF",
+    "U+FB96": "U+06B3",
+    "U+FB97": "U+06B3",
+    "U+FB98": "U+06B3",
+    "U+FB99": "U+06B3",
+    "U+FB9A": "U+06B1",
+    "U+FB9B": "U+06B1",
+    "U+FB9C": "U+06B1",
+    "U+FB9D": "U+06B1",
+    "U+FB9E": "U+0649",
+    "U+FB9F": "U+0649",
+    "U+FBA0": "U+0649 U+0615",
+    "U+FBA1": "U+0649 U+0615",
+    "U+FBA2": "U+0649 U+0615",
+    "U+FBA3": "U+0649 U+0615",
+    "U+FBA4": "U+06C0",
+    "U+FBA5": "U+06C0",
+    "U+FBA6": "U+006F",
+    "U+FBA7": "U+006F",
+    "U+FBA8": "U+006F",
+    "U+FBA9": "U+006F",
+    "U+FBAA": "U+006F",
+    "U+FBAB": "U+006F",
+    "U+FBAC": "U+006F",
+    "U+FBAD": "U+006F",
+    "U+FBAE": "U+0649",
+    "U+FBAF": "U+0649",
+    "U+FBB0": "U+06D3",
+    "U+FBB1": "U+06D3",
+    "U+FBD3": "U+0643 U+06DB",
+    "U+FBD4": "U+0643 U+06DB",
+    "U+FBD5": "U+0643 U+06DB",
+    "U+FBD6": "U+0643 U+06DB",
+    "U+FBD7": "U+0648 U+0313",
+    "U+FBD8": "U+0648 U+0313",
+    "U+FBD9": "U+0648 U+0306",
+    "U+FBDA": "U+0648 U+0306",
+    "U+FBDB": "U+0648 U+0670",
+    "U+FBDC": "U+0648 U+0670",
+    "U+FBDD": "U+0648 U+0313 U+0674",
+    "U+FBDE": "U+0648 U+06DB",
+    "U+FBDF": "U+0648 U+06DB",
+    "U+FBE0": "U+06C5",
+    "U+FBE1": "U+06C5",
+    "U+FBE2": "U+0648 U+0302",
+    "U+FBE3": "U+0648 U+0302",
+    "U+FBE4": "U+067B",
+    "U+FBE5": "U+067B",
+    "U+FBE6": "U+067B",
+    "U+FBE7": "U+067B",
+    "U+FBE8": "U+0649",
+    "U+FBE9": "U+0649",
+    "U+FBEA": "U+0649 U+0674 U+006C",
+    "U+FBEB": "U+0649 U+0674 U+006C",
+    "U+FBEC": "U+0649 U+0674 U+006F",
+    "U+FBED": "U+0649 U+0674 U+006F",
+    "U+FBEE": "U+0649 U+0674 U+0648",
+    "U+FBEF": "U+0649 U+0674 U+0648",
+    "U+FBF0": "U+0649 U+0674 U+0648 U+0313",
+    "U+FBF1": "U+0649 U+0674 U+0648 U+0313",
+    "U+FBF2": "U+0649 U+0674 U+0648 U+0306",
+    "U+FBF3": "U+0649 U+0674 U+0648 U+0306",
+    "U+FBF4": "U+0649 U+0674 U+0648 U+0670",
+    "U+FBF5": "U+0649 U+0674 U+0648 U+0670",
+    "U+FBF6": "U+0649 U+0674 U+067B",
+    "U+FBF7": "U+0649 U+0674 U+067B",
+    "U+FBF8": "U+0649 U+0674 U+067B",
+    "U+FBF9": "U+0649 U+0674 U+0649",
+    "U+FBFA": "U+0649 U+0674 U+0649",
+    "U+FBFB": "U+0649 U+0674 U+0649",
+    "U+FBFC": "U+0649",
+    "U+FBFD": "U+0649",
+    "U+FBFE": "U+0649",
+    "U+FBFF": "U+0649",
+    "U+FC00": "U+0649 U+0674 U+062C",
+    "U+FC01": "U+0649 U+0674 U+062D",
+    "U+FC02": "U+0649 U+0674 U+0645",
+    "U+FC03": "U+0649 U+0674 U+0649",
+    "U+FC04": "U+0649 U+0674 U+0649",
+    "U+FC05": "U+0628 U+062C",
+    "U+FC06": "U+0628 U+062D",
+    "U+FC07": "U+0628 U+062E",
+    "U+FC08": "U+0628 U+0645",
+    "U+FC09": "U+0628 U+0649",
+    "U+FC0A": "U+0628 U+0649",
+    "U+FC0B": "U+062A U+062C",
+    "U+FC0C": "U+062A U+062D",
+    "U+FC0D": "U+062A U+062E",
+    "U+FC0E": "U+062A U+0645",
+    "U+FC0F": "U+062A U+0649",
+    "U+FC10": "U+062A U+0649",
+    "U+FC11": "U+0649 U+06DB U+062C",
+    "U+FC12": "U+0649 U+06DB U+0645",
+    "U+FC13": "U+0649 U+06DB U+0649",
+    "U+FC14": "U+0649 U+06DB U+0649",
+    "U+FC15": "U+062C U+062D",
+    "U+FC16": "U+062C U+0645",
+    "U+FC17": "U+062D U+062C",
+    "U+FC18": "U+062D U+0645",
+    "U+FC19": "U+062E U+062C",
+    "U+FC1A": "U+062E U+062D",
+    "U+FC1B": "U+062E U+0645",
+    "U+FC1C": "U+0633 U+062C",
+    "U+FC1D": "U+0633 U+062D",
+    "U+FC1E": "U+0633 U+062E",
+    "U+FC1F": "U+0633 U+0645",
+    "U+FC20": "U+0635 U+062D",
+    "U+FC21": "U+0635 U+0645",
+    "U+FC22": "U+0636 U+062C",
+    "U+FC23": "U+0636 U+062D",
+    "U+FC24": "U+0636 U+062E",
+    "U+FC25": "U+0636 U+0645",
+    "U+FC26": "U+0637 U+062D",
+    "U+FC27": "U+0637 U+0645",
+    "U+FC28": "U+0638 U+0645",
+    "U+FC29": "U+0639 U+062C",
+    "U+FC2A": "U+0639 U+0645",
+    "U+FC2B": "U+063A U+062C",
+    "U+FC2C": "U+063A U+0645",
+    "U+FC2D": "U+0641 U+062C",
+    "U+FC2E": "U+0641 U+062D",
+    "U+FC2F": "U+0641 U+062E",
+    "U+FC30": "U+0641 U+0645",
+    "U+FC31": "U+0641 U+0649",
+    "U+FC32": "U+0641 U+0649",
+    "U+FC33": "U+0642 U+062D",
+    "U+FC34": "U+0642 U+0645",
+    "U+FC35": "U+0642 U+0649",
+    "U+FC36": "U+0642 U+0649",
+    "U+FC37": "U+0643 U+006C",
+    "U+FC38": "U+0643 U+062C",
+    "U+FC39": "U+0643 U+062D",
+    "U+FC3A": "U+0643 U+062E",
+    "U+FC3B": "U+0643 U+0644",
+    "U+FC3C": "U+0643 U+0645",
+    "U+FC3D": "U+0643 U+0649",
+    "U+FC3E": "U+0643 U+0649",
+    "U+FC3F": "U+0644 U+062C",
+    "U+FC40": "U+0644 U+062D",
+    "U+FC41": "U+0644 U+062E",
+    "U+FC42": "U+0644 U+0645",
+    "U+FC43": "U+0644 U+0649",
+    "U+FC44": "U+0644 U+0649",
+    "U+FC45": "U+0645 U+062C",
+    "U+FC46": "U+0645 U+062D",
+    "U+FC47": "U+0645 U+062E",
+    "U+FC48": "U+0645 U+0645",
+    "U+FC49": "U+0645 U+0649",
+    "U+FC4A": "U+0645 U+0649",
+    "U+FC4B": "U+0628 U+062E",
+    "U+FC4C": "U+0646 U+062D",
+    "U+FC4D": "U+0646 U+062E",
+    "U+FC4E": "U+0646 U+0645",
+    "U+FC4F": "U+0646 U+0649",
+    "U+FC50": "U+0646 U+0649",
+    "U+FC51": "U+006F U+062C",
+    "U+FC52": "U+006F U+0645",
+    "U+FC53": "U+006F U+0649",
+    "U+FC54": "U+006F U+0649",
+    "U+FC55": "U+0649 U+062C",
+    "U+FC56": "U+0649 U+062D",
+    "U+FC57": "U+0649 U+062E",
+    "U+FC58": "U+0649 U+0645",
+    "U+FC59": "U+0649 U+0649",
+    "U+FC5A": "U+0649 U+0649",
+    "U+FC5B": "U+0630 U+0670",
+    "U+FC5C": "U+0631 U+0670",
+    "U+FC5D": "U+0649 U+0670",
+    "U+FC5E": "U+FE72 U+0651",
+    "U+FC5F": "U+FE74 U+0651",
+    "U+FC60": "U+FE76 U+0651",
+    "U+FC61": "U+FE78 U+0651",
+    "U+FC62": "U+FE7A U+0651",
+    "U+FC63": "U+FE7C U+0670",
+    "U+FC64": "U+0649 U+0674 U+0631",
+    "U+FC65": "U+0649 U+0674 U+0632",
+    "U+FC66": "U+0649 U+0674 U+0645",
+    "U+FC67": "U+0649 U+0674 U+0646",
+    "U+FC68": "U+0649 U+0674 U+0649",
+    "U+FC69": "U+0649 U+0674 U+0649",
+    "U+FC6A": "U+0628 U+0631",
+    "U+FC6B": "U+0628 U+0632",
+    "U+FC6C": "U+0628 U+0645",
+    "U+FC6D": "U+0628 U+0646",
+    "U+FC6E": "U+0628 U+0649",
+    "U+FC6F": "U+0628 U+0649",
+    "U+FC70": "U+062A U+0631",
+    "U+FC71": "U+062A U+0632",
+    "U+FC72": "U+062A U+0645",
+    "U+FC73": "U+062A U+0646",
+    "U+FC74": "U+062A U+0649",
+    "U+FC75": "U+062A U+0649",
+    "U+FC76": "U+0649 U+06DB U+0631",
+    "U+FC77": "U+0649 U+06DB U+0632",
+    "U+FC78": "U+0649 U+06DB U+0645",
+    "U+FC79": "U+0649 U+06DB U+0646",
+    "U+FC7A": "U+0649 U+06DB U+0649",
+    "U+FC7B": "U+0649 U+06DB U+0649",
+    "U+FC7C": "U+0641 U+0649",
+    "U+FC7D": "U+0641 U+0649",
+    "U+FC7E": "U+0642 U+0649",
+    "U+FC7F": "U+0642 U+0649",
+    "U+FC80": "U+0643 U+006C",
+    "U+FC81": "U+0643 U+0644",
+    "U+FC82": "U+0643 U+0645",
+    "U+FC83": "U+0643 U+0649",
+    "U+FC84": "U+0643 U+0649",
+    "U+FC85": "U+0644 U+0645",
+    "U+FC86": "U+0644 U+0649",
+    "U+FC87": "U+0644 U+0649",
+    "U+FC88": "U+0645 U+006C",
+    "U+FC89": "U+0645 U+0645",
+    "U+FC8A": "U+0646 U+0631",
+    "U+FC8B": "U+0646 U+0632",
+    "U+FC8C": "U+0646 U+0645",
+    "U+FC8D": "U+0646 U+0646",
+    "U+FC8E": "U+0646 U+0649",
+    "U+FC8F": "U+0646 U+0649",
+    "U+FC90": "U+0649 U+0670",
+    "U+FC91": "U+0649 U+0631",
+    "U+FC92": "U+0649 U+0632",
+    "U+FC93": "U+0649 U+0645",
+    "U+FC94": "U+0649 U+0646",
+    "U+FC95": "U+0649 U+0649",
+    "U+FC96": "U+0649 U+0649",
+    "U+FC97": "U+0649 U+0674 U+062C",
+    "U+FC98": "U+0649 U+0674 U+062D",
+    "U+FC99": "U+0649 U+0674 U+062E",
+    "U+FC9A": "U+0649 U+0674 U+0645",
+    "U+FC9B": "U+0649 U+0674 U+006F",
+    "U+FC9C": "U+0628 U+062C",
+    "U+FC9D": "U+0628 U+062D",
+    "U+FC9E": "U+0628 U+062E",
+    "U+FC9F": "U+0628 U+0645",
+    "U+FCA0": "U+0628 U+006F",
+    "U+FCA1": "U+062A U+062C",
+    "U+FCA2": "U+062A U+062D",
+    "U+FCA3": "U+062A U+062E",
+    "U+FCA4": "U+062A U+0645",
+    "U+FCA5": "U+062A U+006F",
+    "U+FCA6": "U+0649 U+06DB U+0645",
+    "U+FCA7": "U+062C U+062D",
+    "U+FCA8": "U+062C U+0645",
+    "U+FCA9": "U+062D U+062C",
+    "U+FCAA": "U+062D U+0645",
+    "U+FCAB": "U+062E U+062C",
+    "U+FCAC": "U+062E U+0645",
+    "U+FCAD": "U+0633 U+062C",
+    "U+FCAE": "U+0633 U+062D",
+    "U+FCAF": "U+0633 U+062E",
+    "U+FCB0": "U+0633 U+0645",
+    "U+FCB1": "U+0635 U+062D",
+    "U+FCB2": "U+0635 U+062E",
+    "U+FCB3": "U+0635 U+0645",
+    "U+FCB4": "U+0636 U+062C",
+    "U+FCB5": "U+0636 U+062D",
+    "U+FCB6": "U+0636 U+062E",
+    "U+FCB7": "U+0636 U+0645",
+    "U+FCB8": "U+0637 U+062D",
+    "U+FCB9": "U+0638 U+0645",
+    "U+FCBA": "U+0639 U+062C",
+    "U+FCBB": "U+0639 U+0645",
+    "U+FCBC": "U+063A U+062C",
+    "U+FCBD": "U+063A U+0645",
+    "U+FCBE": "U+0641 U+062C",
+    "U+FCBF": "U+0641 U+062D",
+    "U+FCC0": "U+0641 U+062E",
+    "U+FCC1": "U+0641 U+0645",
+    "U+FCC2": "U+0642 U+062D",
+    "U+FCC3": "U+0642 U+0645",
+    "U+FCC4": "U+0643 U+062C",
+    "U+FCC5": "U+0643 U+062D",
+    "U+FCC6": "U+0643 U+062E",
+    "U+FCC7": "U+0643 U+0644",
+    "U+FCC8": "U+0643 U+0645",
+    "U+FCC9": "U+0644 U+062C",
+    "U+FCCA": "U+0644 U+062D",
+    "U+FCCB": "U+0644 U+062E",
+    "U+FCCC": "U+0644 U+0645",
+    "U+FCCD": "U+0644 U+006F",
+    "U+FCCE": "U+0645 U+062C",
+    "U+FCCF": "U+0645 U+062D",
+    "U+FCD0": "U+0645 U+062E",
+    "U+FCD1": "U+0645 U+0645",
+    "U+FCD2": "U+0628 U+062E",
+    "U+FCD3": "U+0646 U+062D",
+    "U+FCD4": "U+0646 U+062E",
+    "U+FCD5": "U+0646 U+0645",
+    "U+FCD6": "U+0646 U+006F",
+    "U+FCD7": "U+006F U+062C",
+    "U+FCD8": "U+006F U+0645",
+    "U+FCD9": "U+006F U+0670",
+    "U+FCDA": "U+0649 U+062C",
+    "U+FCDB": "U+0649 U+062D",
+    "U+FCDC": "U+0649 U+062E",
+    "U+FCDD": "U+0649 U+0645",
+    "U+FCDE": "U+0649 U+006F",
+    "U+FCDF": "U+0649 U+0674 U+0645",
+    "U+FCE0": "U+0649 U+0674 U+006F",
+    "U+FCE1": "U+0628 U+0645",
+    "U+FCE2": "U+0628 U+006F",
+    "U+FCE3": "U+062A U+0645",
+    "U+FCE4": "U+062A U+006F",
+    "U+FCE5": "U+0649 U+06DB U+0645",
+    "U+FCE6": "U+0649 U+06DB U+006F",
+    "U+FCE7": "U+0633 U+0645",
+    "U+FCE8": "U+0633 U+006F",
+    "U+FCE9": "U+0633 U+06DB U+0645",
+    "U+FCEA": "U+0633 U+06DB U+006F",
+    "U+FCEB": "U+0643 U+0644",
+    "U+FCEC": "U+0643 U+0645",
+    "U+FCED": "U+0644 U+0645",
+    "U+FCEE": "U+0646 U+0645",
+    "U+FCEF": "U+0646 U+006F",
+    "U+FCF0": "U+0649 U+0645",
+    "U+FCF1": "U+0649 U+006F",
+    "U+FCF2": "U+FE77 U+0651",
+    "U+FCF3": "U+FE79 U+0651",
+    "U+FCF4": "U+FE7B U+0651",
+    "U+FCF5": "U+0637 U+0649",
+    "U+FCF6": "U+0637 U+0649",
+    "U+FCF7": "U+0639 U+0649",
+    "U+FCF8": "U+0639 U+0649",
+    "U+FCF9": "U+063A U+0649",
+    "U+FCFA": "U+063A U+0649",
+    "U+FCFB": "U+0633 U+0649",
+    "U+FCFC": "U+0633 U+0649",
+    "U+FCFD": "U+0633 U+06DB U+0649",
+    "U+FCFE": "U+0633 U+06DB U+0649",
+    "U+FCFF": "U+062D U+0649",
+    "U+FD00": "U+062D U+0649",
+    "U+FD01": "U+062C U+0649",
+    "U+FD02": "U+062C U+0649",
+    "U+FD03": "U+062E U+0649",
+    "U+FD04": "U+062E U+0649",
+    "U+FD05": "U+0635 U+0649",
+    "U+FD06": "U+0635 U+0649",
+    "U+FD07": "U+0636 U+0649",
+    "U+FD08": "U+0636 U+0649",
+    "U+FD09": "U+0633 U+06DB U+062C",
+    "U+FD0A": "U+0633 U+06DB U+062D",
+    "U+FD0B": "U+0633 U+06DB U+062E",
+    "U+FD0C": "U+0633 U+06DB U+0645",
+    "U+FD0D": "U+0633 U+06DB U+0631",
+    "U+FD0E": "U+0633 U+0631",
+    "U+FD0F": "U+0635 U+0631",
+    "U+FD10": "U+0636 U+0631",
+    "U+FD11": "U+0637 U+0649",
+    "U+FD12": "U+0637 U+0649",
+    "U+FD13": "U+0639 U+0649",
+    "U+FD14": "U+0639 U+0649",
+    "U+FD15": "U+063A U+0649",
+    "U+FD16": "U+063A U+0649",
+    "U+FD17": "U+0633 U+0649",
+    "U+FD18": "U+0633 U+0649",
+    "U+FD19": "U+0633 U+06DB U+0649",
+    "U+FD1A": "U+0633 U+06DB U+0649",
+    "U+FD1B": "U+062D U+0649",
+    "U+FD1C": "U+062D U+0649",
+    "U+FD1D": "U+062C U+0649",
+    "U+FD1E": "U+062C U+0649",
+    "U+FD1F": "U+062E U+0649",
+    "U+FD20": "U+062E U+0649",
+    "U+FD21": "U+0635 U+0649",
+    "U+FD22": "U+0635 U+0649",
+    "U+FD23": "U+0636 U+0649",
+    "U+FD24": "U+0636 U+0649",
+    "U+FD25": "U+0633 U+06DB U+062C",
+    "U+FD26": "U+0633 U+06DB U+062D",
+    "U+FD27": "U+0633 U+06DB U+062E",
+    "U+FD28": "U+0633 U+06DB U+0645",
+    "U+FD29": "U+0633 U+06DB U+0631",
+    "U+FD2A": "U+0633 U+0631",
+    "U+FD2B": "U+0635 U+0631",
+    "U+FD2C": "U+0636 U+0631",
+    "U+FD2D": "U+0633 U+06DB U+062C",
+    "U+FD2E": "U+0633 U+06DB U+062D",
+    "U+FD2F": "U+0633 U+06DB U+062E",
+    "U+FD30": "U+0633 U+06DB U+0645",
+    "U+FD31": "U+0633 U+006F",
+    "U+FD32": "U+0633 U+06DB U+006F",
+    "U+FD33": "U+0637 U+0645",
+    "U+FD34": "U+0633 U+062C",
+    "U+FD35": "U+0633 U+062D",
+    "U+FD36": "U+0633 U+062E",
+    "U+FD37": "U+0633 U+06DB U+062C",
+    "U+FD38": "U+0633 U+06DB U+062D",
+    "U+FD39": "U+0633 U+06DB U+062E",
+    "U+FD3A": "U+0637 U+0645",
+    "U+FD3B": "U+0638 U+0645",
+    "U+FD3C": "U+006C U+030B",
+    "U+FD3D": "U+006C U+030B",
+    "U+FD3E": "U+0028",
+    "U+FD3F": "U+0029",
+    "U+FD50": "U+062A U+062C U+0645",
+    "U+FD51": "U+062A U+062D U+062C",
+    "U+FD52": "U+062A U+062D U+062C",
+    "U+FD53": "U+062A U+062D U+0645",
+    "U+FD54": "U+062A U+062E U+0645",
+    "U+FD55": "U+062A U+0645 U+062C",
+    "U+FD56": "U+062A U+0645 U+062D",
+    "U+FD57": "U+062A U+0645 U+062E",
+    "U+FD58": "U+062C U+0645 U+062D",
+    "U+FD59": "U+062C U+0645 U+062D",
+    "U+FD5A": "U+062D U+0645 U+0649",
+    "U+FD5B": "U+062D U+0645 U+0649",
+    "U+FD5C": "U+0633 U+062D U+062C",
+    "U+FD5D": "U+0633 U+062C U+062D",
+    "U+FD5E": "U+0633 U+062C U+0649",
+    "U+FD5F": "U+0633 U+0645 U+062D",
+    "U+FD60": "U+0633 U+0645 U+062D",
+    "U+FD61": "U+0633 U+0645 U+062C",
+    "U+FD62": "U+0633 U+0645 U+0645",
+    "U+FD63": "U+0633 U+0645 U+0645",
+    "U+FD64": "U+0635 U+062D U+062D",
+    "U+FD65": "U+0635 U+062D U+062D",
+    "U+FD66": "U+0635 U+0645 U+0645",
+    "U+FD67": "U+0633 U+06DB U+062D U+0645",
+    "U+FD68": "U+0633 U+06DB U+062D U+0645",
+    "U+FD69": "U+0633 U+06DB U+062C U+0649",
+    "U+FD6A": "U+0633 U+06DB U+0645 U+062E",
+    "U+FD6B": "U+0633 U+06DB U+0645 U+062E",
+    "U+FD6C": "U+0633 U+06DB U+0645 U+0645",
+    "U+FD6D": "U+0633 U+06DB U+0645 U+0645",
+    "U+FD6E": "U+0636 U+062D U+0649",
+    "U+FD6F": "U+0636 U+062E U+0645",
+    "U+FD70": "U+0636 U+062E U+0645",
+    "U+FD71": "U+0637 U+0645 U+062D",
+    "U+FD72": "U+0637 U+0645 U+062D",
+    "U+FD73": "U+0637 U+0645 U+0645",
+    "U+FD74": "U+0637 U+0645 U+0649",
+    "U+FD75": "U+0639 U+062C U+0645",
+    "U+FD76": "U+0639 U+0645 U+0645",
+    "U+FD77": "U+0639 U+0645 U+0645",
+    "U+FD78": "U+0639 U+0645 U+0649",
+    "U+FD79": "U+063A U+0645 U+0645",
+    "U+FD7A": "U+063A U+0645 U+0649",
+    "U+FD7B": "U+063A U+0645 U+0649",
+    "U+FD7C": "U+0641 U+062E U+0645",
+    "U+FD7D": "U+0641 U+062E U+0645",
+    "U+FD7E": "U+0642 U+0645 U+062D",
+    "U+FD7F": "U+0642 U+0645 U+0645",
+    "U+FD80": "U+0644 U+062D U+0645",
+    "U+FD81": "U+0644 U+062D U+0649",
+    "U+FD82": "U+0644 U+062D U+0649",
+    "U+FD83": "U+0644 U+062C U+062C",
+    "U+FD84": "U+0644 U+062C U+062C",
+    "U+FD85": "U+0644 U+062E U+0645",
+    "U+FD86": "U+0644 U+062E U+0645",
+    "U+FD87": "U+0644 U+0645 U+062D",
+    "U+FD88": "U+0644 U+0645 U+062D",
+    "U+FD89": "U+0645 U+062D U+062C",
+    "U+FD8A": "U+0645 U+062D U+0645",
+    "U+FD8B": "U+0645 U+062D U+0649",
+    "U+FD8C": "U+0645 U+062C U+062D",
+    "U+FD8D": "U+0645 U+062C U+0645",
+    "U+FD8E": "U+0645 U+062E U+062C",
+    "U+FD8F": "U+0645 U+062E U+0645",
+    "U+FD92": "U+0645 U+062C U+062E",
+    "U+FD93": "U+006F U+0645 U+062C",
+    "U+FD94": "U+006F U+0645 U+0645",
+    "U+FD95": "U+0646 U+062D U+0645",
+    "U+FD96": "U+0646 U+062D U+0649",
+    "U+FD97": "U+0646 U+062C U+0645",
+    "U+FD98": "U+0646 U+062C U+0645",
+    "U+FD99": "U+0646 U+062C U+0649",
+    "U+FD9A": "U+0646 U+0645 U+0649",
+    "U+FD9B": "U+0646 U+0645 U+0649",
+    "U+FD9C": "U+0649 U+0645 U+0645",
+    "U+FD9D": "U+0649 U+0645 U+0645",
+    "U+FD9E": "U+0628 U+062E U+0649",
+    "U+FD9F": "U+062A U+062C U+0649",
+    "U+FDA0": "U+062A U+062C U+0649",
+    "U+FDA1": "U+062A U+062E U+0649",
+    "U+FDA2": "U+062A U+062E U+0649",
+    "U+FDA3": "U+062A U+0645 U+0649",
+    "U+FDA4": "U+062A U+0645 U+0649",
+    "U+FDA5": "U+062C U+0645 U+0649",
+    "U+FDA6": "U+062C U+062D U+0649",
+    "U+FDA7": "U+062C U+0645 U+0649",
+    "U+FDA8": "U+0633 U+062E U+0649",
+    "U+FDA9": "U+0635 U+062D U+0649",
+    "U+FDAA": "U+0633 U+06DB U+062D U+0649",
+    "U+FDAB": "U+0636 U+062D U+0649",
+    "U+FDAC": "U+0644 U+062C U+0649",
+    "U+FDAD": "U+0644 U+0645 U+0649",
+    "U+FDAE": "U+0649 U+062D U+0649",
+    "U+FDAF": "U+0649 U+062C U+0649",
+    "U+FDB0": "U+0649 U+0645 U+0649",
+    "U+FDB1": "U+0645 U+0645 U+0649",
+    "U+FDB2": "U+0642 U+0645 U+0649",
+    "U+FDB3": "U+0646 U+062D U+0649",
+    "U+FDB4": "U+0642 U+0645 U+062D",
+    "U+FDB5": "U+0644 U+062D U+0645",
+    "U+FDB6": "U+0639 U+0645 U+0649",
+    "U+FDB7": "U+0643 U+0645 U+0649",
+    "U+FDB8": "U+0646 U+062C U+062D",
+    "U+FDB9": "U+0645 U+062E U+0649",
+    "U+FDBA": "U+0644 U+062C U+0645",
+    "U+FDBB": "U+0643 U+0645 U+0645",
+    "U+FDBC": "U+0644 U+062C U+0645",
+    "U+FDBD": "U+0646 U+062C U+062D",
+    "U+FDBE": "U+062C U+062D U+0649",
+    "U+FDBF": "U+062D U+062C U+0649",
+    "U+FDC0": "U+0645 U+062C U+0649",
+    "U+FDC1": "U+0641 U+0645 U+0649",
+    "U+FDC2": "U+0628 U+062D U+0649",
+    "U+FDC3": "U+0643 U+0645 U+0645",
+    "U+FDC4": "U+0639 U+062C U+0645",
+    "U+FDC5": "U+0635 U+0645 U+0645",
+    "U+FDC6": "U+0633 U+062E U+0649",
+    "U+FDC7": "U+0646 U+062C U+0649",
+    "U+FDF0": "U+0635 U+0644 U+0649",
+    "U+FDF1": "U+0642 U+0644 U+0649",
+    "U+FDF2": "U+006C U+0644 U+0644 U+0651 U+0670 U+006F",
+    "U+FDF3": "U+006C U+0643 U+0628 U+0631",
+    "U+FDF4": "U+0645 U+062D U+0645 U+062F",
+    "U+FDF5": "U+0635 U+0644 U+0639 U+0645",
+    "U+FDF6": "U+0631 U+0633 U+0648 U+0644",
+    "U+FDF7": "U+0639 U+0644 U+0649 U+006F",
+    "U+FDF8": "U+0648 U+0633 U+0644 U+0645",
+    "U+FDF9": "U+0635 U+0644 U+0649",
+    "U+FDFA": "U+0635 U+0644 U+0649 U+0020 U+006C U+0644 U+0644 U+006F U+0020 U+0639 U+0644 U+0649 U+006F U+0020 U+0648 U+0633 U+0644 U+0645",
+    "U+FDFB": "U+062C U+0644 U+0020 U+062C U+0644 U+006C U+0644 U+006F",
+    "U+FDFC": "U+0631 U+0649 U+006C U+0644",
+    "U+FE19": "U+2D57",
+    "U+FE30": "U+003A",
+    "U+FE31": "U+2502",
+    "U+FE34": "U+2307",
+    "U+FE35": "U+23DC",
+    "U+FE36": "U+23DD",
+    "U+FE37": "U+23DE",
+    "U+FE38": "U+23DF",
+    "U+FE39": "U+23E0",
+    "U+FE3A": "U+23E1",
+    "U+FE49": "U+02C9",
+    "U+FE4A": "U+02C9",
+    "U+FE4B": "U+02C9",
+    "U+FE4C": "U+02C9",
+    "U+FE4D": "U+005F",
+    "U+FE4E": "U+005F",
+    "U+FE4F": "U+005F",
+    "U+FE58": "U+002D",
+    "U+FE68": "U+005C",
+    "U+FE80": "U+0621",
+    "U+FE81": "U+0622",
+    "U+FE82": "U+0622",
+    "U+FE83": "U+006C U+0674",
+    "U+FE84": "U+006C U+0674",
+    "U+FE85": "U+0648 U+0674",
+    "U+FE86": "U+0648 U+0674",
+    "U+FE87": "U+006C U+0655",
+    "U+FE88": "U+006C U+0655",
+    "U+FE89": "U+0649 U+0674",
+    "U+FE8A": "U+0649 U+0674",
+    "U+FE8B": "U+0649 U+0674",
+    "U+FE8C": "U+0649 U+0674",
+    "U+FE8D": "U+006C",
+    "U+FE8E": "U+006C",
+    "U+FE8F": "U+0628",
+    "U+FE90": "U+0628",
+    "U+FE91": "U+0628",
+    "U+FE92": "U+0628",
+    "U+FE93": "U+0629",
+    "U+FE94": "U+0629",
+    "U+FE95": "U+062A",
+    "U+FE96": "U+062A",
+    "U+FE97": "U+062A",
+    "U+FE98": "U+062A",
+    "U+FE99": "U+0649 U+06DB",
+    "U+FE9A": "U+0649 U+06DB",
+    "U+FE9B": "U+0649 U+06DB",
+    "U+FE9C": "U+0649 U+06DB",
+    "U+FE9D": "U+062C",
+    "U+FE9E": "U+062C",
+    "U+FE9F": "U+062C",
+    "U+FEA0": "U+062C",
+    "U+FEA1": "U+062D",
+    "U+FEA2": "U+062D",
+    "U+FEA3": "U+062D",
+    "U+FEA4": "U+062D",
+    "U+FEA5": "U+062E",
+    "U+FEA6": "U+062E",
+    "U+FEA7": "U+062E",
+    "U+FEA8": "U+062E",
+    "U+FEA9": "U+062F",
+    "U+FEAA": "U+062F",
+    "U+FEAB": "U+0630",
+    "U+FEAC": "U+0630",
+    "U+FEAD": "U+0631",
+    "U+FEAE": "U+0631",
+    "U+FEAF": "U+0632",
+    "U+FEB0": "U+0632",
+    "U+FEB1": "U+0633",
+    "U+FEB2": "U+0633",
+    "U+FEB3": "U+0633",
+    "U+FEB4": "U+0633",
+    "U+FEB5": "U+0633 U+06DB",
+    "U+FEB6": "U+0633 U+06DB",
+    "U+FEB7": "U+0633 U+06DB",
+    "U+FEB8": "U+0633 U+06DB",
+    "U+FEB9": "U+0635",
+    "U+FEBA": "U+0635",
+    "U+FEBB": "U+0635",
+    "U+FEBC": "U+0635",
+    "U+FEBD": "U+0636",
+    "U+FEBE": "U+0636",
+    "U+FEBF": "U+0636",
+    "U+FEC0": "U+0636",
+    "U+FEC1": "U+0637",
+    "U+FEC2": "U+0637",
+    "U+FEC3": "U+0637",
+    "U+FEC4": "U+0637",
+    "U+FEC5": "U+0638",
+    "U+FEC6": "U+0638",
+    "U+FEC7": "U+0638",
+    "U+FEC8": "U+0638",
+    "U+FEC9": "U+0639",
+    "U+FECA": "U+0639",
+    "U+FECB": "U+0639",
+    "U+FECC": "U+0639",
+    "U+FECD": "U+063A",
+    "U+FECE": "U+063A",
+    "U+FECF": "U+063A",
+    "U+FED0": "U+063A",
+    "U+FED1": "U+0641",
+    "U+FED2": "U+0641",
+    "U+FED3": "U+0641",
+    "U+FED4": "U+0641",
+    "U+FED5": "U+0642",
+    "U+FED6": "U+0642",
+    "U+FED7": "U+0642",
+    "U+FED8": "U+0642",
+    "U+FED9": "U+0643",
+    "U+FEDA": "U+0643",
+    "U+FEDB": "U+0643",
+    "U+FEDC": "U+0643",
+    "U+FEDD": "U+0644",
+    "U+FEDE": "U+0644",
+    "U+FEDF": "U+0644",
+    "U+FEE0": "U+0644",
+    "U+FEE1": "U+0645",
+    "U+FEE2": "U+0645",
+    "U+FEE3": "U+0645",
+    "U+FEE4": "U+0645",
+    "U+FEE5": "U+0646",
+    "U+FEE6": "U+0646",
+    "U+FEE7": "U+0646",
+    "U+FEE8": "U+0646",
+    "U+FEE9": "U+006F",
+    "U+FEEA": "U+006F",
+    "U+FEEB": "U+006F",
+    "U+FEEC": "U+006F",
+    "U+FEED": "U+0648",
+    "U+FEEE": "U+0648",
+    "U+FEEF": "U+0649",
+    "U+FEF0": "U+0649",
+    "U+FEF1": "U+0649",
+    "U+FEF2": "U+0649",
+    "U+FEF3": "U+0649",
+    "U+FEF4": "U+0649",
+    "U+FEF5": "U+0644 U+0622",
+    "U+FEF6": "U+0644 U+0622",
+    "U+FEF7": "U+0644 U+006C U+0674",
+    "U+FEF8": "U+0644 U+006C U+0674",
+    "U+FEF9": "U+0644 U+006C U+0655",
+    "U+FEFA": "U+0644 U+006C U+0655",
+    "U+FEFB": "U+0644 U+006C",
+    "U+FEFC": "U+0644 U+006C",
+    "U+FF01": "U+0021",
+    "U+FF02": "U+0027 U+0027",
+    "U+FF07": "U+0027",
+    "U+FF0D": "U+30FC",
+    "U+FF1A": "U+003A",
+    "U+FF21": "U+0041",
+    "U+FF22": "U+0042",
+    "U+FF23": "U+0043",
+    "U+FF25": "U+0045",
+    "U+FF28": "U+0048",
+    "U+FF29": "U+006C",
+    "U+FF2A": "U+004A",
+    "U+FF2B": "U+004B",
+    "U+FF2D": "U+004D",
+    "U+FF2E": "U+004E",
+    "U+FF2F": "U+004F",
+    "U+FF30": "U+0050",
+    "U+FF33": "U+0053",
+    "U+FF34": "U+0054",
+    "U+FF38": "U+0058",
+    "U+FF39": "U+0059",
+    "U+FF3A": "U+005A",
+    "U+FF3B": "U+0028",
+    "U+FF3C": "U+005C",
+    "U+FF3D": "U+0029",
+    "U+FF3E": "U+FE3F",
+    "U+FF40": "U+0027",
+    "U+FF41": "U+0061",
+    "U+FF43": "U+0063",
+    "U+FF45": "U+0065",
+    "U+FF47": "U+0067",
+    "U+FF48": "U+0068",
+    "U+FF49": "U+0069",
+    "U+FF4A": "U+006A",
+    "U+FF4C": "U+006C",
+    "U+FF4F": "U+006F",
+    "U+FF50": "U+0070",
+    "U+FF53": "U+0073",
+    "U+FF56": "U+0076",
+    "U+FF58": "U+0078",
+    "U+FF59": "U+0079",
+    "U+FF5C": "U+2502",
+    "U+FF5E": "U+301C",
+    "U+FF65": "U+00B7",
+    "U+FFE3": "U+02C9",
+    "U+FFE8": "U+006C",
+    "U+FFED": "U+25AA",
+    "U+10101": "U+00B7",
+    "U+1018E": "U+004E U+030A",
+    "U+10196": "U+0058 U+0335",
+    "U+10197": "U+0056 U+0335",
+    "U+10198": "U+006C U+0335 U+006C U+0335 U+0053 U+0335",
+    "U+10199": "U+006C U+0335 U+006C U+0335",
+    "U+101A0": "U+0554",
+    "U+10282": "U+0042",
+    "U+10285": "U+0394",
+    "U+10286": "U+0045",
+    "U+10287": "U+0046",
+    "U+1028A": "U+006C",
+    "U+1028D": "U+0245",
+    "U+10290": "U+0058",
+    "U+10292": "U+004F",
+    "U+10294": "U+16DC",
+    "U+10295": "U+0050",
+    "U+10296": "U+0053",
+    "U+10297": "U+0054",
+    "U+1029B": "U+002B",
+    "U+102A0": "U+0041",
+    "U+102A1": "U+0042",
+    "U+102A2": "U+0043",
+    "U+102A3": "U+0394",
+    "U+102A5": "U+0046",
+    "U+102AB": "U+004F",
+    "U+102AD": "U+03D8",
+    "U+102B0": "U+004D",
+    "U+102B1": "U+0054",
+    "U+102B2": "U+0059",
+    "U+102B3": "U+03A6",
+    "U+102B4": "U+0058",
+    "U+102B5": "U+03A8",
+    "U+102B6": "U+03A9",
+    "U+102B8": "U+2D40",
+    "U+102CF": "U+0048",
+    "U+102E1": "U+062F",
+    "U+102E4": "U+0648",
+    "U+102E8": "U+0637",
+    "U+102F2": "U+0635",
+    "U+102F5": "U+005A",
+    "U+10301": "U+0042",
+    "U+10302": "U+0043",
+    "U+10309": "U+006C",
+    "U+10311": "U+004D",
+    "U+10312": "U+03D8",
+    "U+10315": "U+0054",
+    "U+10317": "U+0058",
+    "U+1031A": "U+0038",
+    "U+1031F": "U+002A",
+    "U+10320": "U+006C",
+    "U+10322": "U+0058",
+    "U+103D1": "U+10382",
+    "U+103D3": "U+10393",
+    "U+10401": "U+0190",
+    "U+10404": "U+004F",
+    "U+10411": "U+A4F6",
+    "U+10415": "U+0043",
+    "U+1041B": "U+004C",
+    "U+1041F": "U+2C70",
+    "U+10420": "U+0053",
+    "U+10423": "U+0186",
+    "U+10425": "U+0418",
+    "U+10429": "U+A793",
+    "U+1042A": "U+029A",
+    "U+1042C": "U+006F",
+    "U+1043D": "U+0063",
+    "U+1043F": "U+0277",
+    "U+10442": "U+025E",
+    "U+10443": "U+029F",
+    "U+10448": "U+0073",
+    "U+1044B": "U+0254",
+    "U+1044D": "U+1D0E",
+    "U+104A0": "U+10486",
+    "U+104B0": "U+0245",
+    "U+104B4": "U+0052",
+    "U+104BC": "U+04C3",
+    "U+104C2": "U+004F",
+    "U+104C3": "U+0298",
+    "U+104C4": "U+00DE",
+    "U+104CD": "U+040B",
+    "U+104CE": "U+0055",
+    "U+104D0": "U+16E6",
+    "U+104D1": "U+03A8",
+    "U+104D2": "U+0037",
+    "U+104D8": "U+028C",
+    "U+104DB": "U+03BB",
+    "U+104EA": "U+006F",
+    "U+104EB": "U+A669",
+    "U+104F6": "U+0075",
+    "U+104F9": "U+03C8",
+    "U+10513": "U+004E",
+    "U+10516": "U+004F",
+    "U+10518": "U+004B",
+    "U+1051C": "U+0043",
+    "U+1051D": "U+0056",
+    "U+10525": "U+0046",
+    "U+10526": "U+004C",
+    "U+10527": "U+0058",
+    "U+10A3A": "U+0323",
+    "U+10A50": "U+002E",
+    "U+10A57": "U+10A56 U+10A56",
+    "U+10CFA": "U+10CA5",
+    "U+10CFC": "U+10C82",
+    "U+10EC6": "U+0646",
+    "U+10EC7": "U+0680",
+    "U+10ED0": "U+00B0 U+0332",
+    "U+110BB": "U+0970",
+    "U+111C7": "U+0970",
+    "U+111CA": "U+0323",
+    "U+111CB": "U+093A",
+    "U+111DB": "U+A8FC",
+    "U+111DC": "U+A8FB",
+    "U+111DE": "U+2248",
+    "U+11300": "U+030A",
+    "U+11413": "U+11434 U+11442 U+11412",
+    "U+11419": "U+11434 U+11442 U+11418",
+    "U+11424": "U+11434 U+11442 U+11423",
+    "U+1142A": "U+11434 U+11442 U+11429",
+    "U+1142D": "U+11434 U+11442 U+1142C",
+    "U+1142F": "U+11434 U+11442 U+1142E",
+    "U+1144C": "U+1144B U+1144B",
+    "U+11492": "U+0998",
+    "U+11494": "U+099A",
+    "U+11496": "U+099C",
+    "U+11498": "U+099E",
+    "U+11499": "U+099F",
+    "U+1149B": "U+09A1",
+    "U+1149D": "U+09B2",
+    "U+1149E": "U+09A4",
+    "U+1149F": "U+09A5",
+    "U+114A0": "U+09A6",
+    "U+114A1": "U+09A7",
+    "U+114A2": "U+09A8",
+    "U+114A3": "U+09AA",
+    "U+114A7": "U+09AE",
+    "U+114A8": "U+09AF",
+    "U+114A9": "U+09AC",
+    "U+114AA": "U+09A3",
+    "U+114AB": "U+09B0",
+    "U+114AD": "U+09B7",
+    "U+114AE": "U+09B8",
+    "U+114B0": "U+09BE",
+    "U+114B1": "U+09BF",
+    "U+114B9": "U+09C7",
+    "U+114BC": "U+09CB",
+    "U+114BD": "U+09D7",
+    "U+114BE": "U+09CC",
+    "U+114BF": "U+0306 U+0307",
+    "U+114C1": "U+0983",
+    "U+114C2": "U+09CD",
+    "U+114C3": "U+0323",
+    "U+114C4": "U+09BD",
+    "U+114C5": "U+0077 U+0307",
+    "U+114D0": "U+006F",
+    "U+114D1": "U+09E7",
+    "U+114D2": "U+09E8",
+    "U+114D6": "U+09EC",
+    "U+115D8": "U+11582",
+    "U+115D9": "U+11582",
+    "U+115DA": "U+11583",
+    "U+115DB": "U+11584",
+    "U+115DC": "U+115B2",
+    "U+115DD": "U+115B3",
+    "U+11642": "U+11641 U+11641",
+    "U+11700": "U+0072 U+006E",
+    "U+11706": "U+0076",
+    "U+1170A": "U+0077",
+    "U+1170E": "U+0077",
+    "U+1170F": "U+0077",
+    "U+118A0": "U+0056",
+    "U+118A2": "U+0046",
+    "U+118A3": "U+004C",
+    "U+118A4": "U+0059",
+    "U+118A6": "U+0045",
+    "U+118A8": "U+2207",
+    "U+118A9": "U+005A",
+    "U+118AC": "U+0039",
+    "U+118AE": "U+0045",
+    "U+118AF": "U+0034",
+    "U+118B2": "U+004C",
+    "U+118B5": "U+004F",
+    "U+118B7": "U+16DC",
+    "U+118B8": "U+0055",
+    "U+118BB": "U+0035",
+    "U+118BC": "U+0054",
+    "U+118C0": "U+0076",
+    "U+118C1": "U+0073",
+    "U+118C2": "U+0046",
+    "U+118C3": "U+0069",
+    "U+118C4": "U+007A",
+    "U+118C6": "U+0037",
+    "U+118C8": "U+006F",
+    "U+118CA": "U+0033",
+    "U+118CC": "U+0039",
+    "U+118CE": "U+A793",
+    "U+118D5": "U+0036",
+    "U+118D6": "U+0039",
+    "U+118D7": "U+006F",
+    "U+118D8": "U+0075",
+    "U+118DC": "U+0079",
+    "U+118E0": "U+004F",
+    "U+118E3": "U+0072 U+006E",
+    "U+118E4": "U+0669",
+    "U+118E5": "U+005A",
+    "U+118E6": "U+0057",
+    "U+118E9": "U+0043",
+    "U+118EC": "U+0058",
+    "U+118EF": "U+0057",
+    "U+118F2": "U+0043",
+    "U+11AE6": "U+11AE5 U+11AEF",
+    "U+11AE7": "U+11AE5 U+11AF0",
+    "U+11AE8": "U+11AE5 U+11AE5",
+    "U+11AE9": "U+11AE5 U+11AE5 U+11AEF",
+    "U+11AEA": "U+11AE5 U+11AE5 U+11AF0",
+    "U+11AEC": "U+11AEB U+11AEF",
+    "U+11AED": "U+11AEB U+11AEB",
+    "U+11AEE": "U+11AEB U+11AEB U+11AEF",
+    "U+11AF4": "U+11AF3 U+11AEF",
+    "U+11AF5": "U+11AF3 U+11AF0",
+    "U+11AF6": "U+11AF3 U+11AF3",
+    "U+11AF7": "U+11AF3 U+11AF3 U+11AEF",
+    "U+11AF8": "U+11AF3 U+11AF3 U+11AF0",
+    "U+11B60": "U+093A",
+    "U+11B66": "U+0306",
+    "U+11C42": "U+11C41 U+11C41",
+    "U+11CB2": "U+11CAA",
+    "U+11DD9": "U+003A",
+    "U+11DDA": "U+006C",
+    "U+11DE0": "U+004F",
+    "U+11DE1": "U+006C",
+    "U+12038": "U+1039A",
+    "U+132F9": "U+1099E",
+    "U+16EA6": "U+03A0",
+    "U+16EAA": "U+006C",
+    "U+16EB6": "U+0062",
+    "U+16EC1": "U+03C0",
+    "U+16ED1": "U+0185",
+    "U+16F07": "U+0393",
+    "U+16F08": "U+0056",
+    "U+16F0A": "U+0054",
+    "U+16F16": "U+004C",
+    "U+16F1A": "U+0394",
+    "U+16F1C": "U+A658",
+    "U+16F26": "U+A4F6",
+    "U+16F28": "U+006C",
+    "U+16F2D": "U+0190",
+    "U+16F35": "U+0052",
+    "U+16F3A": "U+0053",
+    "U+16F3B": "U+0033",
+    "U+16F3D": "U+0245",
+    "U+16F3F": "U+003E",
+    "U+16F40": "U+0041",
+    "U+16F42": "U+0055",
+    "U+16F43": "U+0059",
+    "U+16F51": "U+0027",
+    "U+16F52": "U+0027",
+    "U+16FF2": "U+513F",
+    "U+1CCD6": "U+0041",
+    "U+1CCD7": "U+0042",
+    "U+1CCD8": "U+0043",
+    "U+1CCD9": "U+0044",
+    "U+1CCDA": "U+0045",
+    "U+1CCDB": "U+0046",
+    "U+1CCDC": "U+0047",
+    "U+1CCDD": "U+0048",
+    "U+1CCDE": "U+006C",
+    "U+1CCDF": "U+004A",
+    "U+1CCE0": "U+004B",
+    "U+1CCE1": "U+004C",
+    "U+1CCE2": "U+004D",
+    "U+1CCE3": "U+004E",
+    "U+1CCE4": "U+004F",
+    "U+1CCE5": "U+0050",
+    "U+1CCE6": "U+0051",
+    "U+1CCE7": "U+0052",
+    "U+1CCE8": "U+0053",
+    "U+1CCE9": "U+0054",
+    "U+1CCEA": "U+0055",
+    "U+1CCEB": "U+0056",
+    "U+1CCEC": "U+0057",
+    "U+1CCED": "U+0058",
+    "U+1CCEE": "U+0059",
+    "U+1CCEF": "U+005A",
+    "U+1CCF0": "U+004F",
+    "U+1CCF1": "U+006C",
+    "U+1CCF2": "U+0032",
+    "U+1CCF3": "U+0033",
+    "U+1CCF4": "U+0034",
+    "U+1CCF5": "U+0035",
+    "U+1CCF6": "U+0036",
+    "U+1CCF7": "U+0037",
+    "U+1CCF8": "U+0038",
+    "U+1CCF9": "U+0039",
+    "U+1CCFB": "U+1F6F8",
+    "U+1CEEF": "U+2D42",
+    "U+1D114": "U+007B",
+    "U+1D16D": "U+002E",
+    "U+1D202": "U+04FE",
+    "U+1D206": "U+0033",
+    "U+1D20B": "U+0418",
+    "U+1D20D": "U+0056",
+    "U+1D20F": "U+005C",
+    "U+1D212": "U+0037",
+    "U+1D213": "U+0046",
+    "U+1D214": "U+102BC",
+    "U+1D215": "U+A4F6",
+    "U+1D216": "U+0052",
+    "U+1D217": "U+2C6F",
+    "U+1D21A": "U+004F U+0335",
+    "U+1D21B": "U+2144",
+    "U+1D21C": "U+A4D5",
+    "U+1D221": "U+0190",
+    "U+1D222": "U+0460",
+    "U+1D22A": "U+004C",
+    "U+1D22B": "U+A4F6",
+    "U+1D230": "U+A7FB",
+    "U+1D236": "U+003C",
+    "U+1D237": "U+003E",
+    "U+1D238": "U+228F",
+    "U+1D239": "U+2290",
+    "U+1D23A": "U+002F",
+    "U+1D23B": "U+005C",
+    "U+1D23F": "U+16CB",
+    "U+1D245": "U+0548",
+    "U+1D400": "U+0041",
+    "U+1D401": "U+0042",
+    "U+1D402": "U+0043",
+    "U+1D403": "U+0044",
+    "U+1D404": "U+0045",
+    "U+1D405": "U+0046",
+    "U+1D406": "U+0047",
+    "U+1D407": "U+0048",
+    "U+1D408": "U+006C",
+    "U+1D409": "U+004A",
+    "U+1D40A": "U+004B",
+    "U+1D40B": "U+004C",
+    "U+1D40C": "U+004D",
+    "U+1D40D": "U+004E",
+    "U+1D40E": "U+004F",
+    "U+1D40F": "U+0050",
+    "U+1D410": "U+0051",
+    "U+1D411": "U+0052",
+    "U+1D412": "U+0053",
+    "U+1D413": "U+0054",
+    "U+1D414": "U+0055",
+    "U+1D415": "U+0056",
+    "U+1D416": "U+0057",
+    "U+1D417": "U+0058",
+    "U+1D418": "U+0059",
+    "U+1D419": "U+005A",
+    "U+1D41A": "U+0061",
+    "U+1D41B": "U+0062",
+    "U+1D41C": "U+0063",
+    "U+1D41D": "U+0064",
+    "U+1D41E": "U+0065",
+    "U+1D41F": "U+0066",
+    "U+1D420": "U+0067",
+    "U+1D421": "U+0068",
+    "U+1D422": "U+0069",
+    "U+1D423": "U+006A",
+    "U+1D424": "U+006B",
+    "U+1D425": "U+006C",
+    "U+1D426": "U+0072 U+006E",
+    "U+1D427": "U+006E",
+    "U+1D428": "U+006F",
+    "U+1D429": "U+0070",
+    "U+1D42A": "U+0071",
+    "U+1D42B": "U+0072",
+    "U+1D42C": "U+0073",
+    "U+1D42D": "U+0074",
+    "U+1D42E": "U+0075",
+    "U+1D42F": "U+0076",
+    "U+1D430": "U+0077",
+    "U+1D431": "U+0078",
+    "U+1D432": "U+0079",
+    "U+1D433": "U+007A",
+    "U+1D434": "U+0041",
+    "U+1D435": "U+0042",
+    "U+1D436": "U+0043",
+    "U+1D437": "U+0044",
+    "U+1D438": "U+0045",
+    "U+1D439": "U+0046",
+    "U+1D43A": "U+0047",
+    "U+1D43B": "U+0048",
+    "U+1D43C": "U+006C",
+    "U+1D43D": "U+004A",
+    "U+1D43E": "U+004B",
+    "U+1D43F": "U+004C",
+    "U+1D440": "U+004D",
+    "U+1D441": "U+004E",
+    "U+1D442": "U+004F",
+    "U+1D443": "U+0050",
+    "U+1D444": "U+0051",
+    "U+1D445": "U+0052",
+    "U+1D446": "U+0053",
+    "U+1D447": "U+0054",
+    "U+1D448": "U+0055",
+    "U+1D449": "U+0056",
+    "U+1D44A": "U+0057",
+    "U+1D44B": "U+0058",
+    "U+1D44C": "U+0059",
+    "U+1D44D": "U+005A",
+    "U+1D44E": "U+0061",
+    "U+1D44F": "U+0062",
+    "U+1D450": "U+0063",
+    "U+1D451": "U+0064",
+    "U+1D452": "U+0065",
+    "U+1D453": "U+0066",
+    "U+1D454": "U+0067",
+    "U+1D456": "U+0069",
+    "U+1D457": "U+006A",
+    "U+1D458": "U+006B",
+    "U+1D459": "U+006C",
+    "U+1D45A": "U+0072 U+006E",
+    "U+1D45B": "U+006E",
+    "U+1D45C": "U+006F",
+    "U+1D45D": "U+0070",
+    "U+1D45E": "U+0071",
+    "U+1D45F": "U+0072",
+    "U+1D460": "U+0073",
+    "U+1D461": "U+0074",
+    "U+1D462": "U+0075",
+    "U+1D463": "U+0076",
+    "U+1D464": "U+0077",
+    "U+1D465": "U+0078",
+    "U+1D466": "U+0079",
+    "U+1D467": "U+007A",
+    "U+1D468": "U+0041",
+    "U+1D469": "U+0042",
+    "U+1D46A": "U+0043",
+    "U+1D46B": "U+0044",
+    "U+1D46C": "U+0045",
+    "U+1D46D": "U+0046",
+    "U+1D46E": "U+0047",
+    "U+1D46F": "U+0048",
+    "U+1D470": "U+006C",
+    "U+1D471": "U+004A",
+    "U+1D472": "U+004B",
+    "U+1D473": "U+004C",
+    "U+1D474": "U+004D",
+    "U+1D475": "U+004E",
+    "U+1D476": "U+004F",
+    "U+1D477": "U+0050",
+    "U+1D478": "U+0051",
+    "U+1D479": "U+0052",
+    "U+1D47A": "U+0053",
+    "U+1D47B": "U+0054",
+    "U+1D47C": "U+0055",
+    "U+1D47D": "U+0056",
+    "U+1D47E": "U+0057",
+    "U+1D47F": "U+0058",
+    "U+1D480": "U+0059",
+    "U+1D481": "U+005A",
+    "U+1D482": "U+0061",
+    "U+1D483": "U+0062",
+    "U+1D484": "U+0063",
+    "U+1D485": "U+0064",
+    "U+1D486": "U+0065",
+    "U+1D487": "U+0066",
+    "U+1D488": "U+0067",
+    "U+1D489": "U+0068",
+    "U+1D48A": "U+0069",
+    "U+1D48B": "U+006A",
+    "U+1D48C": "U+006B",
+    "U+1D48D": "U+006C",
+    "U+1D48E": "U+0072 U+006E",
+    "U+1D48F": "U+006E",
+    "U+1D490": "U+006F",
+    "U+1D491": "U+0070",
+    "U+1D492": "U+0071",
+    "U+1D493": "U+0072",
+    "U+1D494": "U+0073",
+    "U+1D495": "U+0074",
+    "U+1D496": "U+0075",
+    "U+1D497": "U+0076",
+    "U+1D498": "U+0077",
+    "U+1D499": "U+0078",
+    "U+1D49A": "U+0079",
+    "U+1D49B": "U+007A",
+    "U+1D49C": "U+0041",
+    "U+1D49E": "U+0043",
+    "U+1D49F": "U+0044",
+    "U+1D4A2": "U+0047",
+    "U+1D4A5": "U+004A",
+    "U+1D4A6": "U+004B",
+    "U+1D4A9": "U+004E",
+    "U+1D4AA": "U+004F",
+    "U+1D4AB": "U+0050",
+    "U+1D4AC": "U+0051",
+    "U+1D4AE": "U+0053",
+    "U+1D4AF": "U+0054",
+    "U+1D4B0": "U+0055",
+    "U+1D4B1": "U+0056",
+    "U+1D4B2": "U+0057",
+    "U+1D4B3": "U+0058",
+    "U+1D4B4": "U+0059",
+    "U+1D4B5": "U+005A",
+    "U+1D4B6": "U+0061",
+    "U+1D4B7": "U+0062",
+    "U+1D4B8": "U+0063",
+    "U+1D4B9": "U+0064",
+    "U+1D4BB": "U+0066",
+    "U+1D4BD": "U+0068",
+    "U+1D4BE": "U+0069",
+    "U+1D4BF": "U+006A",
+    "U+1D4C0": "U+006B",
+    "U+1D4C1": "U+006C",
+    "U+1D4C2": "U+0072 U+006E",
+    "U+1D4C3": "U+006E",
+    "U+1D4C5": "U+0070",
+    "U+1D4C6": "U+0071",
+    "U+1D4C7": "U+0072",
+    "U+1D4C8": "U+0073",
+    "U+1D4C9": "U+0074",
+    "U+1D4CA": "U+0075",
+    "U+1D4CB": "U+0076",
+    "U+1D4CC": "U+0077",
+    "U+1D4CD": "U+0078",
+    "U+1D4CE": "U+0079",
+    "U+1D4CF": "U+007A",
+    "U+1D4D0": "U+0041",
+    "U+1D4D1": "U+0042",
+    "U+1D4D2": "U+0043",
+    "U+1D4D3": "U+0044",
+    "U+1D4D4": "U+0045",
+    "U+1D4D5": "U+0046",
+    "U+1D4D6": "U+0047",
+    "U+1D4D7": "U+0048",
+    "U+1D4D8": "U+006C",
+    "U+1D4D9": "U+004A",
+    "U+1D4DA": "U+004B",
+    "U+1D4DB": "U+004C",
+    "U+1D4DC": "U+004D",
+    "U+1D4DD": "U+004E",
+    "U+1D4DE": "U+004F",
+    "U+1D4DF": "U+0050",
+    "U+1D4E0": "U+0051",
+    "U+1D4E1": "U+0052",
+    "U+1D4E2": "U+0053",
+    "U+1D4E3": "U+0054",
+    "U+1D4E4": "U+0055",
+    "U+1D4E5": "U+0056",
+    "U+1D4E6": "U+0057",
+    "U+1D4E7": "U+0058",
+    "U+1D4E8": "U+0059",
+    "U+1D4E9": "U+005A",
+    "U+1D4EA": "U+0061",
+    "U+1D4EB": "U+0062",
+    "U+1D4EC": "U+0063",
+    "U+1D4ED": "U+0064",
+    "U+1D4EE": "U+0065",
+    "U+1D4EF": "U+0066",
+    "U+1D4F0": "U+0067",
+    "U+1D4F1": "U+0068",
+    "U+1D4F2": "U+0069",
+    "U+1D4F3": "U+006A",
+    "U+1D4F4": "U+006B",
+    "U+1D4F5": "U+006C",
+    "U+1D4F6": "U+0072 U+006E",
+    "U+1D4F7": "U+006E",
+    "U+1D4F8": "U+006F",
+    "U+1D4F9": "U+0070",
+    "U+1D4FA": "U+0071",
+    "U+1D4FB": "U+0072",
+    "U+1D4FC": "U+0073",
+    "U+1D4FD": "U+0074",
+    "U+1D4FE": "U+0075",
+    "U+1D4FF": "U+0076",
+    "U+1D500": "U+0077",
+    "U+1D501": "U+0078",
+    "U+1D502": "U+0079",
+    "U+1D503": "U+007A",
+    "U+1D504": "U+0041",
+    "U+1D505": "U+0042",
+    "U+1D507": "U+0044",
+    "U+1D508": "U+0045",
+    "U+1D509": "U+0046",
+    "U+1D50A": "U+0047",
+    "U+1D50D": "U+004A",
+    "U+1D50E": "U+004B",
+    "U+1D50F": "U+004C",
+    "U+1D510": "U+004D",
+    "U+1D511": "U+004E",
+    "U+1D512": "U+004F",
+    "U+1D513": "U+0050",
+    "U+1D514": "U+0051",
+    "U+1D516": "U+0053",
+    "U+1D517": "U+0054",
+    "U+1D518": "U+0055",
+    "U+1D519": "U+0056",
+    "U+1D51A": "U+0057",
+    "U+1D51B": "U+0058",
+    "U+1D51C": "U+0059",
+    "U+1D51E": "U+0061",
+    "U+1D51F": "U+0062",
+    "U+1D520": "U+0063",
+    "U+1D521": "U+0064",
+    "U+1D522": "U+0065",
+    "U+1D523": "U+0066",
+    "U+1D524": "U+0067",
+    "U+1D525": "U+0068",
+    "U+1D526": "U+0069",
+    "U+1D527": "U+006A",
+    "U+1D528": "U+006B",
+    "U+1D529": "U+006C",
+    "U+1D52A": "U+0072 U+006E",
+    "U+1D52B": "U+006E",
+    "U+1D52C": "U+006F",
+    "U+1D52D": "U+0070",
+    "U+1D52E": "U+0071",
+    "U+1D52F": "U+0072",
+    "U+1D530": "U+0073",
+    "U+1D531": "U+0074",
+    "U+1D532": "U+0075",
+    "U+1D533": "U+0076",
+    "U+1D534": "U+0077",
+    "U+1D535": "U+0078",
+    "U+1D536": "U+0079",
+    "U+1D537": "U+007A",
+    "U+1D538": "U+0041",
+    "U+1D539": "U+0042",
+    "U+1D53B": "U+0044",
+    "U+1D53C": "U+0045",
+    "U+1D53D": "U+0046",
+    "U+1D53E": "U+0047",
+    "U+1D540": "U+006C",
+    "U+1D541": "U+004A",
+    "U+1D542": "U+004B",
+    "U+1D543": "U+004C",
+    "U+1D544": "U+004D",
+    "U+1D546": "U+004F",
+    "U+1D54A": "U+0053",
+    "U+1D54B": "U+0054",
+    "U+1D54C": "U+0055",
+    "U+1D54D": "U+0056",
+    "U+1D54E": "U+0057",
+    "U+1D54F": "U+0058",
+    "U+1D550": "U+0059",
+    "U+1D552": "U+0061",
+    "U+1D553": "U+0062",
+    "U+1D554": "U+0063",
+    "U+1D555": "U+0064",
+    "U+1D556": "U+0065",
+    "U+1D557": "U+0066",
+    "U+1D558": "U+0067",
+    "U+1D559": "U+0068",
+    "U+1D55A": "U+0069",
+    "U+1D55B": "U+006A",
+    "U+1D55C": "U+006B",
+    "U+1D55D": "U+006C",
+    "U+1D55E": "U+0072 U+006E",
+    "U+1D55F": "U+006E",
+    "U+1D560": "U+006F",
+    "U+1D561": "U+0070",
+    "U+1D562": "U+0071",
+    "U+1D563": "U+0072",
+    "U+1D564": "U+0073",
+    "U+1D565": "U+0074",
+    "U+1D566": "U+0075",
+    "U+1D567": "U+0076",
+    "U+1D568": "U+0077",
+    "U+1D569": "U+0078",
+    "U+1D56A": "U+0079",
+    "U+1D56B": "U+007A",
+    "U+1D56C": "U+0041",
+    "U+1D56D": "U+0042",
+    "U+1D56E": "U+0043",
+    "U+1D56F": "U+0044",
+    "U+1D570": "U+0045",
+    "U+1D571": "U+0046",
+    "U+1D572": "U+0047",
+    "U+1D573": "U+0048",
+    "U+1D574": "U+006C",
+    "U+1D575": "U+004A",
+    "U+1D576": "U+004B",
+    "U+1D577": "U+004C",
+    "U+1D578": "U+004D",
+    "U+1D579": "U+004E",
+    "U+1D57A": "U+004F",
+    "U+1D57B": "U+0050",
+    "U+1D57C": "U+0051",
+    "U+1D57D": "U+0052",
+    "U+1D57E": "U+0053",
+    "U+1D57F": "U+0054",
+    "U+1D580": "U+0055",
+    "U+1D581": "U+0056",
+    "U+1D582": "U+0057",
+    "U+1D583": "U+0058",
+    "U+1D584": "U+0059",
+    "U+1D585": "U+005A",
+    "U+1D586": "U+0061",
+    "U+1D587": "U+0062",
+    "U+1D588": "U+0063",
+    "U+1D589": "U+0064",
+    "U+1D58A": "U+0065",
+    "U+1D58B": "U+0066",
+    "U+1D58C": "U+0067",
+    "U+1D58D": "U+0068",
+    "U+1D58E": "U+0069",
+    "U+1D58F": "U+006A",
+    "U+1D590": "U+006B",
+    "U+1D591": "U+006C",
+    "U+1D592": "U+0072 U+006E",
+    "U+1D593": "U+006E",
+    "U+1D594": "U+006F",
+    "U+1D595": "U+0070",
+    "U+1D596": "U+0071",
+    "U+1D597": "U+0072",
+    "U+1D598": "U+0073",
+    "U+1D599": "U+0074",
+    "U+1D59A": "U+0075",
+    "U+1D59B": "U+0076",
+    "U+1D59C": "U+0077",
+    "U+1D59D": "U+0078",
+    "U+1D59E": "U+0079",
+    "U+1D59F": "U+007A",
+    "U+1D5A0": "U+0041",
+    "U+1D5A1": "U+0042",
+    "U+1D5A2": "U+0043",
+    "U+1D5A3": "U+0044",
+    "U+1D5A4": "U+0045",
+    "U+1D5A5": "U+0046",
+    "U+1D5A6": "U+0047",
+    "U+1D5A7": "U+0048",
+    "U+1D5A8": "U+006C",
+    "U+1D5A9": "U+004A",
+    "U+1D5AA": "U+004B",
+    "U+1D5AB": "U+004C",
+    "U+1D5AC": "U+004D",
+    "U+1D5AD": "U+004E",
+    "U+1D5AE": "U+004F",
+    "U+1D5AF": "U+0050",
+    "U+1D5B0": "U+0051",
+    "U+1D5B1": "U+0052",
+    "U+1D5B2": "U+0053",
+    "U+1D5B3": "U+0054",
+    "U+1D5B4": "U+0055",
+    "U+1D5B5": "U+0056",
+    "U+1D5B6": "U+0057",
+    "U+1D5B7": "U+0058",
+    "U+1D5B8": "U+0059",
+    "U+1D5B9": "U+005A",
+    "U+1D5BA": "U+0061",
+    "U+1D5BB": "U+0062",
+    "U+1D5BC": "U+0063",
+    "U+1D5BD": "U+0064",
+    "U+1D5BE": "U+0065",
+    "U+1D5BF": "U+0066",
+    "U+1D5C0": "U+0067",
+    "U+1D5C1": "U+0068",
+    "U+1D5C2": "U+0069",
+    "U+1D5C3": "U+006A",
+    "U+1D5C4": "U+006B",
+    "U+1D5C5": "U+006C",
+    "U+1D5C6": "U+0072 U+006E",
+    "U+1D5C7": "U+006E",
+    "U+1D5C8": "U+006F",
+    "U+1D5C9": "U+0070",
+    "U+1D5CA": "U+0071",
+    "U+1D5CB": "U+0072",
+    "U+1D5CC": "U+0073",
+    "U+1D5CD": "U+0074",
+    "U+1D5CE": "U+0075",
+    "U+1D5CF": "U+0076",
+    "U+1D5D0": "U+0077",
+    "U+1D5D1": "U+0078",
+    "U+1D5D2": "U+0079",
+    "U+1D5D3": "U+007A",
+    "U+1D5D4": "U+0041",
+    "U+1D5D5": "U+0042",
+    "U+1D5D6": "U+0043",
+    "U+1D5D7": "U+0044",
+    "U+1D5D8": "U+0045",
+    "U+1D5D9": "U+0046",
+    "U+1D5DA": "U+0047",
+    "U+1D5DB": "U+0048",
+    "U+1D5DC": "U+006C",
+    "U+1D5DD": "U+004A",
+    "U+1D5DE": "U+004B",
+    "U+1D5DF": "U+004C",
+    "U+1D5E0": "U+004D",
+    "U+1D5E1": "U+004E",
+    "U+1D5E2": "U+004F",
+    "U+1D5E3": "U+0050",
+    "U+1D5E4": "U+0051",
+    "U+1D5E5": "U+0052",
+    "U+1D5E6": "U+0053",
+    "U+1D5E7": "U+0054",
+    "U+1D5E8": "U+0055",
+    "U+1D5E9": "U+0056",
+    "U+1D5EA": "U+0057",
+    "U+1D5EB": "U+0058",
+    "U+1D5EC": "U+0059",
+    "U+1D5ED": "U+005A",
+    "U+1D5EE": "U+0061",
+    "U+1D5EF": "U+0062",
+    "U+1D5F0": "U+0063",
+    "U+1D5F1": "U+0064",
+    "U+1D5F2": "U+0065",
+    "U+1D5F3": "U+0066",
+    "U+1D5F4": "U+0067",
+    "U+1D5F5": "U+0068",
+    "U+1D5F6": "U+0069",
+    "U+1D5F7": "U+006A",
+    "U+1D5F8": "U+006B",
+    "U+1D5F9": "U+006C",
+    "U+1D5FA": "U+0072 U+006E",
+    "U+1D5FB": "U+006E",
+    "U+1D5FC": "U+006F",
+    "U+1D5FD": "U+0070",
+    "U+1D5FE": "U+0071",
+    "U+1D5FF": "U+0072",
+    "U+1D600": "U+0073",
+    "U+1D601": "U+0074",
+    "U+1D602": "U+0075",
+    "U+1D603": "U+0076",
+    "U+1D604": "U+0077",
+    "U+1D605": "U+0078",
+    "U+1D606": "U+0079",
+    "U+1D607": "U+007A",
+    "U+1D608": "U+0041",
+    "U+1D609": "U+0042",
+    "U+1D60A": "U+0043",
+    "U+1D60B": "U+0044",
+    "U+1D60C": "U+0045",
+    "U+1D60D": "U+0046",
+    "U+1D60E": "U+0047",
+    "U+1D60F": "U+0048",
+    "U+1D610": "U+006C",
+    "U+1D611": "U+004A",
+    "U+1D612": "U+004B",
+    "U+1D613": "U+004C",
+    "U+1D614": "U+004D",
+    "U+1D615": "U+004E",
+    "U+1D616": "U+004F",
+    "U+1D617": "U+0050",
+    "U+1D618": "U+0051",
+    "U+1D619": "U+0052",
+    "U+1D61A": "U+0053",
+    "U+1D61B": "U+0054",
+    "U+1D61C": "U+0055",
+    "U+1D61D": "U+0056",
+    "U+1D61E": "U+0057",
+    "U+1D61F": "U+0058",
+    "U+1D620": "U+0059",
+    "U+1D621": "U+005A",
+    "U+1D622": "U+0061",
+    "U+1D623": "U+0062",
+    "U+1D624": "U+0063",
+    "U+1D625": "U+0064",
+    "U+1D626": "U+0065",
+    "U+1D627": "U+0066",
+    "U+1D628": "U+0067",
+    "U+1D629": "U+0068",
+    "U+1D62A": "U+0069",
+    "U+1D62B": "U+006A",
+    "U+1D62C": "U+006B",
+    "U+1D62D": "U+006C",
+    "U+1D62E": "U+0072 U+006E",
+    "U+1D62F": "U+006E",
+    "U+1D630": "U+006F",
+    "U+1D631": "U+0070",
+    "U+1D632": "U+0071",
+    "U+1D633": "U+0072",
+    "U+1D634": "U+0073",
+    "U+1D635": "U+0074",
+    "U+1D636": "U+0075",
+    "U+1D637": "U+0076",
+    "U+1D638": "U+0077",
+    "U+1D639": "U+0078",
+    "U+1D63A": "U+0079",
+    "U+1D63B": "U+007A",
+    "U+1D63C": "U+0041",
+    "U+1D63D": "U+0042",
+    "U+1D63E": "U+0043",
+    "U+1D63F": "U+0044",
+    "U+1D640": "U+0045",
+    "U+1D641": "U+0046",
+    "U+1D642": "U+0047",
+    "U+1D643": "U+0048",
+    "U+1D644": "U+006C",
+    "U+1D645": "U+004A",
+    "U+1D646": "U+004B",
+    "U+1D647": "U+004C",
+    "U+1D648": "U+004D",
+    "U+1D649": "U+004E",
+    "U+1D64A": "U+004F",
+    "U+1D64B": "U+0050",
+    "U+1D64C": "U+0051",
+    "U+1D64D": "U+0052",
+    "U+1D64E": "U+0053",
+    "U+1D64F": "U+0054",
+    "U+1D650": "U+0055",
+    "U+1D651": "U+0056",
+    "U+1D652": "U+0057",
+    "U+1D653": "U+0058",
+    "U+1D654": "U+0059",
+    "U+1D655": "U+005A",
+    "U+1D656": "U+0061",
+    "U+1D657": "U+0062",
+    "U+1D658": "U+0063",
+    "U+1D659": "U+0064",
+    "U+1D65A": "U+0065",
+    "U+1D65B": "U+0066",
+    "U+1D65C": "U+0067",
+    "U+1D65D": "U+0068",
+    "U+1D65E": "U+0069",
+    "U+1D65F": "U+006A",
+    "U+1D660": "U+006B",
+    "U+1D661": "U+006C",
+    "U+1D662": "U+0072 U+006E",
+    "U+1D663": "U+006E",
+    "U+1D664": "U+006F",
+    "U+1D665": "U+0070",
+    "U+1D666": "U+0071",
+    "U+1D667": "U+0072",
+    "U+1D668": "U+0073",
+    "U+1D669": "U+0074",
+    "U+1D66A": "U+0075",
+    "U+1D66B": "U+0076",
+    "U+1D66C": "U+0077",
+    "U+1D66D": "U+0078",
+    "U+1D66E": "U+0079",
+    "U+1D66F": "U+007A",
+    "U+1D670": "U+0041",
+    "U+1D671": "U+0042",
+    "U+1D672": "U+0043",
+    "U+1D673": "U+0044",
+    "U+1D674": "U+0045",
+    "U+1D675": "U+0046",
+    "U+1D676": "U+0047",
+    "U+1D677": "U+0048",
+    "U+1D678": "U+006C",
+    "U+1D679": "U+004A",
+    "U+1D67A": "U+004B",
+    "U+1D67B": "U+004C",
+    "U+1D67C": "U+004D",
+    "U+1D67D": "U+004E",
+    "U+1D67E": "U+004F",
+    "U+1D67F": "U+0050",
+    "U+1D680": "U+0051",
+    "U+1D681": "U+0052",
+    "U+1D682": "U+0053",
+    "U+1D683": "U+0054",
+    "U+1D684": "U+0055",
+    "U+1D685": "U+0056",
+    "U+1D686": "U+0057",
+    "U+1D687": "U+0058",
+    "U+1D688": "U+0059",
+    "U+1D689": "U+005A",
+    "U+1D68A": "U+0061",
+    "U+1D68B": "U+0062",
+    "U+1D68C": "U+0063",
+    "U+1D68D": "U+0064",
+    "U+1D68E": "U+0065",
+    "U+1D68F": "U+0066",
+    "U+1D690": "U+0067",
+    "U+1D691": "U+0068",
+    "U+1D692": "U+0069",
+    "U+1D693": "U+006A",
+    "U+1D694": "U+006B",
+    "U+1D695": "U+006C",
+    "U+1D696": "U+0072 U+006E",
+    "U+1D697": "U+006E",
+    "U+1D698": "U+006F",
+    "U+1D699": "U+0070",
+    "U+1D69A": "U+0071",
+    "U+1D69B": "U+0072",
+    "U+1D69C": "U+0073",
+    "U+1D69D": "U+0074",
+    "U+1D69E": "U+0075",
+    "U+1D69F": "U+0076",
+    "U+1D6A0": "U+0077",
+    "U+1D6A1": "U+0078",
+    "U+1D6A2": "U+0079",
+    "U+1D6A3": "U+007A",
+    "U+1D6A4": "U+0069",
+    "U+1D6A5": "U+0237",
+    "U+1D6A8": "U+0041",
+    "U+1D6A9": "U+0042",
+    "U+1D6AA": "U+0393",
+    "U+1D6AB": "U+0394",
+    "U+1D6AC": "U+0045",
+    "U+1D6AD": "U+005A",
+    "U+1D6AE": "U+0048",
+    "U+1D6AF": "U+004F U+0335",
+    "U+1D6B0": "U+006C",
+    "U+1D6B1": "U+004B",
+    "U+1D6B2": "U+0245",
+    "U+1D6B3": "U+004D",
+    "U+1D6B4": "U+004E",
+    "U+1D6B5": "U+039E",
+    "U+1D6B6": "U+004F",
+    "U+1D6B7": "U+03A0",
+    "U+1D6B8": "U+0050",
+    "U+1D6B9": "U+004F U+0335",
+    "U+1D6BA": "U+01A9",
+    "U+1D6BB": "U+0054",
+    "U+1D6BC": "U+0059",
+    "U+1D6BD": "U+03A6",
+    "U+1D6BE": "U+0058",
+    "U+1D6BF": "U+03A8",
+    "U+1D6C0": "U+03A9",
+    "U+1D6C1": "U+2207",
+    "U+1D6C2": "U+0061",
+    "U+1D6C3": "U+00DF",
+    "U+1D6C4": "U+0079",
+    "U+1D6C5": "U+1E9F",
+    "U+1D6C6": "U+A793",
+    "U+1D6C7": "U+03B6",
+    "U+1D6C8": "U+006E U+0329",
+    "U+1D6C9": "U+004F U+0335",
+    "U+1D6CA": "U+0069",
+    "U+1D6CB": "U+0138",
+    "U+1D6CC": "U+03BB",
+    "U+1D6CD": "U+03BC",
+    "U+1D6CE": "U+0076",
+    "U+1D6CF": "U+03BE",
+    "U+1D6D0": "U+006F",
+    "U+1D6D1": "U+03C0",
+    "U+1D6D2": "U+0070",
+    "U+1D6D3": "U+03C2",
+    "U+1D6D4": "U+006F",
+    "U+1D6D5": "U+1D1B",
+    "U+1D6D6": "U+0075",
+    "U+1D6D7": "U+0278",
+    "U+1D6D8": "U+03C7",
+    "U+1D6D9": "U+03C8",
+    "U+1D6DA": "U+03C9",
+    "U+1D6DB": "U+2202",
+    "U+1D6DC": "U+A793",
+    "U+1D6DD": "U+004F U+0335",
+    "U+1D6DE": "U+0138",
+    "U+1D6DF": "U+0278",
+    "U+1D6E0": "U+0070",
+    "U+1D6E1": "U+03C0",
+    "U+1D6E2": "U+0041",
+    "U+1D6E3": "U+0042",
+    "U+1D6E4": "U+0393",
+    "U+1D6E5": "U+0394",
+    "U+1D6E6": "U+0045",
+    "U+1D6E7": "U+005A",
+    "U+1D6E8": "U+0048",
+    "U+1D6E9": "U+004F U+0335",
+    "U+1D6EA": "U+006C",
+    "U+1D6EB": "U+004B",
+    "U+1D6EC": "U+0245",
+    "U+1D6ED": "U+004D",
+    "U+1D6EE": "U+004E",
+    "U+1D6EF": "U+039E",
+    "U+1D6F0": "U+004F",
+    "U+1D6F1": "U+03A0",
+    "U+1D6F2": "U+0050",
+    "U+1D6F3": "U+004F U+0335",
+    "U+1D6F4": "U+01A9",
+    "U+1D6F5": "U+0054",
+    "U+1D6F6": "U+0059",
+    "U+1D6F7": "U+03A6",
+    "U+1D6F8": "U+0058",
+    "U+1D6F9": "U+03A8",
+    "U+1D6FA": "U+03A9",
+    "U+1D6FB": "U+2207",
+    "U+1D6FC": "U+0061",
+    "U+1D6FD": "U+00DF",
+    "U+1D6FE": "U+0079",
+    "U+1D6FF": "U+1E9F",
+    "U+1D700": "U+A793",
+    "U+1D701": "U+03B6",
+    "U+1D702": "U+006E U+0329",
+    "U+1D703": "U+004F U+0335",
+    "U+1D704": "U+0069",
+    "U+1D705": "U+0138",
+    "U+1D706": "U+03BB",
+    "U+1D707": "U+03BC",
+    "U+1D708": "U+0076",
+    "U+1D709": "U+03BE",
+    "U+1D70A": "U+006F",
+    "U+1D70B": "U+03C0",
+    "U+1D70C": "U+0070",
+    "U+1D70D": "U+03C2",
+    "U+1D70E": "U+006F",
+    "U+1D70F": "U+1D1B",
+    "U+1D710": "U+0075",
+    "U+1D711": "U+0278",
+    "U+1D712": "U+03C7",
+    "U+1D713": "U+03C8",
+    "U+1D714": "U+03C9",
+    "U+1D715": "U+2202",
+    "U+1D716": "U+A793",
+    "U+1D717": "U+004F U+0335",
+    "U+1D718": "U+0138",
+    "U+1D719": "U+0278",
+    "U+1D71A": "U+0070",
+    "U+1D71B": "U+03C0",
+    "U+1D71C": "U+0041",
+    "U+1D71D": "U+0042",
+    "U+1D71E": "U+0393",
+    "U+1D71F": "U+0394",
+    "U+1D720": "U+0045",
+    "U+1D721": "U+005A",
+    "U+1D722": "U+0048",
+    "U+1D723": "U+004F U+0335",
+    "U+1D724": "U+006C",
+    "U+1D725": "U+004B",
+    "U+1D726": "U+0245",
+    "U+1D727": "U+004D",
+    "U+1D728": "U+004E",
+    "U+1D729": "U+039E",
+    "U+1D72A": "U+004F",
+    "U+1D72B": "U+03A0",
+    "U+1D72C": "U+0050",
+    "U+1D72D": "U+004F U+0335",
+    "U+1D72E": "U+01A9",
+    "U+1D72F": "U+0054",
+    "U+1D730": "U+0059",
+    "U+1D731": "U+03A6",
+    "U+1D732": "U+0058",
+    "U+1D733": "U+03A8",
+    "U+1D734": "U+03A9",
+    "U+1D735": "U+2207",
+    "U+1D736": "U+0061",
+    "U+1D737": "U+00DF",
+    "U+1D738": "U+0079",
+    "U+1D739": "U+1E9F",
+    "U+1D73A": "U+A793",
+    "U+1D73B": "U+03B6",
+    "U+1D73C": "U+006E U+0329",
+    "U+1D73D": "U+004F U+0335",
+    "U+1D73E": "U+0069",
+    "U+1D73F": "U+0138",
+    "U+1D740": "U+03BB",
+    "U+1D741": "U+03BC",
+    "U+1D742": "U+0076",
+    "U+1D743": "U+03BE",
+    "U+1D744": "U+006F",
+    "U+1D745": "U+03C0",
+    "U+1D746": "U+0070",
+    "U+1D747": "U+03C2",
+    "U+1D748": "U+006F",
+    "U+1D749": "U+1D1B",
+    "U+1D74A": "U+0075",
+    "U+1D74B": "U+0278",
+    "U+1D74C": "U+03C7",
+    "U+1D74D": "U+03C8",
+    "U+1D74E": "U+03C9",
+    "U+1D74F": "U+2202",
+    "U+1D750": "U+A793",
+    "U+1D751": "U+004F U+0335",
+    "U+1D752": "U+0138",
+    "U+1D753": "U+0278",
+    "U+1D754": "U+0070",
+    "U+1D755": "U+03C0",
+    "U+1D756": "U+0041",
+    "U+1D757": "U+0042",
+    "U+1D758": "U+0393",
+    "U+1D759": "U+0394",
+    "U+1D75A": "U+0045",
+    "U+1D75B": "U+005A",
+    "U+1D75C": "U+0048",
+    "U+1D75D": "U+004F U+0335",
+    "U+1D75E": "U+006C",
+    "U+1D75F": "U+004B",
+    "U+1D760": "U+0245",
+    "U+1D761": "U+004D",
+    "U+1D762": "U+004E",
+    "U+1D763": "U+039E",
+    "U+1D764": "U+004F",
+    "U+1D765": "U+03A0",
+    "U+1D766": "U+0050",
+    "U+1D767": "U+004F U+0335",
+    "U+1D768": "U+01A9",
+    "U+1D769": "U+0054",
+    "U+1D76A": "U+0059",
+    "U+1D76B": "U+03A6",
+    "U+1D76C": "U+0058",
+    "U+1D76D": "U+03A8",
+    "U+1D76E": "U+03A9",
+    "U+1D76F": "U+2207",
+    "U+1D770": "U+0061",
+    "U+1D771": "U+00DF",
+    "U+1D772": "U+0079",
+    "U+1D773": "U+1E9F",
+    "U+1D774": "U+A793",
+    "U+1D775": "U+03B6",
+    "U+1D776": "U+006E U+0329",
+    "U+1D777": "U+004F U+0335",
+    "U+1D778": "U+0069",
+    "U+1D779": "U+0138",
+    "U+1D77A": "U+03BB",
+    "U+1D77B": "U+03BC",
+    "U+1D77C": "U+0076",
+    "U+1D77D": "U+03BE",
+    "U+1D77E": "U+006F",
+    "U+1D77F": "U+03C0",
+    "U+1D780": "U+0070",
+    "U+1D781": "U+03C2",
+    "U+1D782": "U+006F",
+    "U+1D783": "U+1D1B",
+    "U+1D784": "U+0075",
+    "U+1D785": "U+0278",
+    "U+1D786": "U+03C7",
+    "U+1D787": "U+03C8",
+    "U+1D788": "U+03C9",
+    "U+1D789": "U+2202",
+    "U+1D78A": "U+A793",
+    "U+1D78B": "U+004F U+0335",
+    "U+1D78C": "U+0138",
+    "U+1D78D": "U+0278",
+    "U+1D78E": "U+0070",
+    "U+1D78F": "U+03C0",
+    "U+1D790": "U+0041",
+    "U+1D791": "U+0042",
+    "U+1D792": "U+0393",
+    "U+1D793": "U+0394",
+    "U+1D794": "U+0045",
+    "U+1D795": "U+005A",
+    "U+1D796": "U+0048",
+    "U+1D797": "U+004F U+0335",
+    "U+1D798": "U+006C",
+    "U+1D799": "U+004B",
+    "U+1D79A": "U+0245",
+    "U+1D79B": "U+004D",
+    "U+1D79C": "U+004E",
+    "U+1D79D": "U+039E",
+    "U+1D79E": "U+004F",
+    "U+1D79F": "U+03A0",
+    "U+1D7A0": "U+0050",
+    "U+1D7A1": "U+004F U+0335",
+    "U+1D7A2": "U+01A9",
+    "U+1D7A3": "U+0054",
+    "U+1D7A4": "U+0059",
+    "U+1D7A5": "U+03A6",
+    "U+1D7A6": "U+0058",
+    "U+1D7A7": "U+03A8",
+    "U+1D7A8": "U+03A9",
+    "U+1D7A9": "U+2207",
+    "U+1D7AA": "U+0061",
+    "U+1D7AB": "U+00DF",
+    "U+1D7AC": "U+0079",
+    "U+1D7AD": "U+1E9F",
+    "U+1D7AE": "U+A793",
+    "U+1D7AF": "U+03B6",
+    "U+1D7B0": "U+006E U+0329",
+    "U+1D7B1": "U+004F U+0335",
+    "U+1D7B2": "U+0069",
+    "U+1D7B3": "U+0138",
+    "U+1D7B4": "U+03BB",
+    "U+1D7B5": "U+03BC",
+    "U+1D7B6": "U+0076",
+    "U+1D7B7": "U+03BE",
+    "U+1D7B8": "U+006F",
+    "U+1D7B9": "U+03C0",
+    "U+1D7BA": "U+0070",
+    "U+1D7BB": "U+03C2",
+    "U+1D7BC": "U+006F",
+    "U+1D7BD": "U+1D1B",
+    "U+1D7BE": "U+0075",
+    "U+1D7BF": "U+0278",
+    "U+1D7C0": "U+03C7",
+    "U+1D7C1": "U+03C8",
+    "U+1D7C2": "U+03C9",
+    "U+1D7C3": "U+2202",
+    "U+1D7C4": "U+A793",
+    "U+1D7C5": "U+004F U+0335",
+    "U+1D7C6": "U+0138",
+    "U+1D7C7": "U+0278",
+    "U+1D7C8": "U+0070",
+    "U+1D7C9": "U+03C0",
+    "U+1D7CA": "U+0046",
+    "U+1D7CB": "U+03DD",
+    "U+1D7CE": "U+004F",
+    "U+1D7CF": "U+006C",
+    "U+1D7D0": "U+0032",
+    "U+1D7D1": "U+0033",
+    "U+1D7D2": "U+0034",
+    "U+1D7D3": "U+0035",
+    "U+1D7D4": "U+0036",
+    "U+1D7D5": "U+0037",
+    "U+1D7D6": "U+0038",
+    "U+1D7D7": "U+0039",
+    "U+1D7D8": "U+004F",
+    "U+1D7D9": "U+006C",
+    "U+1D7DA": "U+0032",
+    "U+1D7DB": "U+0033",
+    "U+1D7DC": "U+0034",
+    "U+1D7DD": "U+0035",
+    "U+1D7DE": "U+0036",
+    "U+1D7DF": "U+0037",
+    "U+1D7E0": "U+0038",
+    "U+1D7E1": "U+0039",
+    "U+1D7E2": "U+004F",
+    "U+1D7E3": "U+006C",
+    "U+1D7E4": "U+0032",
+    "U+1D7E5": "U+0033",
+    "U+1D7E6": "U+0034",
+    "U+1D7E7": "U+0035",
+    "U+1D7E8": "U+0036",
+    "U+1D7E9": "U+0037",
+    "U+1D7EA": "U+0038",
+    "U+1D7EB": "U+0039",
+    "U+1D7EC": "U+004F",
+    "U+1D7ED": "U+006C",
+    "U+1D7EE": "U+0032",
+    "U+1D7EF": "U+0033",
+    "U+1D7F0": "U+0034",
+    "U+1D7F1": "U+0035",
+    "U+1D7F2": "U+0036",
+    "U+1D7F3": "U+0037",
+    "U+1D7F4": "U+0038",
+    "U+1D7F5": "U+0039",
+    "U+1D7F6": "U+004F",
+    "U+1D7F7": "U+006C",
+    "U+1D7F8": "U+0032",
+    "U+1D7F9": "U+0033",
+    "U+1D7FA": "U+0034",
+    "U+1D7FB": "U+0035",
+    "U+1D7FC": "U+0036",
+    "U+1D7FD": "U+0037",
+    "U+1D7FE": "U+0038",
+    "U+1D7FF": "U+0039",
+    "U+1E6E9": "U+002B",
+    "U+1E6EE": "U+1AC8",
+    "U+1E8C7": "U+006C",
+    "U+1E8C8": "U+2220",
+    "U+1E8C9": "U+0663",
+    "U+1E8CB": "U+0038",
+    "U+1E8CC": "U+2202",
+    "U+1E8CD": "U+2202 U+0335",
+    "U+1EE00": "U+006C",
+    "U+1EE01": "U+0628",
+    "U+1EE02": "U+062C",
+    "U+1EE03": "U+062F",
+    "U+1EE05": "U+0648",
+    "U+1EE06": "U+0632",
+    "U+1EE07": "U+062D",
+    "U+1EE08": "U+0637",
+    "U+1EE09": "U+0649",
+    "U+1EE0A": "U+0643",
+    "U+1EE0B": "U+0644",
+    "U+1EE0C": "U+0645",
+    "U+1EE0D": "U+0646",
+    "U+1EE0E": "U+0633",
+    "U+1EE0F": "U+0639",
+    "U+1EE10": "U+0641",
+    "U+1EE11": "U+0635",
+    "U+1EE12": "U+0642",
+    "U+1EE13": "U+0631",
+    "U+1EE14": "U+0633 U+06DB",
+    "U+1EE15": "U+062A",
+    "U+1EE16": "U+0649 U+06DB",
+    "U+1EE17": "U+062E",
+    "U+1EE18": "U+0630",
+    "U+1EE19": "U+0636",
+    "U+1EE1A": "U+0638",
+    "U+1EE1B": "U+063A",
+    "U+1EE1C": "U+0649",
+    "U+1EE1D": "U+0649",
+    "U+1EE1E": "U+06A1",
+    "U+1EE1F": "U+06A1",
+    "U+1EE21": "U+0628",
+    "U+1EE22": "U+062C",
+    "U+1EE24": "U+006F",
+    "U+1EE27": "U+062D",
+    "U+1EE29": "U+0649",
+    "U+1EE2A": "U+0643",
+    "U+1EE2B": "U+0644",
+    "U+1EE2C": "U+0645",
+    "U+1EE2D": "U+0646",
+    "U+1EE2E": "U+0633",
+    "U+1EE2F": "U+0639",
+    "U+1EE30": "U+0641",
+    "U+1EE31": "U+0635",
+    "U+1EE32": "U+0642",
+    "U+1EE34": "U+0633 U+06DB",
+    "U+1EE35": "U+062A",
+    "U+1EE36": "U+0649 U+06DB",
+    "U+1EE37": "U+062E",
+    "U+1EE39": "U+0636",
+    "U+1EE3B": "U+063A",
+    "U+1EE42": "U+062C",
+    "U+1EE47": "U+062D",
+    "U+1EE49": "U+0649",
+    "U+1EE4B": "U+0644",
+    "U+1EE4D": "U+0646",
+    "U+1EE4E": "U+0633",
+    "U+1EE4F": "U+0639",
+    "U+1EE51": "U+0635",
+    "U+1EE52": "U+0642",
+    "U+1EE54": "U+0633 U+06DB",
+    "U+1EE57": "U+062E",
+    "U+1EE59": "U+0636",
+    "U+1EE5B": "U+063A",
+    "U+1EE5D": "U+0649",
+    "U+1EE5F": "U+06A1",
+    "U+1EE61": "U+0628",
+    "U+1EE62": "U+062C",
+    "U+1EE64": "U+006F",
+    "U+1EE67": "U+062D",
+    "U+1EE68": "U+0637",
+    "U+1EE69": "U+0649",
+    "U+1EE6A": "U+0643",
+    "U+1EE6C": "U+0645",
+    "U+1EE6D": "U+0646",
+    "U+1EE6E": "U+0633",
+    "U+1EE6F": "U+0639",
+    "U+1EE70": "U+0641",
+    "U+1EE71": "U+0635",
+    "U+1EE72": "U+0642",
+    "U+1EE74": "U+0633 U+06DB",
+    "U+1EE75": "U+062A",
+    "U+1EE76": "U+0649 U+06DB",
+    "U+1EE77": "U+062E",
+    "U+1EE79": "U+0636",
+    "U+1EE7A": "U+0638",
+    "U+1EE7B": "U+063A",
+    "U+1EE7C": "U+0649",
+    "U+1EE7E": "U+06A1",
+    "U+1EE80": "U+006C",
+    "U+1EE81": "U+0628",
+    "U+1EE82": "U+062C",
+    "U+1EE83": "U+062F",
+    "U+1EE84": "U+006F",
+    "U+1EE85": "U+0648",
+    "U+1EE86": "U+0632",
+    "U+1EE87": "U+062D",
+    "U+1EE88": "U+0637",
+    "U+1EE89": "U+0649",
+    "U+1EE8B": "U+0644",
+    "U+1EE8C": "U+0645",
+    "U+1EE8D": "U+0646",
+    "U+1EE8E": "U+0633",
+    "U+1EE8F": "U+0639",
+    "U+1EE90": "U+0641",
+    "U+1EE91": "U+0635",
+    "U+1EE92": "U+0642",
+    "U+1EE93": "U+0631",
+    "U+1EE94": "U+0633 U+06DB",
+    "U+1EE95": "U+062A",
+    "U+1EE96": "U+0649 U+06DB",
+    "U+1EE97": "U+062E",
+    "U+1EE98": "U+0630",
+    "U+1EE99": "U+0636",
+    "U+1EE9A": "U+0638",
+    "U+1EE9B": "U+063A",
+    "U+1EEA1": "U+0628",
+    "U+1EEA2": "U+062C",
+    "U+1EEA3": "U+062F",
+    "U+1EEA5": "U+0648",
+    "U+1EEA6": "U+0632",
+    "U+1EEA7": "U+062D",
+    "U+1EEA8": "U+0637",
+    "U+1EEA9": "U+0649",
+    "U+1EEAB": "U+0644",
+    "U+1EEAC": "U+0645",
+    "U+1EEAD": "U+0646",
+    "U+1EEAE": "U+0633",
+    "U+1EEAF": "U+0639",
+    "U+1EEB0": "U+0641",
+    "U+1EEB1": "U+0635",
+    "U+1EEB2": "U+0642",
+    "U+1EEB3": "U+0631",
+    "U+1EEB4": "U+0633 U+06DB",
+    "U+1EEB5": "U+062A",
+    "U+1EEB6": "U+0649 U+06DB",
+    "U+1EEB7": "U+062E",
+    "U+1EEB8": "U+0630",
+    "U+1EEB9": "U+0636",
+    "U+1EEBA": "U+0638",
+    "U+1EEBB": "U+063A",
+    "U+1F100": "U+004F U+002E",
+    "U+1F101": "U+004F U+002C",
+    "U+1F102": "U+006C U+002C",
+    "U+1F103": "U+0032 U+002C",
+    "U+1F104": "U+0033 U+002C",
+    "U+1F105": "U+0034 U+002C",
+    "U+1F106": "U+0035 U+002C",
+    "U+1F107": "U+0036 U+002C",
+    "U+1F108": "U+0037 U+002C",
+    "U+1F109": "U+0038 U+002C",
+    "U+1F10A": "U+0039 U+002C",
+    "U+1F10F": "U+0024 U+20E0",
+    "U+1F110": "U+0028 U+0041 U+0029",
+    "U+1F111": "U+0028 U+0042 U+0029",
+    "U+1F112": "U+0028 U+0043 U+0029",
+    "U+1F113": "U+0028 U+0044 U+0029",
+    "U+1F114": "U+0028 U+0045 U+0029",
+    "U+1F115": "U+0028 U+0046 U+0029",
+    "U+1F116": "U+0028 U+0047 U+0029",
+    "U+1F117": "U+0028 U+0048 U+0029",
+    "U+1F118": "U+0028 U+006C U+0029",
+    "U+1F119": "U+0028 U+004A U+0029",
+    "U+1F11A": "U+0028 U+004B U+0029",
+    "U+1F11B": "U+0028 U+004C U+0029",
+    "U+1F11C": "U+0028 U+004D U+0029",
+    "U+1F11D": "U+0028 U+004E U+0029",
+    "U+1F11E": "U+0028 U+004F U+0029",
+    "U+1F11F": "U+0028 U+0050 U+0029",
+    "U+1F120": "U+0028 U+0051 U+0029",
+    "U+1F121": "U+0028 U+0052 U+0029",
+    "U+1F122": "U+0028 U+0053 U+0029",
+    "U+1F123": "U+0028 U+0054 U+0029",
+    "U+1F124": "U+0028 U+0055 U+0029",
+    "U+1F125": "U+0028 U+0056 U+0029",
+    "U+1F126": "U+0028 U+0057 U+0029",
+    "U+1F127": "U+0028 U+0058 U+0029",
+    "U+1F128": "U+0028 U+0059 U+0029",
+    "U+1F129": "U+0028 U+005A U+0029",
+    "U+1F12A": "U+0028 U+0053 U+0029",
+    "U+1F16D": "U+33C4 U+0009 U+20DD",
+    "U+1F16E": "U+0043 U+20E0",
+    "U+1F240": "U+0028 U+672C U+0029",
+    "U+1F241": "U+0028 U+4E09 U+0029",
+    "U+1F242": "U+0028 U+4E8C U+0029",
+    "U+1F243": "U+0028 U+5B89 U+0029",
+    "U+1F244": "U+0028 U+70B9 U+0029",
+    "U+1F245": "U+0028 U+6253 U+0029",
+    "U+1F246": "U+0028 U+76D7 U+0029",
+    "U+1F247": "U+0028 U+52DD U+0029",
+    "U+1F248": "U+0028 U+6557 U+0029",
+    "U+1F312": "U+263D",
+    "U+1F318": "U+263E",
+    "U+1F319": "U+263D",
+    "U+1F333": "U+1CEBC",
+    "U+1F34E": "U+1CEBD",
+    "U+1F34F": "U+1CEBD",
+    "U+1F352": "U+1CEBE",
+    "U+1F353": "U+1CEBF",
+    "U+1F377": "U+1CEBA",
+    "U+1F3E2": "U+1CEBB",
+    "U+1F40D": "U+1CCFA",
+    "U+1F443": "U+1CCFC",
+    "U+1F514": "U+1FBFA",
+    "U+1F700": "U+0051 U+0045",
+    "U+1F701": "U+A658",
+    "U+1F702": "U+0394",
+    "U+1F704": "U+102BC",
+    "U+1F707": "U+0041 U+0052",
+    "U+1F708": "U+0056 U+1DE4",
+    "U+1F70A": "U+2629",
+    "U+1F714": "U+004F U+0335",
+    "U+1F728": "U+102A8",
+    "U+1F73A": "U+29DF",
+    "U+1F74C": "U+0043",
+    "U+1F754": "U+16DC",
+    "U+1F755": "U+22A1",
+    "U+1F75C": "U+0073 U+0073 U+0073",
+    "U+1F75E": "U+224F",
+    "U+1F768": "U+0054",
+    "U+1F76B": "U+004D U+0042",
+    "U+1F76C": "U+0056 U+0042",
+    "U+1F771": "U+22A0",
+    "U+1FBF0": "U+004F",
+    "U+1FBF1": "U+006C",
+    "U+1FBF2": "U+0032",
+    "U+1FBF3": "U+0033",
+    "U+1FBF4": "U+0034",
+    "U+1FBF5": "U+0035",
+    "U+1FBF6": "U+0036",
+    "U+1FBF7": "U+0037",
+    "U+1FBF8": "U+0038",
+    "U+1FBF9": "U+0039",
+    "U+20674": "U+51F5",
+    "U+21533": "U+58F7",
+    "U+21587": "U+591A",
+    "U+216A7": "U+216A8",
+    "U+21FE8": "U+276C",
+    "U+22505": "U+5F9A",
+    "U+23D40": "U+6D85",
+    "U+248FD": "U+73A5",
+    "U+2511A": "U+25119",
+    "U+25AD4": "U+8D1B",
+    "U+2659D": "U+265A8",
+    "U+26D06": "U+26C36",
+    "U+2AEC5": "U+24814",
+    "U+2B73A": "U+5CC0",
+    "U+2B73E": "U+2335F",
+    "U+2D161": "U+5351",
+    "U+2F800": "U+4E3D",
+    "U+2F801": "U+4E38",
+    "U+2F802": "U+4E41",
+    "U+2F803": "U+20122",
+    "U+2F804": "U+4F60",
+    "U+2F805": "U+4FAE",
+    "U+2F806": "U+4FBB",
+    "U+2F807": "U+4F75",
+    "U+2F808": "U+507A",
+    "U+2F809": "U+5099",
+    "U+2F80A": "U+50E7",
+    "U+2F80B": "U+50CF",
+    "U+2F80C": "U+349E",
+    "U+2F80D": "U+2063A",
+    "U+2F80E": "U+514D",
+    "U+2F80F": "U+5154",
+    "U+2F810": "U+5164",
+    "U+2F811": "U+5177",
+    "U+2F812": "U+2051C",
+    "U+2F813": "U+34B9",
+    "U+2F814": "U+5167",
+    "U+2F815": "U+518D",
+    "U+2F816": "U+2054B",
+    "U+2F817": "U+5197",
+    "U+2F818": "U+51A4",
+    "U+2F819": "U+4ECC",
+    "U+2F81A": "U+51AC",
+    "U+2F81B": "U+51B5",
+    "U+2F81C": "U+291DF",
+    "U+2F81D": "U+51F5",
+    "U+2F81E": "U+5203",
+    "U+2F81F": "U+34DF",
+    "U+2F820": "U+523B",
+    "U+2F821": "U+5246",
+    "U+2F822": "U+5272",
+    "U+2F823": "U+5277",
+    "U+2F824": "U+3515",
+    "U+2F825": "U+52C7",
+    "U+2F826": "U+52C9",
+    "U+2F827": "U+52E4",
+    "U+2F828": "U+52FA",
+    "U+2F829": "U+5305",
+    "U+2F82A": "U+5306",
+    "U+2F82B": "U+5317",
+    "U+2F82C": "U+5349",
+    "U+2F82D": "U+5351",
+    "U+2F82E": "U+535A",
+    "U+2F82F": "U+5373",
+    "U+2F830": "U+537D",
+    "U+2F831": "U+537F",
+    "U+2F832": "U+537F",
+    "U+2F833": "U+537F",
+    "U+2F834": "U+20A2C",
+    "U+2F835": "U+7070",
+    "U+2F836": "U+53CA",
+    "U+2F837": "U+53DF",
+    "U+2F838": "U+20B63",
+    "U+2F839": "U+53EB",
+    "U+2F83A": "U+53F1",
+    "U+2F83B": "U+5406",
+    "U+2F83C": "U+549E",
+    "U+2F83D": "U+5438",
+    "U+2F83E": "U+5448",
+    "U+2F83F": "U+5468",
+    "U+2F840": "U+54A2",
+    "U+2F841": "U+54F6",
+    "U+2F842": "U+5510",
+    "U+2F843": "U+5553",
+    "U+2F844": "U+5563",
+    "U+2F845": "U+5584",
+    "U+2F846": "U+5584",
+    "U+2F847": "U+5599",
+    "U+2F848": "U+55AB",
+    "U+2F849": "U+55B3",
+    "U+2F84A": "U+55C2",
+    "U+2F84B": "U+5716",
+    "U+2F84C": "U+5606",
+    "U+2F84D": "U+5717",
+    "U+2F84E": "U+5651",
+    "U+2F84F": "U+5674",
+    "U+2F850": "U+5207",
+    "U+2F851": "U+58EE",
+    "U+2F852": "U+57CE",
+    "U+2F853": "U+57F4",
+    "U+2F854": "U+580D",
+    "U+2F855": "U+578B",
+    "U+2F856": "U+5832",
+    "U+2F857": "U+5831",
+    "U+2F858": "U+58AC",
+    "U+2F859": "U+214E4",
+    "U+2F85A": "U+58F2",
+    "U+2F85B": "U+58F7",
+    "U+2F85C": "U+5906",
+    "U+2F85D": "U+591A",
+    "U+2F85E": "U+5922",
+    "U+2F85F": "U+5962",
+    "U+2F860": "U+216A8",
+    "U+2F861": "U+216EA",
+    "U+2F862": "U+59EC",
+    "U+2F863": "U+5A1B",
+    "U+2F864": "U+5A27",
+    "U+2F865": "U+59D8",
+    "U+2F866": "U+5A66",
+    "U+2F867": "U+36EE",
+    "U+2F868": "U+36FC",
+    "U+2F869": "U+5B08",
+    "U+2F86A": "U+5B3E",
+    "U+2F86B": "U+5B3E",
+    "U+2F86C": "U+219C8",
+    "U+2F86D": "U+5BC3",
+    "U+2F86E": "U+5BD8",
+    "U+2F86F": "U+5BE7",
+    "U+2F870": "U+5BF3",
+    "U+2F871": "U+21B18",
+    "U+2F872": "U+5BFF",
+    "U+2F873": "U+5C06",
+    "U+2F874": "U+5F53",
+    "U+2F875": "U+5C22",
+    "U+2F876": "U+3781",
+    "U+2F877": "U+5C60",
+    "U+2F878": "U+5C6E",
+    "U+2F879": "U+5CC0",
+    "U+2F87A": "U+5C8D",
+    "U+2F87B": "U+21DE4",
+    "U+2F87C": "U+5D43",
+    "U+2F87D": "U+21DE6",
+    "U+2F87E": "U+5D6E",
+    "U+2F87F": "U+5D6B",
+    "U+2F880": "U+5D7C",
+    "U+2F881": "U+5DE1",
+    "U+2F882": "U+5DE2",
+    "U+2F883": "U+382F",
+    "U+2F884": "U+5DFD",
+    "U+2F885": "U+5E28",
+    "U+2F886": "U+5E3D",
+    "U+2F887": "U+5E69",
+    "U+2F888": "U+3862",
+    "U+2F889": "U+22183",
+    "U+2F88A": "U+387C",
+    "U+2F88B": "U+5EB0",
+    "U+2F88C": "U+5EB3",
+    "U+2F88D": "U+5EB6",
+    "U+2F88E": "U+5ECA",
+    "U+2F88F": "U+2A392",
+    "U+2F890": "U+5EFE",
+    "U+2F891": "U+22331",
+    "U+2F892": "U+22331",
+    "U+2F893": "U+8201",
+    "U+2F894": "U+5F22",
+    "U+2F895": "U+5F22",
+    "U+2F896": "U+38C7",
+    "U+2F897": "U+232B8",
+    "U+2F898": "U+261DA",
+    "U+2F899": "U+5F62",
+    "U+2F89A": "U+5F6B",
+    "U+2F89B": "U+38E3",
+    "U+2F89C": "U+5F9A",
+    "U+2F89D": "U+5FCD",
+    "U+2F89E": "U+5FD7",
+    "U+2F89F": "U+5FF9",
+    "U+2F8A0": "U+6081",
+    "U+2F8A1": "U+393A",
+    "U+2F8A2": "U+391C",
+    "U+2F8A3": "U+6094",
+    "U+2F8A4": "U+226D4",
+    "U+2F8A5": "U+60C7",
+    "U+2F8A6": "U+6148",
+    "U+2F8A7": "U+614C",
+    "U+2F8A8": "U+614E",
+    "U+2F8A9": "U+614C",
+    "U+2F8AA": "U+617A",
+    "U+2F8AB": "U+618E",
+    "U+2F8AC": "U+61B2",
+    "U+2F8AD": "U+61A4",
+    "U+2F8AE": "U+61AF",
+    "U+2F8AF": "U+61DE",
+    "U+2F8B0": "U+61F2",
+    "U+2F8B1": "U+61F6",
+    "U+2F8B2": "U+6210",
+    "U+2F8B3": "U+621B",
+    "U+2F8B4": "U+625D",
+    "U+2F8B5": "U+62B1",
+    "U+2F8B6": "U+62D4",
+    "U+2F8B7": "U+6350",
+    "U+2F8B8": "U+22B0C",
+    "U+2F8B9": "U+633D",
+    "U+2F8BA": "U+62FC",
+    "U+2F8BB": "U+6368",
+    "U+2F8BC": "U+6383",
+    "U+2F8BD": "U+63E4",
+    "U+2F8BE": "U+22BF1",
+    "U+2F8BF": "U+6422",
+    "U+2F8C0": "U+63C5",
+    "U+2F8C1": "U+63A9",
+    "U+2F8C2": "U+3A2E",
+    "U+2F8C3": "U+6469",
+    "U+2F8C4": "U+647E",
+    "U+2F8C5": "U+649D",
+    "U+2F8C6": "U+6477",
+    "U+2F8C7": "U+3A6C",
+    "U+2F8C8": "U+654F",
+    "U+2F8C9": "U+656C",
+    "U+2F8CA": "U+2300A",
+    "U+2F8CB": "U+65E3",
+    "U+2F8CC": "U+66F8",
+    "U+2F8CD": "U+6649",
+    "U+2F8CE": "U+3B19",
+    "U+2F8CF": "U+6691",
+    "U+2F8D0": "U+3B08",
+    "U+2F8D1": "U+3AE4",
+    "U+2F8D2": "U+5192",
+    "U+2F8D3": "U+5195",
+    "U+2F8D4": "U+6700",
+    "U+2F8D5": "U+669C",
+    "U+2F8D6": "U+80AD",
+    "U+2F8D7": "U+43D9",
+    "U+2F8D8": "U+6717",
+    "U+2F8D9": "U+671B",
+    "U+2F8DA": "U+6721",
+    "U+2F8DB": "U+675E",
+    "U+2F8DC": "U+6753",
+    "U+2F8DD": "U+233C3",
+    "U+2F8DE": "U+3B49",
+    "U+2F8DF": "U+67FA",
+    "U+2F8E0": "U+6785",
+    "U+2F8E1": "U+6852",
+    "U+2F8E2": "U+6885",
+    "U+2F8E3": "U+2346D",
+    "U+2F8E4": "U+688E",
+    "U+2F8E5": "U+681F",
+    "U+2F8E6": "U+6914",
+    "U+2F8E7": "U+3B9D",
+    "U+2F8E8": "U+6942",
+    "U+2F8E9": "U+69A3",
+    "U+2F8EA": "U+69EA",
+    "U+2F8EB": "U+6AA8",
+    "U+2F8EC": "U+236A3",
+    "U+2F8ED": "U+6ADB",
+    "U+2F8EE": "U+3C18",
+    "U+2F8EF": "U+6B21",
+    "U+2F8F0": "U+238A7",
+    "U+2F8F1": "U+6B54",
+    "U+2F8F2": "U+3C4E",
+    "U+2F8F3": "U+6B72",
+    "U+2F8F4": "U+6B9F",
+    "U+2F8F5": "U+6BBA",
+    "U+2F8F6": "U+6BBB",
+    "U+2F8F7": "U+23A8D",
+    "U+2F8F8": "U+21D0B",
+    "U+2F8F9": "U+23AFA",
+    "U+2F8FA": "U+6C4E",
+    "U+2F8FB": "U+23CBC",
+    "U+2F8FC": "U+6CBF",
+    "U+2F8FD": "U+6CCD",
+    "U+2F8FE": "U+6C67",
+    "U+2F8FF": "U+6D16",
+    "U+2F900": "U+6D3E",
+    "U+2F901": "U+6D77",
+    "U+2F902": "U+6D41",
+    "U+2F903": "U+6D69",
+    "U+2F904": "U+6D78",
+    "U+2F905": "U+6D85",
+    "U+2F906": "U+23D1E",
+    "U+2F907": "U+6D34",
+    "U+2F908": "U+6E2F",
+    "U+2F909": "U+6E6E",
+    "U+2F90A": "U+3D33",
+    "U+2F90B": "U+6ECB",
+    "U+2F90C": "U+6EC7",
+    "U+2F90D": "U+23ED1",
+    "U+2F90E": "U+6DF9",
+    "U+2F90F": "U+6F6E",
+    "U+2F910": "U+23F5E",
+    "U+2F911": "U+23F8E",
+    "U+2F912": "U+6FC6",
+    "U+2F913": "U+7039",
+    "U+2F914": "U+701E",
+    "U+2F915": "U+701B",
+    "U+2F916": "U+3D96",
+    "U+2F917": "U+704A",
+    "U+2F918": "U+707D",
+    "U+2F919": "U+7077",
+    "U+2F91A": "U+70AD",
+    "U+2F91B": "U+20525",
+    "U+2F91C": "U+7145",
+    "U+2F91D": "U+24263",
+    "U+2F91E": "U+719C",
+    "U+2F91F": "U+243AB",
+    "U+2F920": "U+7228",
+    "U+2F921": "U+7235",
+    "U+2F922": "U+7250",
+    "U+2F923": "U+24608",
+    "U+2F924": "U+7280",
+    "U+2F925": "U+7295",
+    "U+2F926": "U+24735",
+    "U+2F927": "U+24814",
+    "U+2F928": "U+737A",
+    "U+2F929": "U+738B",
+    "U+2F92A": "U+3EAC",
+    "U+2F92B": "U+73A5",
+    "U+2F92C": "U+3EB8",
+    "U+2F92D": "U+3EB8",
+    "U+2F92E": "U+7447",
+    "U+2F92F": "U+745C",
+    "U+2F930": "U+7471",
+    "U+2F931": "U+7485",
+    "U+2F932": "U+74CA",
+    "U+2F933": "U+3F1B",
+    "U+2F934": "U+7524",
+    "U+2F935": "U+24C36",
+    "U+2F936": "U+753E",
+    "U+2F937": "U+24C92",
+    "U+2F938": "U+7570",
+    "U+2F939": "U+2219F",
+    "U+2F93A": "U+7610",
+    "U+2F93B": "U+24FA1",
+    "U+2F93C": "U+24FB8",
+    "U+2F93D": "U+25044",
+    "U+2F93E": "U+3FFC",
+    "U+2F93F": "U+4008",
+    "U+2F940": "U+76F4",
+    "U+2F941": "U+250F3",
+    "U+2F942": "U+250F2",
+    "U+2F943": "U+25119",
+    "U+2F944": "U+25133",
+    "U+2F945": "U+771E",
+    "U+2F946": "U+771F",
+    "U+2F947": "U+771F",
+    "U+2F948": "U+774A",
+    "U+2F949": "U+4039",
+    "U+2F94A": "U+778B",
+    "U+2F94B": "U+4046",
+    "U+2F94C": "U+4096",
+    "U+2F94D": "U+2541D",
+    "U+2F94E": "U+784E",
+    "U+2F94F": "U+788C",
+    "U+2F950": "U+78CC",
+    "U+2F951": "U+40E3",
+    "U+2F952": "U+25626",
+    "U+2F953": "U+7956",
+    "U+2F954": "U+2569A",
+    "U+2F955": "U+256C5",
+    "U+2F956": "U+798F",
+    "U+2F957": "U+79EB",
+    "U+2F958": "U+412F",
+    "U+2F959": "U+7A40",
+    "U+2F95A": "U+7A4A",
+    "U+2F95B": "U+7A4F",
+    "U+2F95C": "U+2597C",
+    "U+2F95D": "U+25AA7",
+    "U+2F95E": "U+25AA7",
+    "U+2F95F": "U+7AEE",
+    "U+2F960": "U+4202",
+    "U+2F961": "U+25BAB",
+    "U+2F962": "U+7BC6",
+    "U+2F963": "U+7BC9",
+    "U+2F964": "U+4227",
+    "U+2F965": "U+25C80",
+    "U+2F966": "U+7CD2",
+    "U+2F967": "U+42A0",
+    "U+2F968": "U+7CE8",
+    "U+2F969": "U+7CE3",
+    "U+2F96A": "U+7D00",
+    "U+2F96B": "U+25F86",
+    "U+2F96C": "U+7D63",
+    "U+2F96D": "U+4301",
+    "U+2F96E": "U+7DC7",
+    "U+2F96F": "U+7E02",
+    "U+2F970": "U+7E45",
+    "U+2F971": "U+4334",
+    "U+2F972": "U+26228",
+    "U+2F973": "U+26247",
+    "U+2F974": "U+4359",
+    "U+2F975": "U+262D9",
+    "U+2F976": "U+7F7A",
+    "U+2F977": "U+2633E",
+    "U+2F978": "U+7F95",
+    "U+2F979": "U+7FFA",
+    "U+2F97A": "U+8005",
+    "U+2F97B": "U+264DA",
+    "U+2F97C": "U+26523",
+    "U+2F97D": "U+8060",
+    "U+2F97E": "U+265A8",
+    "U+2F97F": "U+8070",
+    "U+2F980": "U+2335F",
+    "U+2F981": "U+43D5",
+    "U+2F982": "U+80B2",
+    "U+2F983": "U+8103",
+    "U+2F984": "U+440B",
+    "U+2F985": "U+813E",
+    "U+2F986": "U+5AB5",
+    "U+2F987": "U+267A7",
+    "U+2F988": "U+267B5",
+    "U+2F989": "U+23393",
+    "U+2F98A": "U+2339C",
+    "U+2F98B": "U+8201",
+    "U+2F98C": "U+8204",
+    "U+2F98D": "U+8F9E",
+    "U+2F98E": "U+446B",
+    "U+2F98F": "U+8291",
+    "U+2F990": "U+828B",
+    "U+2F991": "U+829D",
+    "U+2F992": "U+52B3",
+    "U+2F993": "U+82B1",
+    "U+2F994": "U+82B3",
+    "U+2F995": "U+82BD",
+    "U+2F996": "U+82E6",
+    "U+2F997": "U+26B3C",
+    "U+2F998": "U+82E5",
+    "U+2F999": "U+831D",
+    "U+2F99A": "U+8363",
+    "U+2F99B": "U+83AD",
+    "U+2F99C": "U+8323",
+    "U+2F99D": "U+83BD",
+    "U+2F99E": "U+83E7",
+    "U+2F99F": "U+8457",
+    "U+2F9A0": "U+8353",
+    "U+2F9A1": "U+83CA",
+    "U+2F9A2": "U+83CC",
+    "U+2F9A3": "U+83DC",
+    "U+2F9A4": "U+26C36",
+    "U+2F9A5": "U+26D6B",
+    "U+2F9A6": "U+26CD5",
+    "U+2F9A7": "U+452B",
+    "U+2F9A8": "U+84F1",
+    "U+2F9A9": "U+84F3",
+    "U+2F9AA": "U+8516",
+    "U+2F9AB": "U+273CA",
+    "U+2F9AC": "U+8564",
+    "U+2F9AD": "U+26F2C",
+    "U+2F9AE": "U+455D",
+    "U+2F9AF": "U+4561",
+    "U+2F9B0": "U+26FB1",
+    "U+2F9B1": "U+270D2",
+    "U+2F9B2": "U+456B",
+    "U+2F9B3": "U+8650",
+    "U+2F9B4": "U+865C",
+    "U+2F9B5": "U+8667",
+    "U+2F9B6": "U+8669",
+    "U+2F9B7": "U+86A9",
+    "U+2F9B8": "U+8688",
+    "U+2F9B9": "U+870E",
+    "U+2F9BA": "U+86E2",
+    "U+2F9BB": "U+8779",
+    "U+2F9BC": "U+8728",
+    "U+2F9BD": "U+876B",
+    "U+2F9BE": "U+8786",
+    "U+2F9BF": "U+45D7",
+    "U+2F9C0": "U+87E1",
+    "U+2F9C1": "U+8801",
+    "U+2F9C2": "U+45F9",
+    "U+2F9C3": "U+8860",
+    "U+2F9C4": "U+8863",
+    "U+2F9C5": "U+27667",
+    "U+2F9C6": "U+88D7",
+    "U+2F9C7": "U+88DE",
+    "U+2F9C8": "U+4635",
+    "U+2F9C9": "U+88FA",
+    "U+2F9CA": "U+34BB",
+    "U+2F9CB": "U+278AE",
+    "U+2F9CC": "U+27966",
+    "U+2F9CD": "U+46BE",
+    "U+2F9CE": "U+46C7",
+    "U+2F9CF": "U+8AA0",
+    "U+2F9D0": "U+8AED",
+    "U+2F9D1": "U+8B8A",
+    "U+2F9D2": "U+8C55",
+    "U+2F9D3": "U+27CA8",
+    "U+2F9D4": "U+8CAB",
+    "U+2F9D5": "U+8CC1",
+    "U+2F9D6": "U+8D1B",
+    "U+2F9D7": "U+8D77",
+    "U+2F9D8": "U+27F2F",
+    "U+2F9D9": "U+20804",
+    "U+2F9DA": "U+8DCB",
+    "U+2F9DB": "U+8DBC",
+    "U+2F9DC": "U+8DF0",
+    "U+2F9DD": "U+208DE",
+    "U+2F9DE": "U+8ED4",
+    "U+2F9DF": "U+8F38",
+    "U+2F9E0": "U+285D2",
+    "U+2F9E1": "U+285ED",
+    "U+2F9E2": "U+9094",
+    "U+2F9E3": "U+90F1",
+    "U+2F9E4": "U+9111",
+    "U+2F9E5": "U+2872E",
+    "U+2F9E6": "U+911B",
+    "U+2F9E7": "U+9238",
+    "U+2F9E8": "U+92D7",
+    "U+2F9E9": "U+92D8",
+    "U+2F9EA": "U+927C",
+    "U+2F9EB": "U+93F9",
+    "U+2F9EC": "U+9415",
+    "U+2F9ED": "U+28BFA",
+    "U+2F9EE": "U+958B",
+    "U+2F9EF": "U+4995",
+    "U+2F9F0": "U+95B7",
+    "U+2F9F1": "U+28D77",
+    "U+2F9F2": "U+49E6",
+    "U+2F9F3": "U+96C3",
+    "U+2F9F4": "U+5DB2",
+    "U+2F9F5": "U+9723",
+    "U+2F9F6": "U+29145",
+    "U+2F9F7": "U+2921A",
+    "U+2F9F8": "U+4A6E",
+    "U+2F9F9": "U+4A76",
+    "U+2F9FA": "U+97E0",
+    "U+2F9FB": "U+2940A",
+    "U+2F9FC": "U+4AB2",
+    "U+2F9FD": "U+29496",
+    "U+2F9FE": "U+980B",
+    "U+2F9FF": "U+980B",
+    "U+2FA00": "U+9829",
+    "U+2FA01": "U+295B6",
+    "U+2FA02": "U+98E2",
+    "U+2FA03": "U+4B33",
+    "U+2FA04": "U+9929",
+    "U+2FA05": "U+99A7",
+    "U+2FA06": "U+99C2",
+    "U+2FA07": "U+99FE",
+    "U+2FA08": "U+4BCE",
+    "U+2FA09": "U+29B30",
+    "U+2FA0A": "U+9B12",
+    "U+2FA0B": "U+9C40",
+    "U+2FA0C": "U+9CFD",
+    "U+2FA0D": "U+4CCE",
+    "U+2FA0E": "U+4CED",
+    "U+2FA0F": "U+9D67",
+    "U+2FA10": "U+2A0CE",
+    "U+2FA11": "U+4CF8",
+    "U+2FA12": "U+2A105",
+    "U+2FA13": "U+2A20E",
+    "U+2FA14": "U+2A291",
+    "U+2FA15": "U+9EBB",
+    "U+2FA16": "U+4D56",
+    "U+2FA17": "U+9EF9",
+    "U+2FA18": "U+9EFE",
+    "U+2FA19": "U+9F05",
+    "U+2FA1A": "U+9F0F",
+    "U+2FA1B": "U+9F16",
+    "U+2FA1C": "U+9F3B",
+    "U+2FA1D": "U+2A600",
+    "U+31E7C": "U+7DC7",
+}
+
+__all__ = ["CONFUSABLES"]
+
+# === exact/config.py ===
+DEFAULT_KEY_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]*$"
+_EXPANSION_RE = re.compile(r"\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*")
+
+
+class DotenvEntry(TypedDict):
+    """A single parsed .env entry."""
+    key: str
+    value: str
+    value_present: bool
+    quote_style: str
+    line: int
+
+
+class IniLine(TypedDict):
+    """A single parsed INI line."""
+    kind: str
+    line: int
+
+
+class IniSectionLine(IniLine):
+    """An INI section header line."""
+    name: str
+
+
+class IniKeyValueLine(IniLine):
+    """An INI key-value line."""
+    section: str | None
+    key: str
+    value: str
+
+
+class DotenvValidateResult(TypedDict):
+    """Result of dotenv validation."""
+    parse_ok: bool
+    entries: list[DotenvEntry]
+    duplicates: list[dict[str, object]]
+    invalid_lines: list[dict[str, object]]
+    requires_quoting: list[str]
+    contains_expansion_syntax: list[str]
+    findings: list[str]
+
+
+class IniValidateResult(TypedDict):
+    """Result of INI validation."""
+    parse_ok: bool
+    sections: list[str]
+    keys_by_section: dict[str, list[str]]
+    duplicates: list[dict[str, object]]
+    invalid_lines: list[dict[str, object]]
+    findings: list[str]
+
+
+def dotenv_validate(
+    text: str,
+    allow_export: bool = True,
+    key_pattern: str = DEFAULT_KEY_PATTERN,
+    duplicate_policy: str = "warn",
+) -> DotenvValidateResult:
+    """Validate .env-style key=value text.
+
+    Parses line by line, handling comments, blank lines, quoted values,
+    and optional ``export`` prefix.
+
+    Args:
+        text: Input text to validate.
+        allow_export: If True, allow ``export KEY=VALUE`` syntax.
+        key_pattern: Regex pattern that keys must match.
+        duplicate_policy: ``warn``, ``error``, or ``allow``.
+
+    Returns:
+        Validation result dict.
+    """
+    key_re = re.compile(key_pattern)
+    seen_keys: dict[str, int] = {}
+    entries: list[DotenvEntry] = []
+    duplicates: list[dict[str, object]] = []
+    invalid_lines: list[dict[str, object]] = []
+    requires_quoting: list[str] = []
+    contains_expansion: list[str] = []
+    findings: list[str] = []
+    parse_ok = True
+
+    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+        stripped = raw_line.strip()
+
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        line = stripped
+
+        if allow_export and line.startswith("export "):
+            line = line[len("export "):]
+        elif line.startswith("export "):
+            invalid_lines.append({
+                "line": line_no,
+                "text": raw_line,
+                "reason": "export keyword not allowed",
+            })
+            parse_ok = False
+            continue
+
+        eq_pos = line.find("=")
+        if eq_pos < 1:
+            invalid_lines.append({
+                "line": line_no,
+                "text": raw_line,
+                "reason": "missing '=' separator",
+            })
+            parse_ok = False
+            continue
+
+        key = line[:eq_pos].strip()
+        raw_value = line[eq_pos + 1:]
+
+        if not key_re.match(key):
+            invalid_lines.append({
+                "line": line_no,
+                "text": raw_line,
+                "reason": f"key '{key}' does not match pattern {key_pattern}",
+            })
+            parse_ok = False
+            continue
+
+        quote_style = "none"
+        value = raw_value.strip()
+
+        if len(value) >= 2 and value[0] in ("'", '"') and value[-1] == value[0]:
+            quote_style = value[0]
+            value = value[1:-1]
+        else:
+            value = value.split("#", 1)[0].rstrip()
+            if " " in value and not value.startswith(("{", "[")):
+                requires_quoting.append(key)
+
+        value_present = True
+        if value == "" or value == "''" or value == '""':
+            value_present = True
+
+        if _EXPANSION_RE.search(raw_value):
+            contains_expansion.append(key)
+
+        entry: DotenvEntry = {
+            "key": key,
+            "value": value,
+            "value_present": value_present,
+            "quote_style": quote_style,
+            "line": line_no,
+        }
+        entries.append(entry)
+
+        if key in seen_keys:
+            dup_info: dict[str, object] = {
+                "key": key,
+                "first_line": seen_keys[key],
+                "second_line": line_no,
+            }
+            duplicates.append(dup_info)
+            if duplicate_policy == "error":
+                parse_ok = False
+                findings.append(f"Duplicate key '{key}' at line {line_no} (first at line {seen_keys[key]})")
+            elif duplicate_policy == "warn":
+                findings.append(f"Duplicate key '{key}' at line {line_no} (first at line {seen_keys[key]})")
+        else:
+            seen_keys[key] = line_no
+
+    if not entries and not invalid_lines:
+        findings.append("No entries found")
+
+    return DotenvValidateResult(
+        parse_ok=parse_ok,
+        entries=entries,
+        duplicates=duplicates,
+        invalid_lines=invalid_lines,
+        requires_quoting=requires_quoting,
+        contains_expansion_syntax=contains_expansion,
+        findings=findings,
+    )
+
+
+def ini_validate(
+    text: str,
+    duplicate_policy: str = "warn",
+) -> IniValidateResult:
+    """Validate simple INI-style configuration.
+
+    Supports ``[section]`` headers, ``key = value`` lines, ``;`` and ``#``
+    comments, and optional ``key : value`` separator syntax.
+
+    Args:
+        text: Input text to validate.
+        duplicate_policy: ``warn``, ``error``, or ``allow``.
+
+    Returns:
+        Validation result dict.
+    """
+    seen_keys: dict[tuple[str | None, str], int] = {}
+    seen_sections: dict[str, int] = {}
+    sections: list[str] = []
+    keys_by_section: dict[str, list[str]] = {}
+    duplicates: list[dict[str, object]] = []
+    invalid_lines: list[dict[str, object]] = []
+    findings: list[str] = []
+    parse_ok = True
+    current_section: str | None = None
+
+    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+        stripped = raw_line.strip()
+
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section_name = stripped[1:-1].strip()
+            if not section_name:
+                invalid_lines.append({
+                    "line": line_no,
+                    "text": raw_line,
+                    "reason": "empty section name",
+                })
+                parse_ok = False
+                continue
+
+            if section_name in seen_sections:
+                dup_info: dict[str, object] = {
+                    "key": f"[{section_name}]",
+                    "first_line": seen_sections[section_name],
+                    "second_line": line_no,
+                    "section": section_name,
+                }
+                duplicates.append(dup_info)
+                if duplicate_policy == "error":
+                    parse_ok = False
+                    findings.append(
+                        f"Duplicate section '{section_name}' at line {line_no} "
+                        f"(first at line {seen_sections[section_name]})"
+                    )
+                elif duplicate_policy == "warn":
+                    findings.append(
+                        f"Duplicate section '{section_name}' at line {line_no} "
+                        f"(first at line {seen_sections[section_name]})"
+                    )
+            else:
+                seen_sections[section_name] = line_no
+
+            current_section = section_name
+            if section_name not in sections:
+                sections.append(section_name)
+            if section_name not in keys_by_section:
+                keys_by_section[section_name] = []
+            continue
+
+        eq_match = re.match(r"^([^=:\s]+)\s*[=:]\s*(.*)", stripped)
+        if not eq_match:
+            invalid_lines.append({
+                "line": line_no,
+                "text": raw_line,
+                "reason": "not a valid key=value line or section header",
+            })
+            parse_ok = False
+            continue
+
+        key = eq_match.group(1).strip()
+
+        section_key = (current_section, key)
+        section_label = current_section or "(top-level)"
+
+        if section_key in seen_keys:
+            dup_info2: dict[str, object] = {
+                "key": key,
+                "section": section_label,
+                "first_line": seen_keys[section_key],
+                "second_line": line_no,
+            }
+            duplicates.append(dup_info2)
+            if duplicate_policy == "error":
+                parse_ok = False
+                findings.append(
+                    f"Duplicate key '{key}' in section '{section_label}' at line {line_no} "
+                    f"(first at line {seen_keys[section_key]})"
+                )
+            elif duplicate_policy == "warn":
+                findings.append(
+                    f"Duplicate key '{key}' in section '{section_label}' at line {line_no} "
+                    f"(first at line {seen_keys[section_key]})"
+                )
+        else:
+            seen_keys[section_key] = line_no
+
+        if current_section is not None:
+            keys_by_section.setdefault(current_section, []).append(key)
+        else:
+            keys_by_section.setdefault("(top-level)", []).append(key)
+
+    if not sections and not keys_by_section.get("(top-level)") and not invalid_lines:
+        findings.append("No sections or keys found")
+
+    return IniValidateResult(
+        parse_ok=parse_ok,
+        sections=sections,
+        keys_by_section=keys_by_section,
+        duplicates=duplicates,
+        invalid_lines=invalid_lines,
+        findings=findings,
+    )
+
+# === exact/shell.py ===
+class ShellFeatures(TypedDict, total=False):
+    """Risk features detected in a shell command string."""
+    has_pipe: bool
+    has_redirection: bool
+    has_command_substitution: bool
+    has_variable_expansion: bool
+    has_glob_pattern: bool
+    has_control_operator: bool
+    has_unbalanced_quotes: bool
+
+
+class ShellSplitResult(TypedDict):
+    """Result of parsing a shell command string into argv."""
+    parse_ok: bool
+    argv: list[str]
+    argc: int
+    features: ShellFeatures
+    findings: list[str]
+
+
+class ShellQuoteJoinResult(TypedDict):
+    """Result of safely quoting an argv list into a shell string."""
+    command: str
+    roundtrip_ok: bool
+    findings: list[str]
+
+
+class ArgvCompareResult(TypedDict):
+    """Result of comparing two argv lists or command strings."""
+    argv_equal: bool
+    left_argv: list[str]
+    right_argv: list[str]
+    first_difference: int | None
+    findings: list[str]
+
+
+_GLOB_CHARS = set("*?[")
+_PIPE_CHARS = set("|")
+_REDIRECTION_CHARS = set("<>")
+_CONTROL_OPERATORS = {";", "&", "&&", "||"}
+_VARIABLE_PATTERN = re.compile(r"\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*")
+_COMMAND_SUB_PATTERN = re.compile(r"\$\(|`")
+
+
+def _detect_features(argv: list[str], raw: str) -> ShellFeatures:
+    """Detect risky lexical features in parsed argv and raw string."""
+    joined = " ".join(argv)
+
+    has_pipe = any(c in _PIPE_CHARS for c in joined)
+    has_redirection = any(c in _REDIRECTION_CHARS for c in joined)
+
+    has_command_substitution = bool(_COMMAND_SUB_PATTERN.search(raw))
+    has_variable_expansion = bool(_VARIABLE_PATTERN.search(raw))
+
+    has_glob_pattern = any(
+        any(c in _GLOB_CHARS for c in token)
+        for token in argv
+    )
+
+    has_control_operator = False
+    for op in _CONTROL_OPERATORS:
+        if op in joined:
+            has_control_operator = True
+            break
+
+    return ShellFeatures(
+        has_pipe=has_pipe,
+        has_redirection=has_redirection,
+        has_command_substitution=has_command_substitution,
+        has_variable_expansion=has_variable_expansion,
+        has_glob_pattern=has_glob_pattern,
+        has_control_operator=has_control_operator,
+        has_unbalanced_quotes=False,
+    )
+
+
+def shell_split(
+    command: str,
+    shell: str = "posix",
+    detect_risky_features: bool = True,
+) -> ShellSplitResult:
+    """Parse a shell-like command string into argv and report risky features.
+
+    This performs lexical POSIX-like parsing only, not full shell evaluation.
+    Uses Python's shlex module for tokenization.
+
+    Args:
+        command: The command string to parse.
+        shell: Shell dialect (only "posix" is supported).
+        detect_risky_features: Whether to detect risky lexical features.
+
+    Returns:
+        ShellSplitResult with parsed argv, features, and findings.
+    """
+    findings: list[str] = []
+
+    if shell != "posix":
+        return ShellSplitResult(
+            parse_ok=False,
+            argv=[],
+            argc=0,
+            features=ShellFeatures(),
+            findings=[f"Unsupported shell: {shell!r}. Only 'posix' is supported."],
+        )
+
+    if not command or not command.strip():
+        return ShellSplitResult(
+            parse_ok=True,
+            argv=[],
+            argc=0,
+            features=ShellFeatures(
+                has_pipe=False,
+                has_redirection=False,
+                has_command_substitution=False,
+                has_variable_expansion=False,
+                has_glob_pattern=False,
+                has_control_operator=False,
+                has_unbalanced_quotes=False,
+            ),
+            findings=["Empty command"],
+        )
+
+    lexer = shlex.shlex(command, posix=True)
+    lexer.whitespace_split = True
+    argv: list[str] = []
+    unbalanced = False
+    parse_error: str | None = None
+
+    try:
+        for token in lexer:
+            argv.append(token)
+    except ValueError as e:
+        unbalanced = True
+        parse_error = str(e)
+        findings.append(f"Parse error: {parse_error}")
+
+    features = _detect_features(argv, command) if detect_risky_features else ShellFeatures()
+    if unbalanced:
+        features["has_unbalanced_quotes"] = True
+
+    if detect_risky_features:
+        if features.get("has_pipe"):
+            findings.append("Contains pipe operator (|)")
+        if features.get("has_redirection"):
+            findings.append("Contains redirection operator (< or >)")
+        if features.get("has_command_substitution"):
+            findings.append("Contains command substitution ($( ) or backticks)")
+        if features.get("has_variable_expansion"):
+            findings.append("Contains variable expansion ($VAR or ${VAR})")
+        if features.get("has_glob_pattern"):
+            findings.append("Contains glob pattern characters (* ? [)")
+        if features.get("has_control_operator"):
+            findings.append("Contains control operator (; & && ||)")
+
+    return ShellSplitResult(
+        parse_ok=parse_error is None,
+        argv=argv,
+        argc=len(argv),
+        features=features,
+        findings=findings,
+    )
+
+
+def shell_quote_join(
+    argv: list[str],
+    shell: str = "posix",
+) -> ShellQuoteJoinResult:
+    """Safely quote a list of argv tokens into a POSIX-like shell string.
+
+    Ensures round-trip safety: shell_split(shell_quote_join(argv)) should
+    produce an equivalent argv.
+
+    Args:
+        argv: List of argument strings to join.
+        shell: Shell dialect (only "posix" is supported).
+
+    Returns:
+        ShellQuoteJoinResult with the quoted command string and roundtrip status.
+    """
+    findings: list[str] = []
+
+    if shell != "posix":
+        return ShellQuoteJoinResult(
+            command="",
+            roundtrip_ok=False,
+            findings=[f"Unsupported shell: {shell!r}. Only 'posix' is supported."],
+        )
+
+    parts = [shlex.quote(token) for token in argv]
+    command = " ".join(parts)
+
+    # Verify round-trip
+    roundtrip_ok = False
+    try:
+        result = shell_split(command, shell="posix", detect_risky_features=False)
+        if result["parse_ok"] and result["argv"] == argv:
+            roundtrip_ok = True
+        elif result["parse_ok"]:
+            findings.append(
+                f"Round-trip mismatch: expected {argv!r}, got {result['argv']!r}"
+            )
+        else:
+            findings.append("Round-trip parse failed")
+    except Exception as e:
+        findings.append(f"Round-trip verification error: {e}")
+
+    return ShellQuoteJoinResult(
+        command=command,
+        roundtrip_ok=roundtrip_ok,
+        findings=findings,
+    )
+
+
+def argv_compare(
+    left_command: str | None = None,
+    right_command: str | None = None,
+    left_argv: list[str] | None = None,
+    right_argv: list[str] | None = None,
+    shell: str = "posix",
+) -> ArgvCompareResult:
+    """Compare two command strings or argv lists by parsed argv rather than raw text.
+
+    Accepts either command strings or pre-parsed argv lists. If both a command
+    string and an argv list are provided for the same side, the command string
+    takes precedence.
+
+    Args:
+        left_command: Left command string to parse and compare.
+        right_command: Right command string to parse and compare.
+        left_argv: Left pre-parsed argv list.
+        right_argv: Right pre-parsed argv list.
+        shell: Shell dialect (only "posix" is supported).
+
+    Returns:
+        ArgvCompareResult with comparison results.
+    """
+    findings: list[str] = []
+
+    # Resolve left argv
+    resolved_left: list[str] | None = left_argv
+    if left_command is not None:
+        split_left = shell_split(left_command, shell=shell, detect_risky_features=False)
+        if not split_left["parse_ok"]:
+            return ArgvCompareResult(
+                argv_equal=False,
+                left_argv=[],
+                right_argv=right_argv or [],
+                first_difference=0,
+                findings=[f"Failed to parse left command: {split_left['findings']}"],
+            )
+        resolved_left = split_left["argv"]
+        if left_argv is not None and split_left["argv"] != left_argv:
+            findings.append(
+                "Left command parse differs from provided left_argv"
+            )
+
+    # Resolve right argv
+    resolved_right: list[str] | None = right_argv
+    if right_command is not None:
+        split_right = shell_split(right_command, shell=shell, detect_risky_features=False)
+        if not split_right["parse_ok"]:
+            return ArgvCompareResult(
+                argv_equal=False,
+                left_argv=resolved_left or [],
+                right_argv=[],
+                first_difference=0,
+                findings=[f"Failed to parse right command: {split_right['findings']}"],
+            )
+        resolved_right = split_right["argv"]
+        if right_argv is not None and split_right["argv"] != right_argv:
+            findings.append(
+                "Right command parse differs from provided right_argv"
+            )
+
+    if resolved_left is None:
+        resolved_left = []
+    if resolved_right is None:
+        resolved_right = []
+
+    # Compare
+    argv_equal = resolved_left == resolved_right
+    first_diff: int | None = None
+
+    if not argv_equal:
+        for i in range(min(len(resolved_left), len(resolved_right))):
+            if resolved_left[i] != resolved_right[i]:
+                first_diff = i
+                findings.append(
+                    f"First difference at index {i}: {resolved_left[i]!r} != {resolved_right[i]!r}"
+                )
+                break
+        else:
+            first_diff = min(len(resolved_left), len(resolved_right))
+            if len(resolved_left) > len(resolved_right):
+                findings.append(
+                    f"Left has {len(resolved_left) - len(resolved_right)} extra tokens"
+                )
+            else:
+                findings.append(
+                    f"Right has {len(resolved_right) - len(resolved_left)} extra tokens"
+                )
+
+    return ArgvCompareResult(
+        argv_equal=argv_equal,
+        left_argv=resolved_left,
+        right_argv=resolved_right,
+        first_difference=first_diff,
+        findings=findings,
+    )
+
+# === exact/path_tools.py ===
+class PathCompareResult(TypedDict):
+    equal: bool
+    left_normalized: str
+    right_normalized: str
+    differences: list[str]
+    findings: list[str]
+
+
+class PathScopeCheckResult(TypedDict):
+    inside_root: bool
+    root_normalized: str
+    target_normalized: str
+    relative_path: str
+    escapes_via_dotdot: bool
+    absolute_target: str
+    findings: list[str]
+
+
+class PathAnalyzeResult(TypedDict):
+    input: str
+    style: str
+    absolute: bool
+    has_traversal: bool
+    components: list[str]
+    parent: str | None
+    name: str | None
+    stem: str | None
+    suffix: str | None
+    suffixes: list[str]
+    hidden: bool
+    normalized_lexical: str
+    warnings: list[str]
+    summary: str
+
+
+class PathNormalizeResult(TypedDict):
+    normalized: str
+    is_absolute: bool
+    components: list[str]
+    warnings: list[str]
+
+
+def _detect_windows_path(path: str) -> bool:
+    """Detect if path uses Windows syntax."""
+    if len(path) < 2:
+        return False
+    if path[1] == ":":
+        return True
+    if path[:2] == "\\\\":
+        return True
+    if "\\" in path:
+        return True
+    return False
+
+
+def _split_posix_components(path: str) -> tuple[list[str], str | None]:
+    """Split POSIX path into components and root.
+
+    Returns (components, root) where root is "/" for absolute paths, None for relative.
+    """
+    if path == "":
+        return [], None
+
+    if path.startswith("/"):
+        root = "/"
+        rest = path[1:]
+        if rest:
+            parts = rest.split("/")
+            components = [p for p in parts if p]
+        else:
+            components = []
+    else:
+        root = None
+        parts = path.split("/")
+        components = [p for p in parts if p]
+
+    return components, root
+
+
+def _split_windows_components(path: str) -> tuple[list[str], str | None]:
+    """Split Windows path into components and root.
+
+    Returns (components, root) where root is like "C:" or "\\\\server\\share", None for relative.
+    """
+    if path == "":
+        return [], None
+
+    if len(path) >= 2 and path[1] == ":":
+        root = path[:2]
+        rest = path[2:]
+        if rest:
+            parts = re.split(r"[/\\]", rest)
+            components = [p for p in parts if p]
+        else:
+            components = []
+        return components, root
+
+    if path.startswith("\\\\"):
+        parts = re.split(r"[/\\]", path)
+        if len(parts) >= 4:
+            root = "\\\\" + parts[1] + "\\" + parts[2]
+            components = [p for p in parts[3:] if p]
+        else:
+            root = path
+            components = []
+        return components, root
+
+    if "\\" in path:
+        parts = re.split(r"[/\\]", path)
+        components = [p for p in parts if p]
+        root = None
+        return components, root
+
+    parts = path.split("/")
+    components = [p for p in parts if p]
+    root = None
+    return components, root
+
+
+def _get_suffixes(name: str) -> list[str]:
+    """Extract all suffixes from a filename.
+
+    For ".tar.gz" returns [".tar.gz", ".gz"]
+    For ".txt" returns [".txt"]
+    """
+    if not name or name == ".":
+        return []
+
+    parts = name.split(".")
+    if len(parts) <= 1:
+        return []
+
+    suffixes = []
+    for i in range(1, len(parts)):
+        suffix = "." + ".".join(parts[i:])
+        suffixes.append(suffix)
+
+    return suffixes
+
+
+def path_analyze(path: str, style: str = "auto") -> PathAnalyzeResult:
+    """Analyze path components, extensions, hidden status, and traversal.
+
+    This is lexical analysis only. Does NOT call Path.exists, resolve,
+    or any filesystem API.
+
+    Args:
+        path: Path string to analyze.
+        style: "auto", "posix", or "windows". Default "auto" detects from path syntax.
+
+    Returns:
+        PathAnalyzeResult with detailed path information.
+    """
+    warnings: list[str] = []
+    input_path = path
+
+    if style == "auto":
+        detected = _detect_windows_path(path)
+        style = "windows" if detected else "posix"
+
+    if style == "windows":
+        raw_components, root = _split_windows_components(path)
+        sep = "\\"
+    else:
+        raw_components, root = _split_posix_components(path)
+        sep = "/"
+
+    components = []
+    normalized_parts = []
+
+    for i, comp in enumerate(raw_components):
+        if comp == ".":
+            warnings.append(f"Redundant current directory segment at position {i}")
+            components.append(comp)
+            normalized_parts.append(comp)
+        elif comp == "..":
+            warnings.append(f"Parent traversal segment at position {i}")
+            components.append(comp)
+            normalized_parts.append(comp)
+        else:
+            components.append(comp)
+            normalized_parts.append(comp)
+
+    has_traversal = ".." in raw_components
+    absolute = root is not None
+
+    name = components[-1] if components else None
+
+    if name:
+        suffixes = _get_suffixes(name)
+        suffix = suffixes[-1] if suffixes else None
+        if suffixes:
+            full_suffix = suffixes[0]
+            stem = name[:-len(full_suffix)] if len(full_suffix) > 0 else name
+        else:
+            stem = name
+    else:
+        suffixes = []
+        suffix = None
+        stem = None
+
+    if components:
+        parent_parts = components[:-1]
+        if parent_parts:
+            if root:
+                if style == "posix":
+                    parent = sep + sep.join(parent_parts)
+                else:
+                    parent = root + sep + sep.join(parent_parts)
+            else:
+                parent = sep.join(parent_parts)
+        else:
+            parent = None
+    else:
+        parent = None
+
+    hidden = False
+    if name and name != "." and name != "..":
+        hidden = name.startswith(".")
+
+    normalized = sep.join(normalized_parts) if normalized_parts else ""
+    if root and style == "posix":
+        normalized = sep + normalized
+
+    confusables = detect_confusables(path)
+    if confusables:
+        warnings.append(f"Path contains {len(confusables)} confusable character(s)")
+
+    summary_parts = []
+    if style != "auto":
+        summary_parts.append(f"{style.upper()}")
+    if absolute:
+        summary_parts.append("absolute")
+    else:
+        summary_parts.append("relative")
+    if hidden:
+        summary_parts.append("hidden")
+    if has_traversal:
+        summary_parts.append("with traversal")
+    if len(components) == 1:
+        summary_parts.append(f"single component '{components[0]}'")
+    elif components:
+        summary_parts.append(f"{len(components)} components")
+    if suffix:
+        if len(suffixes) > 1:
+            summary_parts.append(f"suffixes {suffixes}")
+        else:
+            summary_parts.append(f"suffix '{suffix}'")
+
+    summary = ", ".join(summary_parts) if summary_parts else "empty path"
+
+    return PathAnalyzeResult(
+        input=input_path,
+        style=style,
+        absolute=absolute,
+        has_traversal=has_traversal,
+        components=components,
+        parent=parent,
+        name=name,
+        stem=stem,
+        suffix=suffix,
+        suffixes=suffixes,
+        hidden=hidden,
+        normalized_lexical=normalized,
+        warnings=warnings,
+        summary=summary,
+    )
+
+
+def path_normalize(
+    path: str,
+    platform: str = "posix",
+    collapse_dot_segments: bool = True,
+    preserve_trailing_separator: bool = False,
+) -> PathNormalizeResult:
+    """Normalize a path by collapsing dot segments and resolving parent traversal.
+
+    This is lexical normalization only. Does NOT call filesystem APIs.
+
+    Args:
+        path: Path string to normalize.
+        platform: "posix" or "windows".
+        collapse_dot_segments: If True, collapse . and .. segments.
+        preserve_trailing_separator: If True, keep trailing separator.
+
+    Returns:
+        PathNormalizeResult with normalized path and metadata.
+    """
+    warnings: list[str] = []
+    has_dot_dot = False
+    has_dot = False
+    had_trailing_separator = path.endswith("/") or path.endswith("\\")
+
+    if platform not in ("posix", "windows"):
+        platform = "posix"
+
+    sep = "/" if platform == "posix" else "\\"
+
+    components = []
+    is_unc_track = platform == "windows" and (path.startswith("\\\\") or path.startswith("//"))
+    for part in path.split(sep):
+        if part == "":
+            continue
+        if part == ".":
+            has_dot = True
+            if collapse_dot_segments:
+                warnings.append("Collapsing dot segment")
+                continue
+            else:
+                components.append(part)
+                continue
+        elif part == "..":
+            has_dot_dot = True
+            if collapse_dot_segments:
+                warnings.append("Collapsing dot-dot segment")
+                if is_unc_track:
+                    if components and components[-1] not in ("", ".."):
+                        if components[-1] != "server" or len(components) == 1:
+                            components.pop()
+                        else:
+                            components.append("..")
+                    else:
+                        components.append("..")
+                elif components and components[-1] != "..":
+                    components.pop()
+                else:
+                    components.append("..")
+            else:
+                components.append(part)
+            continue
+        elif is_unc_track and part in ("server", "share"):
+            if len(components) >= 2:
+                is_unc_track = False
+            components.append(part)
+        elif part not in ("", ".", ".."):
+            components.append(part)
+
+    if preserve_trailing_separator and had_trailing_separator and components:
+        components.append("")
+
+    normalized = sep.join(components) if components else ""
+
+    if platform == "posix" and path.startswith("/") and not normalized.startswith("/"):
+        normalized = "/" + normalized
+    elif platform == "windows":
+        if is_unc_track:
+            normalized = "\\\\" + normalized
+        elif len(path) >= 2 and path[1] == ":":
+            normalized = path[:2] + normalized
+
+    if not normalized:
+        if platform == "posix" and path.startswith("/"):
+            normalized = "/"
+        elif platform == "windows" and is_unc_track:
+            normalized = "\\\\"
+
+    is_absolute = (
+        (platform == "posix" and path.startswith("/")) or
+        (platform == "windows" and (
+            (len(path) >= 2 and path[1] == ":") or
+            is_unc_track
+        ))
+    )
+
+    if has_dot and not collapse_dot_segments:
+        warnings.append("Path contains dot segments")
+    if has_dot_dot and not collapse_dot_segments:
+        warnings.append("Path contains parent traversal segments")
+
+    return PathNormalizeResult(
+        normalized=normalized,
+        is_absolute=is_absolute,
+        components=components,
+        warnings=warnings,
+    )
+
+
+def path_compare(
+    left: str,
+    right: str,
+    platform: str = "posix",
+    case_sensitive: bool = True,
+    normalize_separators: bool = True,
+    collapse_dot_segments: bool = True,
+) -> PathCompareResult:
+    """Compare two paths under explicit normalization rules.
+
+    This is lexical comparison only. Does NOT call filesystem APIs.
+
+    Args:
+        left: First path string.
+        right: Second path string.
+        platform: "posix" or "windows".
+        case_sensitive: Whether comparison is case-sensitive.
+        normalize_separators: Whether to normalize path separators.
+        collapse_dot_segments: Whether to collapse . and .. segments.
+
+    Returns:
+        PathCompareResult with comparison result.
+    """
+    findings: list[str] = []
+
+    if platform not in ("posix", "windows"):
+        platform = "posix"
+
+    sep = "/" if platform == "posix" else "\\"
+
+    def _normalize_path(p: str) -> str:
+        result = p
+        if normalize_separators:
+            if platform == "posix":
+                result = result.replace("\\", "/")
+            else:
+                result = result.replace("/", "\\")
+        norm_result = path_normalize(result, platform, collapse_dot_segments)
+        return norm_result["normalized"]
+
+    left_normalized = _normalize_path(left)
+    right_normalized = _normalize_path(right)
+
+    left_cmp = left_normalized
+    right_cmp = right_normalized
+
+    if not case_sensitive:
+        left_cmp = left_cmp.lower()
+        right_cmp = right_cmp.lower()
+
+    equal = left_cmp == right_cmp
+
+    differences: list[str] = []
+    if not equal:
+        differences.append(f"Normalized forms differ: '{left_normalized}' vs '{right_normalized}'")
+
+    if not case_sensitive:
+        findings.append("Case-insensitive comparison used")
+    if normalize_separators:
+        findings.append("Separators normalized to platform default")
+    if collapse_dot_segments:
+        findings.append("Dot segments collapsed")
+
+    return PathCompareResult(
+        equal=equal,
+        left_normalized=left_normalized,
+        right_normalized=right_normalized,
+        differences=differences,
+        findings=findings,
+    )
+
+
+def path_scope_check(
+    root: str,
+    target: str,
+    platform: str = "posix",
+    case_sensitive: bool = True,
+) -> PathScopeCheckResult:
+    """Determine whether a target path remains lexically inside a declared root.
+
+    This is lexical only. Does NOT resolve symlinks. Symlink-safe
+    enforcement requires filesystem-aware checks outside this tool.
+
+    Args:
+        root: Root directory path.
+        target: Target path to check.
+        platform: "posix" or "windows".
+        case_sensitive: Whether comparison is case-sensitive.
+
+    Returns:
+        PathScopeCheckResult with scope check result.
+    """
+    findings: list[str] = []
+
+    if platform not in ("posix", "windows"):
+        platform = "posix"
+
+    sep = "/" if platform == "posix" else "\\"
+
+    def _pre_normalize(p: str) -> str:
+        result = p
+        if platform == "windows":
+            result = result.replace("/", "\\")
+        else:
+            result = result.replace("\\", "/")
+        return result
+
+    root_pre = _pre_normalize(root)
+    target_pre = _pre_normalize(target)
+
+    root_norm = path_normalize(root_pre, platform, True)
+    target_norm = path_normalize(target_pre, platform, True)
+
+    root_normalized = root_norm["normalized"]
+    target_normalized = target_norm["normalized"]
+
+    root_is_abs = root_norm["is_absolute"]
+    target_is_abs = target_norm["is_absolute"]
+
+    if target_is_abs and not root_is_abs:
+        findings.append("Target is absolute but root is relative")
+
+    absolute_target = target_normalized
+    if target_is_abs:
+        absolute_target = target_normalized
+    else:
+        if platform == "posix":
+            absolute_target = root_normalized.rstrip("/") + "/" + target_normalized
+        else:
+            absolute_target = root_normalized.rstrip("\\") + "\\" + target_normalized
+        abs_norm = path_normalize(absolute_target, platform, True)
+        absolute_target = abs_norm["normalized"]
+
+    root_cmp = root_normalized
+    target_cmp = absolute_target
+    if not case_sensitive:
+        root_cmp = root_cmp.lower()
+        target_cmp = target_cmp.lower()
+
+    if platform == "posix":
+        root_prefix = root_cmp.rstrip("/") + "/"
+    else:
+        root_prefix = root_cmp.rstrip("\\") + "\\"
+
+    inside_root = target_cmp.startswith(root_prefix) or target_cmp == root_cmp
+
+    escapes_via_dotdot = ".." in target
+
+    relative_path = ""
+    if inside_root:
+        if platform == "posix":
+            relative_path = target_cmp[len(root_prefix):]
+        else:
+            relative_path = target_cmp[len(root_prefix):]
+        if not relative_path:
+            relative_path = "."
+
+    if not case_sensitive:
+        findings.append("Case-insensitive comparison used")
+    if escapes_via_dotdot:
+        findings.append("Target path contains parent traversal segments")
+    if not target_is_abs:
+        findings.append("Target is relative, resolved against root")
+
+    return PathScopeCheckResult(
+        inside_root=inside_root,
+        root_normalized=root_normalized,
+        target_normalized=target_normalized,
+        relative_path=relative_path,
+        escapes_via_dotdot=escapes_via_dotdot,
+        absolute_target=absolute_target,
+        findings=findings,
+    )
+
+# === exact/markdown.py ===
+class MarkdownHeading(TypedDict):
+    """A heading found in Markdown text."""
+    level: int
+    text: str
+    line: int
+    slug: str
+
+
+class MarkdownCodeFence(TypedDict):
+    """A code fence found in Markdown text."""
+    language: str
+    start_line: int
+    end_line: int | None
+    closed: bool
+
+
+class MarkdownLink(TypedDict):
+    """A Markdown link found in text."""
+    visible_text: str
+    target: str
+    line: int
+    mismatch_flags: list[str]
+
+
+class MarkdownFrontmatter(TypedDict):
+    """Frontmatter detection result."""
+    present: bool
+    format: str
+    line_start: int | None
+    line_end: int | None
+
+
+class MarkdownStructureResult(TypedDict):
+    """Result of markdown_structure analysis."""
+    headings: list[MarkdownHeading]
+    code_fences: list[MarkdownCodeFence]
+    links: list[MarkdownLink]
+    html_comments: list[dict]
+    frontmatter: MarkdownFrontmatter
+    tables_detected: bool
+    findings: list[str]
+
+
+class CodeFenceBlock(TypedDict):
+    """A fenced code block from code_fence_extract."""
+    index: int
+    language: str
+    start_line: int
+    end_line: int | None
+    closed: bool
+    content: str | None
+    fingerprint: str
+
+
+class CodeFenceExtractResult(TypedDict):
+    """Result of code_fence_extract analysis."""
+    blocks: list[CodeFenceBlock]
+    unclosed_fences: list[dict]
+    findings: list[str]
+
+
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)(?:\s+#+)?\s*$")
+_CODE_FENCE_RE = re.compile(r"^(`{3,}|~{3,})(.*)$")
+_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->")
+_TABLE_SEPARATOR_RE = re.compile(r"^\|?\s*[-:]+[-| :]*$")
+
+
+def _make_slug(text: str) -> str:
+    """Create a GitHub-style heading slug from heading text."""
+    slug = text.lower().strip()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug)
+    return slug.strip("-")
+
+
+def markdown_structure(
+    text: str,
+    include_sections: bool = True,
+    include_links: bool = True,
+    include_code_fences: bool = True,
+    include_html_comments: bool = True,
+) -> MarkdownStructureResult:
+    """Parse Markdown structure using a deterministic line scanner.
+
+    This is NOT a full CommonMark parser. It uses regex-based line scanning
+    for headings, code fences, links, HTML comments, and frontmatter.
+    Nested constructs and inline parsing edge cases are out of scope.
+
+    Args:
+        text: Markdown text to analyze.
+        include_sections: Include heading detection (default true).
+        include_links: Include link detection (default true).
+        include_code_fences: Include code fence detection (default true).
+        include_html_comments: Include HTML comment detection (default true).
+
+    Returns:
+        MarkdownStructureResult with headings, code_fences, links,
+        html_comments, frontmatter, tables_detected, and findings.
+    """
+    lines = text.split("\n")
+    headings: list[MarkdownHeading] = []
+    code_fences: list[MarkdownCodeFence] = []
+    links: list[MarkdownLink] = []
+    html_comments: list[dict] = []
+    findings: list[str] = []
+
+    # Frontmatter detection
+    frontmatter: MarkdownFrontmatter = {
+        "present": False,
+        "format": "unknown",
+        "line_start": None,
+        "line_end": None,
+    }
+
+    # Tables detection
+    tables_detected = False
+
+    # Code fence state
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
+    fence_start_line = 0
+    fence_lang = ""
+
+    in_frontmatter = False
+
+    for i, line in enumerate(lines):
+        line_num = i + 1
+
+        # Frontmatter detection (must be at line 1)
+        if i == 0:
+            stripped = line.strip()
+            if stripped == "---":
+                in_frontmatter = True
+                frontmatter["present"] = True
+                frontmatter["format"] = "yaml"
+                frontmatter["line_start"] = line_num
+                continue
+            elif stripped == "+++":
+                in_frontmatter = True
+                frontmatter["present"] = True
+                frontmatter["format"] = "toml"
+                frontmatter["line_start"] = line_num
+                continue
+
+        # Frontmatter end detection
+        if in_frontmatter:
+            stripped = line.strip()
+            if stripped == "---" and frontmatter["format"] == "yaml":
+                frontmatter["line_end"] = line_num
+                in_frontmatter = False
+                continue
+            elif stripped == "+++" and frontmatter["format"] == "toml":
+                frontmatter["line_end"] = line_num
+                in_frontmatter = False
+                continue
+            continue
+
+        # Code fence detection
+        if include_code_fences:
+            fence_match = _CODE_FENCE_RE.match(line.strip())
+            if fence_match:
+                fence_opener = fence_match.group(1)
+                lang = fence_match.group(2).strip()
+                current_fence_char = fence_opener[0]
+                current_fence_len = len(fence_opener)
+
+                if not in_fence:
+                    in_fence = True
+                    fence_char = current_fence_char
+                    fence_len = current_fence_len
+                    fence_start_line = line_num
+                    fence_lang = lang
+                elif current_fence_char == fence_char and current_fence_len >= fence_len:
+                    # Closing fence
+                    code_fences.append(MarkdownCodeFence(
+                        language=fence_lang,
+                        start_line=fence_start_line,
+                        end_line=line_num,
+                        closed=True,
+                    ))
+                    in_fence = False
+                continue
+
+        # Heading detection (only outside code fences)
+        if include_sections and not in_fence:
+            heading_match = _HEADING_RE.match(line.strip())
+            if heading_match:
+                level = len(heading_match.group(1))
+                text_content = heading_match.group(2).strip()
+                headings.append(MarkdownHeading(
+                    level=level,
+                    text=text_content,
+                    line=line_num,
+                    slug=_make_slug(text_content),
+                ))
+
+        # Link detection (only outside code fences)
+        if include_links and not in_fence:
+            for link_match in _LINK_RE.finditer(line):
+                visible = link_match.group(1)
+                target = link_match.group(2)
+                mismatch_flags: list[str] = []
+
+                # Detect common mismatch patterns
+                if visible.startswith("http://") or visible.startswith("https://"):
+                    if visible != target:
+                        mismatch_flags.append("visible_is_url")
+
+                if re.match(r"^[\w.-]+\.[\w]{2,}$", visible):
+                    if visible != target:
+                        mismatch_flags.append("visible_is_domain")
+
+                links.append(MarkdownLink(
+                    visible_text=visible,
+                    target=target,
+                    line=line_num,
+                    mismatch_flags=mismatch_flags,
+                ))
+
+        # HTML comment detection
+        if include_html_comments and not in_fence:
+            for comment_match in _HTML_COMMENT_RE.finditer(line):
+                comment_text = comment_match.group(0)
+                html_comments.append({
+                    "text": comment_text,
+                    "line": line_num,
+                    "start_col": comment_match.start() + 1,
+                    "end_col": comment_match.end() + 1,
+                })
+
+        # Table detection (only outside code fences)
+        if not tables_detected and not in_fence:
+            if _TABLE_SEPARATOR_RE.match(line.strip()):
+                # Check if the previous non-empty line has pipe characters
+                for j in range(i - 1, -1, -1):
+                    prev = lines[j].strip()
+                    if prev:
+                        if "|" in prev:
+                            tables_detected = True
+                        break
+
+    # Handle unclosed code fence
+    if in_fence:
+        code_fences.append(MarkdownCodeFence(
+            language=fence_lang,
+            start_line=fence_start_line,
+            end_line=None,
+            closed=False,
+        ))
+        findings.append(
+            f"Unclosed code fence starting at line {fence_start_line}"
+        )
+
+    # Handle unclosed frontmatter
+    if in_frontmatter:
+        findings.append("Unclosed frontmatter block")
+
+    return MarkdownStructureResult(
+        headings=headings,
+        code_fences=code_fences,
+        links=links,
+        html_comments=html_comments,
+        frontmatter=frontmatter,
+        tables_detected=tables_detected,
+        findings=findings,
+    )
+
+
+def _fingerprint(content: str) -> str:
+    """Compute SHA-256 fingerprint of content."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def code_fence_extract(
+    text: str,
+    language: str | None = None,
+    include_content: bool = True,
+) -> CodeFenceExtractResult:
+    """Extract fenced code blocks with exact line ranges and fingerprints.
+
+    Uses a deterministic line scanner. Does not handle nested fences or
+    inline code that might look like fences.
+
+    Args:
+        text: Markdown text to scan.
+        language: Optional language filter (case-insensitive).
+        include_content: Include block content in output (default true, capped).
+
+    Returns:
+        CodeFenceExtractResult with blocks, unclosed_fences, and findings.
+    """
+    lines = text.split("\n")
+    blocks: list[CodeFenceBlock] = []
+    unclosed_fences: list[dict] = []
+    findings: list[str] = []
+    index = 0
+
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
+    fence_start_line = 0
+    fence_lang = ""
+    fence_content_lines: list[str] = []
+
+    for i, line in enumerate(lines):
+        line_num = i + 1
+        fence_match = _CODE_FENCE_RE.match(line.strip())
+
+        if fence_match:
+            fence_opener = fence_match.group(1)
+            lang = fence_match.group(2).strip()
+            current_fence_char = fence_opener[0]
+            current_fence_len = len(fence_opener)
+
+            if not in_fence:
+                in_fence = True
+                fence_char = current_fence_char
+                fence_len = current_fence_len
+                fence_start_line = line_num
+                fence_lang = lang
+                fence_content_lines = []
+                continue
+            elif current_fence_char == fence_char and current_fence_len >= fence_len:
+                # Closing fence
+                content_text = "\n".join(fence_content_lines)
+                fp = _fingerprint(content_text)
+
+                # Apply language filter
+                if language is None or fence_lang.lower() == language.lower():
+                    blocks.append(CodeFenceBlock(
+                        index=index,
+                        language=fence_lang,
+                        start_line=fence_start_line,
+                        end_line=line_num,
+                        closed=True,
+                        content=content_text if include_content else None,
+                        fingerprint=fp,
+                    ))
+                    index += 1
+
+                in_fence = False
+                continue
+
+        if in_fence:
+            fence_content_lines.append(line)
+
+    # Handle unclosed fences
+    if in_fence:
+        content_text = "\n".join(fence_content_lines)
+        fp = _fingerprint(content_text)
+
+        unclosed_fences.append({
+            "index": index,
+            "language": fence_lang,
+            "start_line": fence_start_line,
+            "end_line": None,
+            "content_preview": content_text[:200],
+            "fingerprint": fp,
+        })
+
+        # Only add to blocks if language filter matches
+        if language is None or fence_lang.lower() == language.lower():
+            blocks.append(CodeFenceBlock(
+                index=index,
+                language=fence_lang,
+                start_line=fence_start_line,
+                end_line=None,
+                closed=False,
+                content=content_text if include_content else None,
+                fingerprint=fp,
+            ))
+            index += 1
+
+        findings.append(
+            f"Unclosed code fence starting at line {fence_start_line}"
+        )
+
+    return CodeFenceExtractResult(
+        blocks=blocks,
+        unclosed_fences=unclosed_fences,
+        findings=findings,
+    )
+
+# === exact/patch.py ===
+MAX_PATCH_LENGTH = 200_000
+MAX_ORIGINAL_LENGTH = 200_000
+MAX_RESULT_TEXT_LENGTH = 50_000
+
+
+class PatchHunk(TypedDict):
+    """A single hunk parsed from a unified diff."""
+    old_start: int
+    old_count: int
+    new_start: int
+    new_count: int
+    header_line: str
+    lines: list[str]
+    raw: str
+
+
+class PatchFile(TypedDict):
+    """A single file parsed from a unified diff."""
+    old_file: str
+    new_file: str
+    hunks: list[PatchHunk]
+    raw: str
+
+
+class PatchParseResult(TypedDict):
+    """Result of parsing a unified diff."""
+    ok: bool
+    files: list[PatchFile]
+    error: str | None
+
+
+class FailedHunk(TypedDict):
+    """Information about a hunk that failed to apply."""
+    hunk_index: int
+    old_start: int
+    old_count: int
+    expected_context: list[str]
+    actual_context: list[str]
+    reason: str
+
+
+class PatchApplyCheckResult(TypedDict):
+    """Result of checking whether a patch applies cleanly."""
+    patch_parse_ok: bool
+    applies: bool
+    hunks_total: int
+    hunks_applied: int
+    hunks_failed: int
+    failed_hunks: list[FailedHunk]
+    affected_line_ranges: list[dict[str, int]]
+    newline_style_before: str
+    newline_style_after: str
+    result_fingerprint: str
+    result_text: str | None
+    findings: list[str]
+
+
+class PatchSummaryResult(TypedDict):
+    """Result of summarizing a unified diff."""
+    files_changed: int
+    hunks_total: int
+    additions: int
+    deletions: int
+    renames_detected: list[dict[str, str]]
+    binary_patch_detected: bool
+    line_ranges_by_file: dict[str, list[dict[str, int]]]
+    findings: list[str]
+
+
+def _detect_newline_style(text: str) -> str:
+    """Detect newline style in text."""
+    crlf_count = text.count("\r\n")
+    lf_count = text.count("\n") - crlf_count
+    if crlf_count > 0 and lf_count == 0:
+        return "CRLF"
+    elif lf_count > 0 and crlf_count == 0:
+        return "LF"
+    elif crlf_count > 0 and lf_count > 0:
+        return "mixed"
+    return "none"
+
+
+def _parse_hunk_header(line: str) -> tuple[int, int, int, int] | None:
+    """Parse a @@ -start,count +start,count @@ header line."""
+    m = re.match(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@', line)
+    if not m:
+        return None
+    old_start = int(m.group(1))
+    old_count = int(m.group(2) or "1")
+    new_start = int(m.group(3))
+    new_count = int(m.group(4) or "1")
+    return old_start, old_count, new_start, new_count
+
+
+def parse_unified_diff(patch_text: str) -> PatchParseResult:
+    """Parse a unified diff string into structured data.
+
+    Args:
+        patch_text: Raw unified diff text.
+
+    Returns:
+        PatchParseResult with parsed files and hunks.
+    """
+    if not patch_text or not patch_text.strip():
+        return PatchParseResult(ok=False, files=[], error="Empty patch text")
+
+    files: list[PatchFile] = []
+    lines = patch_text.split("\n")
+    i = 0
+    current_old_file = ""
+    current_new_file = ""
+    current_hunks: list[PatchHunk] = []
+    current_hunk_lines: list[str] = []
+    current_hunk_header = ""
+    current_hunk_info: tuple[int, int, int, int] | None = None
+    in_hunk = False
+
+    while i < len(lines):
+        line = lines[i]
+
+        if line.startswith("--- ") or line.startswith("+++ "):
+            if in_hunk and current_hunk_info:
+                old_s, old_c, new_s, new_c = current_hunk_info
+                raw = current_hunk_header + "\n" + "\n".join(current_hunk_lines)
+                current_hunks.append(PatchHunk(
+                    old_start=old_s, old_count=old_c,
+                    new_start=new_s, new_count=new_c,
+                    header_line=current_hunk_header,
+                    lines=list(current_hunk_lines),
+                    raw=raw,
+                ))
+                in_hunk = False
+                current_hunk_lines = []
+                current_hunk_info = None
+
+            if line.startswith("--- "):
+                current_old_file = line[4:].strip()
+                if current_old_file == "/dev/null":
+                    current_old_file = ""
+            elif line.startswith("+++ "):
+                current_new_file = line[4:].strip()
+                if current_new_file == "/dev/null":
+                    current_new_file = ""
+
+            if current_old_file and current_new_file:
+                if not in_hunk:
+                    if i + 1 < len(lines):
+                        next_line = lines[i + 1]
+                        if next_line.startswith("@@ "):
+                            pass
+                        elif current_old_file or current_new_file:
+                            pass
+
+        elif line.startswith("@@ "):
+            if in_hunk and current_hunk_info:
+                old_s, old_c, new_s, new_c = current_hunk_info
+                raw = current_hunk_header + "\n" + "\n".join(current_hunk_lines)
+                current_hunks.append(PatchHunk(
+                    old_start=old_s, old_count=old_c,
+                    new_start=new_s, new_count=new_c,
+                    header_line=current_hunk_header,
+                    lines=list(current_hunk_lines),
+                    raw=raw,
+                ))
+                current_hunk_lines = []
+
+            parsed = _parse_hunk_header(line)
+            if parsed:
+                current_hunk_info = parsed
+                current_hunk_header = line
+                in_hunk = True
+            else:
+                files.append(PatchFile(
+                    old_file=current_old_file,
+                    new_file=current_new_file,
+                    hunks=list(current_hunks),
+                    raw=patch_text,
+                ))
+                current_old_file = ""
+                current_new_file = ""
+                current_hunks = []
+                in_hunk = False
+        elif in_hunk:
+            current_hunk_lines.append(line)
+
+        i += 1
+
+    if in_hunk and current_hunk_info:
+        old_s, old_c, new_s, new_c = current_hunk_info
+        raw = current_hunk_header + "\n" + "\n".join(current_hunk_lines)
+        current_hunks.append(PatchHunk(
+            old_start=old_s, old_count=old_c,
+            new_start=new_s, new_count=new_c,
+            header_line=current_hunk_header,
+            lines=list(current_hunk_lines),
+            raw=raw,
+        ))
+
+    if current_old_file or current_new_file or current_hunks:
+        files.append(PatchFile(
+            old_file=current_old_file,
+            new_file=current_new_file,
+            hunks=list(current_hunks),
+            raw=patch_text,
+        ))
+
+    if not files:
+        return PatchParseResult(
+            ok=False,
+            files=[],
+            error="No unified diff headers found (-- a/... / +++ b/... or @@ ... @@)",
+        )
+
+    return PatchParseResult(ok=True, files=files, error=None)
+
+
+def _text_to_lines(text: str) -> list[str]:
+    """Convert text to list of lines, stripping trailing newline if present."""
+    if text.endswith("\n"):
+        text = text[:-1]
+    if text.endswith("\r"):
+        text = text[:-1]
+    return text.split("\n")
+
+
+def _lines_to_text(lines: list[str]) -> str:
+    """Convert list of lines back to text."""
+    return "\n".join(lines)
+
+
+def _normalize_line(line: str) -> str:
+    """Normalize a diff line for comparison (strip CRLF)."""
+    return line.rstrip("\r")
+
+
+def _strip_line_prefix(line: str) -> str:
+    """Strip the diff prefix (space, +, -) from a line."""
+    if line.startswith("+"):
+        return line[1:]
+    elif line.startswith("-"):
+        return line[1:]
+    elif line.startswith(" "):
+        return line[1:]
+    return line
+
+
+def _fingerprint(text: str) -> str:
+    """Compute SHA-256 fingerprint of text."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _apply_hunk(
+    original_lines: list[str],
+    hunk: PatchHunk,
+    strict: bool = True,
+) -> tuple[list[str] | None, str | None]:
+    """Try to apply a single hunk to original lines.
+
+    Args:
+        original_lines: Lines of the original text.
+        hunk: The parsed hunk to apply.
+        strict: If True, context lines must match exactly.
+
+    Returns:
+        Tuple of (new_lines, error_message). If application fails, new_lines is None.
+    """
+    old_start = hunk["old_start"] - 1  # Convert to 0-based
+    old_count = hunk["old_count"]
+
+    if old_start < 0:
+        return None, f"Invalid hunk start: {hunk['old_start']}"
+
+    actual_context: list[str] = []
+    expected_context: list[str] = []
+
+    for hline in hunk["lines"]:
+        normalized = _normalize_line(hline)
+        if normalized.startswith(" ") or normalized.startswith("-"):
+            expected_context.append(_strip_line_prefix(normalized))
+
+    actual_end = old_start + old_count
+    if actual_end > len(original_lines):
+        if strict:
+            return None, (
+                f"Hunk references lines {hunk['old_start']}-{hunk['old_start'] + old_count - 1} "
+                f"but original has only {len(original_lines)} lines"
+            )
+        actual_context = original_lines[old_start:]
+    else:
+        actual_context = original_lines[old_start:actual_end]
+
+    if strict and len(expected_context) != len(actual_context):
+        return None, (
+            f"Context length mismatch: hunk expects {len(expected_context)} lines, "
+            f"actual has {len(actual_context)} lines"
+        )
+
+    for idx, (expected, actual) in enumerate(zip(expected_context, actual_context, strict=False)):
+        if strict and _normalize_line(expected) != _normalize_line(actual):
+            return None, (
+                f"Context mismatch at line {hunk['old_start'] + idx}: "
+                f"expected {_normalize_line(expected)!r}, got {_normalize_line(actual)!r}"
+            )
+
+    new_lines: list[str] = []
+    new_idx = 0
+    hunk_idx = 0
+
+    while hunk_idx < len(hunk["lines"]):
+        hline = _normalize_line(hunk["lines"][hunk_idx])
+        if hline.startswith(" "):
+            if new_idx < len(original_lines):
+                new_lines.append(original_lines[new_idx])
+            else:
+                new_lines.append(_strip_line_prefix(hline))
+            new_idx += 1
+            hunk_idx += 1
+        elif hline.startswith("-"):
+            new_idx += 1
+            hunk_idx += 1
+        elif hline.startswith("+"):
+            new_lines.append(_strip_line_prefix(hline))
+            hunk_idx += 1
+        elif hline.startswith("\\"):
+            hunk_idx += 1
+        else:
+            if hline.startswith(" "):
+                if new_idx < len(original_lines):
+                    new_lines.append(original_lines[new_idx])
+                new_idx += 1
+            hunk_idx += 1
+
+    while new_idx < len(original_lines):
+        new_lines.append(original_lines[new_idx])
+        new_idx += 1
+
+    return new_lines, None
+
+
+def patch_apply_check(
+    original_text: str,
+    patch_text: str,
+    strict: bool = True,
+    return_result_fingerprint: bool = True,
+    return_result_text: bool = False,
+) -> PatchApplyCheckResult:
+    """Check whether a unified diff applies cleanly to original text.
+
+    Args:
+        original_text: The original source text.
+        patch_text: The unified diff patch.
+        strict: If True, context lines must match exactly.
+        return_result_fingerprint: If True, compute SHA-256 of result.
+        return_result_text: If True, include the resulting text (bounded).
+
+    Returns:
+        PatchApplyCheckResult with application status and details.
+    """
+    findings: list[str] = []
+    failed_hunks: list[FailedHunk] = []
+    affected_line_ranges: list[dict[str, int]] = []
+
+    if len(original_text) > MAX_ORIGINAL_LENGTH:
+        return PatchApplyCheckResult(
+            patch_parse_ok=False,
+            applies=False,
+            hunks_total=0,
+            hunks_applied=0,
+            hunks_failed=0,
+            failed_hunks=[],
+            affected_line_ranges=[],
+            newline_style_before=_detect_newline_style(original_text),
+            newline_style_after=_detect_newline_style(original_text),
+            result_fingerprint="",
+            result_text=None,
+            findings=[f"Original text exceeds maximum length of {MAX_ORIGINAL_LENGTH}"],
+        )
+
+    if len(patch_text) > MAX_PATCH_LENGTH:
+        return PatchApplyCheckResult(
+            patch_parse_ok=False,
+            applies=False,
+            hunks_total=0,
+            hunks_applied=0,
+            hunks_failed=0,
+            failed_hunks=[],
+            affected_line_ranges=[],
+            newline_style_before=_detect_newline_style(original_text),
+            newline_style_after=_detect_newline_style(original_text),
+            result_fingerprint="",
+            result_text=None,
+            findings=[f"Patch text exceeds maximum length of {MAX_PATCH_LENGTH}"],
+        )
+
+    newline_before = _detect_newline_style(original_text)
+
+    parse_result = parse_unified_diff(patch_text)
+    if not parse_result["ok"]:
+        return PatchApplyCheckResult(
+            patch_parse_ok=False,
+            applies=False,
+            hunks_total=0,
+            hunks_applied=0,
+            hunks_failed=0,
+            failed_hunks=[],
+            affected_line_ranges=[],
+            newline_style_before=newline_before,
+            newline_style_after=newline_before,
+            result_fingerprint="",
+            result_text=None,
+            findings=[f"Failed to parse patch: {parse_result['error']}"],
+        )
+
+    original_lines = _text_to_lines(original_text)
+    all_hunks: list[PatchHunk] = []
+    for file_entry in parse_result["files"]:
+        all_hunks.extend(file_entry["hunks"])
+
+    hunks_total = len(all_hunks)
+    if hunks_total == 0:
+        return PatchApplyCheckResult(
+            patch_parse_ok=True,
+            applies=True,
+            hunks_total=0,
+            hunks_applied=0,
+            hunks_failed=0,
+            failed_hunks=[],
+            affected_line_ranges=[],
+            newline_style_before=newline_before,
+            newline_style_after=newline_before,
+            result_fingerprint=_fingerprint(original_text),
+            result_text=original_text if return_result_text else None,
+            findings=["No hunks found in patch"],
+        )
+
+    current_lines = list(original_lines)
+    hunks_applied = 0
+    hunks_failed = 0
+
+    for hunk_idx, hunk in enumerate(all_hunks):
+        result, error = _apply_hunk(current_lines, hunk, strict=strict)
+        if result is not None:
+            current_lines = result
+            hunks_applied += 1
+            affected_line_ranges.append({
+                "start": hunk["new_start"],
+                "end": hunk["new_start"] + hunk["new_count"] - 1,
+            })
+        else:
+            hunks_failed += 1
+            expected_ctx = [
+                _strip_line_prefix(_normalize_line(line))
+                for line in hunk["lines"]
+                if _normalize_line(line).startswith(" ") or _normalize_line(line).startswith("-")
+            ]
+            actual_end = min(hunk["old_start"] - 1 + hunk["old_count"], len(current_lines))
+            actual_ctx = current_lines[hunk["old_start"] - 1:actual_end] if hunk["old_start"] - 1 < len(current_lines) else []
+
+            failed_hunks.append(FailedHunk(
+                hunk_index=hunk_idx,
+                old_start=hunk["old_start"],
+                old_count=hunk["old_count"],
+                expected_context=expected_ctx,
+                actual_context=actual_ctx,
+                reason=error or "Unknown error",
+            ))
+
+    applies = hunks_failed == 0
+    result_text = _lines_to_text(current_lines) if return_result_text else None
+    newline_after = _detect_newline_style(result_text or original_text)
+
+    if hunks_failed > 0:
+        findings.append(f"{hunks_failed} of {hunks_total} hunks failed to apply")
+
+    result_fingerprint = _fingerprint(result_text or original_text) if return_result_fingerprint else ""
+
+    return PatchApplyCheckResult(
+        patch_parse_ok=True,
+        applies=applies,
+        hunks_total=hunks_total,
+        hunks_applied=hunks_applied,
+        hunks_failed=hunks_failed,
+        failed_hunks=failed_hunks,
+        affected_line_ranges=affected_line_ranges,
+        newline_style_before=newline_before,
+        newline_style_after=newline_after,
+        result_fingerprint=result_fingerprint,
+        result_text=result_text,
+        findings=findings,
+    )
+
+
+def patch_summary(patch_text: str) -> PatchSummaryResult:
+    """Summarize a unified diff without applying it.
+
+    Args:
+        patch_text: The unified diff text.
+
+    Returns:
+        PatchSummaryResult with summary statistics.
+    """
+    findings: list[str] = []
+
+    if len(patch_text) > MAX_PATCH_LENGTH:
+        return PatchSummaryResult(
+            files_changed=0,
+            hunks_total=0,
+            additions=0,
+            deletions=0,
+            renames_detected=[],
+            binary_patch_detected=False,
+            line_ranges_by_file={},
+            findings=[f"Patch text exceeds maximum length of {MAX_PATCH_LENGTH}"],
+        )
+
+    parse_result = parse_unified_diff(patch_text)
+
+    if not parse_result["ok"]:
+        return PatchSummaryResult(
+            files_changed=0,
+            hunks_total=0,
+            additions=0,
+            deletions=0,
+            renames_detected=[],
+            binary_patch_detected=False,
+            line_ranges_by_file={},
+            findings=[f"Failed to parse patch: {parse_result['error']}"],
+        )
+
+    files_changed = len(parse_result["files"])
+    hunks_total = 0
+    additions = 0
+    deletions = 0
+    renames_detected: list[dict[str, str]] = []
+    binary_patch_detected = False
+    line_ranges_by_file: dict[str, list[dict[str, int]]] = {}
+
+    for file_entry in parse_result["files"]:
+        old_file = file_entry["old_file"]
+        new_file = file_entry["new_file"]
+
+        if old_file and new_file and old_file != new_file:
+            renames_detected.append({"from": old_file, "to": new_file})
+
+        file_key = new_file or old_file
+        file_ranges: list[dict[str, int]] = []
+
+        for hunk in file_entry["hunks"]:
+            hunks_total += 1
+            hunk_additions = 0
+            hunk_deletions = 0
+
+            for hline in hunk["lines"]:
+                normalized = _normalize_line(hline)
+                if normalized.startswith("+"):
+                    hunk_additions += 1
+                elif normalized.startswith("-"):
+                    hunk_deletions += 1
+
+            additions += hunk_additions
+            deletions += hunk_deletions
+
+            file_ranges.append({
+                "start": hunk["new_start"],
+                "end": hunk["new_start"] + hunk["new_count"] - 1,
+            })
+
+        if file_key:
+            line_ranges_by_file[file_key] = file_ranges
+
+    if "GIT binary patch" in patch_text or "\0" in patch_text:
+        binary_patch_detected = True
+        findings.append("Binary patch content detected")
+
+    if not parse_result["files"]:
+        findings.append("No file headers found in patch")
+
+    return PatchSummaryResult(
+        files_changed=files_changed,
+        hunks_total=hunks_total,
+        additions=additions,
+        deletions=deletions,
+        renames_detected=renames_detected,
+        binary_patch_detected=binary_patch_detected,
+        line_ranges_by_file=line_ranges_by_file,
+        findings=findings,
+    )
+
+# === exact/transform.py ===
+try:
+    from urllib.parse import quote as _url_quote
+    from urllib.parse import unquote as _url_unquote
+except ImportError:
+    _url_quote = None
+    _url_unquote = None
+
+
+class EscapeTextResult(TypedDict):
+    """Result of escape_text operation."""
+    mode: str
+    escaped: str
+    changed: bool
+    summary: str
+
+
+class UnescapeTextResult(TypedDict):
+    """Result of unescape_text operation."""
+    mode: str
+    unescaped: str
+    changed: bool
+    error: str | None
+    summary: str
+
+
+class RemovedChar(TypedDict):
+    """A character that was removed during transformation."""
+    index: int
+    char: str
+    codepoint: str
+    name: str
+
+
+class TextTransformResult(TypedDict):
+    """Result of text transformation."""
+    changed: bool
+    text: str
+    operations_applied: list[str]
+    removed: list[RemovedChar]
+    warnings: list[str]
+    summary: str
+
+
+_VALID_OPERATIONS = {
+    "normalize_nfc",
+    "normalize_nfd",
+    "normalize_nfkc",
+    "normalize_nfkd",
+    "casefold",
+    "trim",
+    "trim_trailing_whitespace",
+    "normalize_newlines_lf",
+    "ensure_final_newline",
+    "strip_final_newline",
+    "remove_zero_width",
+    "remove_bidi_controls",
+    "visible_repr",
+}
+
+_ZERO_WIDTH_CHARS = {
+    "\u200b": "ZERO WIDTH SPACE",
+    "\u200c": "ZERO WIDTH NON-JOINER",
+    "\u200d": "ZERO WIDTH JOINER",
+    "\u2060": "WORD JOINER",
+}
+
+_BIDI_CONTROL_CHARS = {
+    "\u202a": "LEFT-TO-RIGHT EMBEDDING",
+    "\u202b": "RIGHT-TO-LEFT EMBEDDING",
+    "\u202c": "POP DIRECTIONAL FORMATTING",
+    "\u202d": "LEFT-TO-RIGHT OVERRIDE",
+    "\u202e": "RIGHT-TO-LEFT OVERRIDE",
+    "\u2066": "LEFT-TO-RIGHT ISOLATE",
+    "\u2067": "RIGHT-TO-LEFT ISOLATE",
+    "\u2068": "FIRST STRONG ISOLATE",
+    "\u2069": "POP DIRECTIONAL ISOLATE",
+}
+
+
+def _get_char_name(char: str) -> str:
+    """Get Unicode name for a character."""
+    name = unicodedata.name(char, None)
+    if name:
+        return name
+    return f"U+{ord(char):04X}"
+
+
+def _remove_chars(
+    text: str,
+    chars_to_remove: dict[str, str],
+    operation_name: str,
+) -> tuple[str, list[RemovedChar], list[str]]:
+    """Remove specified characters from text.
+
+    Args:
+        text: Input text.
+        chars_to_remove: Dict mapping char to name.
+        operation_name: Name of operation for warnings.
+
+    Returns:
+        Tuple of (transformed text, removed chars list, warnings).
+    """
+    removed: list[RemovedChar] = []
+    result: list[str] = []
+
+    for index, char in enumerate(text):
+        if char in chars_to_remove:
+            removed.append(RemovedChar(
+                index=index,
+                char=char,
+                codepoint=f"U+{ord(char):04X}",
+                name=chars_to_remove[char],
+            ))
+        else:
+            result.append(char)
+
+    warnings: list[str] = []
+    if removed:
+        count = len(removed)
+        names = ", ".join(set(r["name"] for r in removed))
+        warnings.append(f"Removed {count} invisible/{operation_name} character(s): {names}")
+
+    return "".join(result), removed, warnings
+
+
+def text_transform(
+    text: str,
+    operations: list[str],
+    detail: str = "normal",
+) -> TextTransformResult:
+    """Apply explicit text transformations.
+
+    Args:
+        text: Input string to transform.
+        operations: List of operations to apply. Unknown operations
+            are silently ignored (per design - only apply explicitly
+            requested operations).
+        detail: Detail level ("summary", "normal", "full"). Controls
+            how much detail is in removed characters list.
+
+    Returns:
+        TextTransformResult with transformed text, operations applied,
+        any removed characters, warnings, and summary.
+    """
+    if not operations:
+        return TextTransformResult(
+            changed=False,
+            text=text,
+            operations_applied=[],
+            removed=[],
+            warnings=[],
+            summary="No operations requested",
+        )
+
+    current_text = text
+    operations_applied: list[str] = []
+    all_removed: list[RemovedChar] = []
+    all_warnings: list[str] = []
+
+    for op in operations:
+        op_lower = op.lower()
+
+        if op_lower == "normalize_nfc":
+            normalized = unicodedata.normalize("NFC", current_text)
+            if normalized != current_text:
+                current_text = normalized
+                operations_applied.append("normalize_nfc")
+
+        elif op_lower == "normalize_nfd":
+            normalized = unicodedata.normalize("NFD", current_text)
+            if normalized != current_text:
+                current_text = normalized
+                operations_applied.append("normalize_nfd")
+
+        elif op_lower == "normalize_nfkc":
+            normalized = unicodedata.normalize("NFKC", current_text)
+            if normalized != current_text:
+                current_text = normalized
+                operations_applied.append("normalize_nfkc")
+
+        elif op_lower == "normalize_nfkd":
+            normalized = unicodedata.normalize("NFKD", current_text)
+            if normalized != current_text:
+                current_text = normalized
+                operations_applied.append("normalize_nfkd")
+
+        elif op_lower == "casefold":
+            casefolded = current_text.casefold()
+            if casefolded != current_text:
+                current_text = casefolded
+                operations_applied.append("casefold")
+
+        elif op_lower == "trim":
+            trimmed = current_text.strip()
+            if trimmed != current_text:
+                current_text = trimmed
+                operations_applied.append("trim")
+
+        elif op_lower == "trim_trailing_whitespace":
+            lines = current_text.split("\n")
+            trimmed_lines = [line.rstrip() for line in lines]
+            new_text = "\n".join(trimmed_lines)
+            if new_text != current_text:
+                current_text = new_text
+                operations_applied.append("trim_trailing_whitespace")
+
+        elif op_lower == "normalize_newlines_lf":
+            normalized = current_text.replace("\r\n", "\n").replace("\r", "\n")
+            if normalized != current_text:
+                current_text = normalized
+                operations_applied.append("normalize_newlines_lf")
+
+        elif op_lower == "ensure_final_newline":
+            if not current_text.endswith("\n"):
+                current_text = current_text + "\n"
+                operations_applied.append("ensure_final_newline")
+            elif current_text.endswith("\n\n"):
+                pass
+            else:
+                pass
+
+        elif op_lower == "strip_final_newline":
+            if current_text.endswith("\n"):
+                stripped = current_text[:-1]
+                if stripped.endswith("\n"):
+                    stripped2 = stripped
+                else:
+                    stripped2 = stripped
+                if stripped2 != current_text:
+                    current_text = stripped2
+                    operations_applied.append("strip_final_newline")
+
+        elif op_lower == "remove_zero_width":
+            result_text, removed, warnings = _remove_chars(
+                current_text, _ZERO_WIDTH_CHARS, "zero-width"
+            )
+            if result_text != current_text:
+                current_text = result_text
+                all_removed.extend(removed)
+                all_warnings.extend(warnings)
+                operations_applied.append("remove_zero_width")
+
+        elif op_lower == "remove_bidi_controls":
+            result_text, removed, warnings = _remove_chars(
+                current_text, _BIDI_CONTROL_CHARS, "bidi"
+            )
+            if result_text != current_text:
+                current_text = result_text
+                all_removed.extend(removed)
+                all_warnings.extend(warnings)
+                operations_applied.append("remove_bidi_controls")
+
+        elif op_lower == "visible_repr":
+            _visible_repr_impl = visible_repr
+            current_text = _visible_repr_impl(current_text)
+            operations_applied.append("visible_repr")
+
+    changed = current_text != text
+
+    if detail == "summary":
+        removed_for_output: list[RemovedChar] = []
+    elif detail == "full":
+        removed_for_output = all_removed
+    else:
+        removed_for_output = all_removed
+
+    if operations_applied:
+        ops_str = ", ".join(operations_applied)
+        if changed:
+            summary = f"Applied {len(operations_applied)} operation(s): {ops_str}; text changed"
+        else:
+            summary = f"Applied {len(operations_applied)} operation(s): {ops_str}; text unchanged"
+    else:
+        summary = "No recognized operations applied"
+
+    return TextTransformResult(
+        changed=changed,
+        text=current_text,
+        operations_applied=operations_applied,
+        removed=removed_for_output,
+        warnings=all_warnings,
+        summary=summary,
+    )
+
+
+_VALID_ESCAPE_MODES = {
+    "json_string",
+    "python_string",
+    "rust_string",
+    "posix_shell_single",
+    "regex_literal",
+    "markdown_inline_code",
+    "markdown_code_block",
+    "html_text",
+    "url_component",
+}
+
+_VALID_UNESCAPE_MODES = {
+    "json_string",
+    "python_string",
+    "unicode_escape",
+    "url_component",
+}
+
+
+def _escape_json_string(text: str) -> str:
+    """Escape text as JSON string literal."""
+    return json.dumps(text)
+
+
+def _escape_python_string(text: str) -> str:
+    """Escape text as Python string literal."""
+    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def _escape_rust_string(text: str) -> str:
+    """Escape text as Rust string literal."""
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    return '"' + escaped + '"'
+
+
+def _escape_posix_shell_single(text: str) -> str:
+    """Escape text for POSIX shell single-quoted string."""
+    escaped = text.replace("'", "'\\''")
+    return "'" + escaped + "'"
+
+
+def _escape_regex_literal(text: str) -> str:
+    """Escape text as regex literal - escape all special chars."""
+    return re.escape(text)
+
+
+def _escape_markdown_inline_code(text: str) -> str:
+    """Escape text for inline markdown code (wrap in backticks)."""
+    if "`" in text:
+        return "`` " + text + " ``"
+    return "`" + text + "`"
+
+
+def _escape_markdown_code_block(text: str) -> str:
+    """Escape text for markdown code block."""
+    return "```\n" + text + "\n```"
+
+
+def _escape_html_text(text: str) -> str:
+    """Escape text for HTML display."""
+    result = text
+    result = result.replace("&", "&amp;")
+    result = result.replace("<", "&lt;")
+    result = result.replace(">", "&gt;")
+    result = result.replace('"', "&quot;")
+    return result
+
+
+def _escape_url_component(text: str) -> str:
+    """Escape text as URL component."""
+    if _url_quote is None:
+        raise ValueError("URL escaping not available (urllib.parse not found)")
+    return _url_quote(text, safe="")
+
+
+def escape_text(text: str, mode: str) -> EscapeTextResult:
+    """Escape text for various output formats.
+
+    Args:
+        text: Input string to escape.
+        mode: Escape mode (json_string, python_string, rust_string,
+              posix_shell_single, regex_literal, markdown_inline_code,
+              markdown_code_block, html_text, url_component).
+
+    Returns:
+        EscapeTextResult with escaped text and metadata.
+
+    Raises:
+        ValueError: If mode is not supported.
+    """
+    if mode not in _VALID_ESCAPE_MODES:
+        raise ValueError(f"Unsupported escape mode: {mode}. Valid modes: {', '.join(sorted(_VALID_ESCAPE_MODES))}")
+
+    original_text = text
+
+    if mode == "json_string":
+        escaped = _escape_json_string(text)
+    elif mode == "python_string":
+        escaped = _escape_python_string(text)
+    elif mode == "rust_string":
+        escaped = _escape_rust_string(text)
+    elif mode == "posix_shell_single":
+        escaped = _escape_posix_shell_single(text)
+    elif mode == "regex_literal":
+        escaped = _escape_regex_literal(text)
+    elif mode == "markdown_inline_code":
+        escaped = _escape_markdown_inline_code(text)
+    elif mode == "markdown_code_block":
+        escaped = _escape_markdown_code_block(text)
+    elif mode == "html_text":
+        escaped = _escape_html_text(text)
+    elif mode == "url_component":
+        escaped = _escape_url_component(text)
+
+    changed = escaped != original_text
+
+    mode_names = {
+        "json_string": "JSON string literal",
+        "python_string": "Python string literal",
+        "rust_string": "Rust string literal",
+        "posix_shell_single": "POSIX shell single-quoted string",
+        "regex_literal": "regex literal",
+        "markdown_inline_code": "inline markdown code",
+        "markdown_code_block": "markdown code block",
+        "html_text": "HTML text",
+        "url_component": "URL component",
+    }
+
+    summary = f"Escaped text as {mode_names.get(mode, mode)}"
+
+    return EscapeTextResult(
+        mode=mode,
+        escaped=escaped,
+        changed=changed,
+        summary=summary,
+    )
+
+
+def _unescape_json_string(text: str) -> str:
+    """Unescape JSON string literal."""
+    if not text.startswith('"') or not text.endswith('"'):
+        raise ValueError("Invalid JSON string literal: must be wrapped in double quotes")
+    parsed = json.loads(text)
+    return parsed
+
+
+def _unescape_python_string(text: str) -> str:
+    """Unescape Python string literal using ast.literal_eval."""
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError) as e:
+        raise ValueError(f"Invalid Python string literal: {e}")
+
+
+def _unescape_unicode_escape(text: str) -> str:
+    """Unescape Unicode escape sequences (\\\\uXXXX, \\\\UXXXXXXXX)."""
+    def replace_unicode(match):
+        code = match.group(1)
+        return chr(int(code, 16))
+
+    result = re.sub(r"\\u([0-9a-fA-F]{4})", replace_unicode, text)
+    result = re.sub(r"\\U([0-9a-fA-F]{8})", replace_unicode, result)
+    return result
+
+
+def _unescape_url_component(text: str) -> str:
+    """Unescape URL component."""
+    if _url_unquote is None:
+        raise ValueError("URL unescaping not available (urllib.parse not found)")
+    return _url_unquote(text)
+
+
+def unescape_text(text: str, mode: str) -> UnescapeTextResult:
+    """Unescape text from various formats.
+
+    Args:
+        text: Input string to unescape.
+        mode: Unescape mode (json_string, python_string,
+              unicode_escape, url_component).
+
+    Returns:
+        UnescapeTextResult with unescaped text and metadata.
+
+    Raises:
+        ValueError: If mode is not supported or unescape fails.
+    """
+    if mode not in _VALID_UNESCAPE_MODES:
+        raise ValueError(f"Unsupported unescape mode: {mode}. Valid modes: {', '.join(sorted(_VALID_UNESCAPE_MODES))}")
+
+    original_text = text
+    error: str | None = None
+
+    try:
+        if mode == "json_string":
+            unescaped = _unescape_json_string(text)
+        elif mode == "python_string":
+            unescaped = _unescape_python_string(text)
+        elif mode == "unicode_escape":
+            unescaped = _unescape_unicode_escape(text)
+        elif mode == "url_component":
+            unescaped = _unescape_url_component(text)
+    except ValueError as e:
+        error = str(e)
+        unescaped = original_text
+
+    changed = unescaped != original_text
+
+    mode_names = {
+        "json_string": "JSON string literal",
+        "python_string": "Python string literal",
+        "unicode_escape": "Unicode escape sequences",
+        "url_component": "URL component",
+    }
+
+    if error:
+        summary = f"Failed to unescape {mode_names.get(mode, mode)}: {error}"
+    else:
+        summary = f"Unescaped {mode_names.get(mode, mode)}"
+
+    return UnescapeTextResult(
+        mode=mode,
+        unescaped=unescaped,
+        changed=changed,
+        error=error,
+        summary=summary,
+    )
+
+
+class TextHashResult(TypedDict):
+    """Result of text hashing."""
+    encoding: str
+    bytes: int
+    codepoints: int
+    hashes: dict[str, str]
+    warnings: list[str]
+    summary: str
+
+
+class TextFingerprintResult(TypedDict):
+    """Result of text fingerprinting."""
+    sha256: str
+    bytes_utf8: int
+    codepoints: int
+    graphemes: int
+    newline_style: str
+    normalization: dict[str, str | bool]
+    summary: str
+
+
+_SUPPORTED_HASH_ALGORITHMS = {"sha256", "sha1", "md5", "crc32"}
+
+
+def text_hash(
+    text: str,
+    algorithms: list[str] = ["sha256"],
+    encoding: str = "utf-8",
+) -> TextHashResult:
+    """Compute cryptographic hashes of text for identity checking.
+
+    Args:
+        text: Input string to hash.
+        algorithms: List of hash algorithms to compute (sha256, sha1, md5, crc32).
+        encoding: Text encoding for byte conversion (utf-8, ascii, etc).
+
+    Returns:
+        TextHashResult with encoding, byte/codepoint counts, hash values,
+        warnings, and summary.
+    """
+    warnings: list[str] = []
+
+    encoded = text.encode(encoding)
+    byte_count = len(encoded)
+    codepoint_count = len(text)
+
+    hashes: dict[str, str] = {}
+    for algo in algorithms:
+        algo_lower = algo.lower()
+        if algo_lower == "sha256":
+            hashes["sha256"] = hashlib.sha256(encoded).hexdigest()
+        elif algo_lower == "sha1":
+            hashes["sha1"] = hashlib.sha1(encoded).hexdigest()
+        elif algo_lower == "md5":
+            hashes["md5"] = hashlib.md5(encoded).hexdigest()
+            if "md5" not in warnings:
+                warnings.append("MD5 is non-cryptographic and provided for compatibility only")
+        elif algo_lower == "crc32":
+            hashes["crc32"] = format(zlib.crc32(encoded), "08x")
+        else:
+            supported = ", ".join(sorted(_SUPPORTED_HASH_ALGORITHMS))
+            warnings.append(f"Unknown algorithm '{algo}', skipping (supported: {supported})")
+
+    algo_count = len(hashes)
+    if algo_count == 1:
+        algo_name = list(hashes.keys())[0].upper()
+        summary = f"{algo_name} computed for {byte_count} {encoding} bytes"
+    else:
+        summary = f"Computed {algo_count} hashes for {byte_count} {encoding} bytes"
+
+    return TextHashResult(
+        encoding=encoding,
+        bytes=byte_count,
+        codepoints=codepoint_count,
+        hashes=hashes,
+        warnings=warnings,
+        summary=summary,
+    )
+
+
+def text_fingerprint(
+    text: str,
+    unicode: str = "raw",
+    newline: str = "raw",
+    trim_final_newline: bool = False,
+    casefold: bool = False,
+) -> TextFingerprintResult:
+    """Compute a deterministic fingerprint of text for identity comparison.
+
+    The fingerprint canonicalizes the text according to the specified options
+    and then computes SHA-256 for stable identity checking.
+
+    Args:
+        text: Input string to fingerprint.
+        unicode: Unicode normalization ("raw", "NFC", "NFD", "NFKC", "NFKD").
+        newline: Newline normalization ("raw", "LF").
+        trim_final_newline: Remove trailing newline before hashing.
+        casefold: Apply casefolding before hashing.
+
+    Returns:
+        TextFingerprintResult with SHA-256 hash, metrics, and normalization info.
+
+    Example:
+        >>> result = text_fingerprint("Hello, world!\\n")
+        >>> result["sha256"]  # 256-bit hash of the text
+        >>> result["bytes_utf8"]  # UTF-8 byte count
+    """
+    canonical = text
+
+    if unicode != "raw":
+        canonical = unicodedata.normalize(unicode, canonical)
+
+    if newline == "LF":
+        canonical = canonical.replace("\r\n", "\n").replace("\r", "\n")
+
+    if trim_final_newline and canonical.endswith("\n"):
+        canonical = canonical[:-1]
+
+    if casefold:
+        canonical = canonical.casefold()
+
+    import hashlib
+    sha256_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    _count_graphemes = count_graphemes
+
+    is_nfc = unicodedata.is_normalized("NFC", text)
+
+    newline_style = "LF"
+    if "\r\n" in text:
+        newline_style = "CRLF"
+    elif "\r" in text and "\n" not in text:
+        newline_style = "CR"
+    elif "\n" not in text:
+        newline_style = "none"
+
+    return TextFingerprintResult(
+        sha256=sha256_hash,
+        bytes_utf8=len(canonical.encode("utf-8")),
+        codepoints=len(canonical),
+        graphemes=count_graphemes(canonical),
+        newline_style=newline_style,
+        normalization={
+            "input_is_nfc": is_nfc,
+            "applied": unicode,
+        },
+        summary=f"SHA-256 fingerprint computed for {len(canonical)} codepoints",
+    )
+
+# === exact/position.py ===
+class TextPositionResult(TypedDict):
+    """Result of text position conversion."""
+    valid: bool
+    byte_offset: int | None
+    codepoint_index: int | None
+    utf16_offset: int | None
+    line: int | None
+    column: int | None
+    line_base: int
+    column_base: int
+    char: str | None
+    codepoint: str | None
+    name: str | None
+    line_text_preview: str | None
+    error: str | None
+    summary: str
+
+
+def _utf16_offset_to_codepoint_index(text: str, utf16_offset: int) -> int:
+    """Convert UTF-16 code unit offset to Python string index."""
+    utf16_count = 0
+    for i, char in enumerate(text):
+        cp = ord(char)
+        if cp <= 0xFFFF:
+            utf16_count += 1
+        else:
+            utf16_count += 2
+        if utf16_count > utf16_offset:
+            return i
+        if utf16_count == utf16_offset:
+            return i + 1
+    return len(text)
+
+
+def _codepoint_index_to_utf16_offset(text: str, codepoint_index: int) -> int:
+    """Convert Python string index to UTF-16 code unit offset."""
+    utf16_offset = 0
+    for i, char in enumerate(text):
+        if i >= codepoint_index:
+            break
+        cp = ord(char)
+        if cp <= 0xFFFF:
+            utf16_offset += 1
+        else:
+            utf16_offset += 2
+    return utf16_offset
+
+
+def _get_line_col(text: str, byte_offset: int | None = None,
+                   codepoint_index: int | None = None) -> tuple[list[str], int, int]:
+    """Split text into lines and find line/column for given position.
+
+    Returns (lines, line, column) where line and column are 0-based.
+    """
+    utf8_bytes = text.encode("utf-8")
+    lines = text.splitlines(keepends=True)
+
+    if byte_offset is not None:
+        if byte_offset < 0:
+            codepoint_index = 0
+        elif byte_offset >= len(utf8_bytes):
+            codepoint_index = len(text)
+        else:
+            prefix = utf8_bytes[:byte_offset]
+            codepoint_index = len(prefix.decode("utf-8", errors="ignore"))
+
+    if codepoint_index is not None:
+        if codepoint_index < 0:
+            codepoint_index = 0
+        elif codepoint_index > len(text):
+            codepoint_index = len(text)
+
+    line_start = 0
+    line_num = 0
+    current_col = 0
+
+    for i, char in enumerate(text):
+        if i == codepoint_index:
+            return lines, line_num, current_col
+
+        if char == "\n":
+            line_num += 1
+            current_col = 0
+            line_start = i + 1
+        elif char == "\r":
+            if i + 1 < len(text) and text[i + 1] == "\n":
+                continue
+            line_num += 1
+            current_col = 0
+            line_start = i + 1
+        else:
+            current_col += 1
+
+    if codepoint_index is not None and codepoint_index == len(text):
+        return lines, line_num, current_col
+
+    return lines, line_num, current_col
+
+
+def _is_valid_byte_offset(text: str, offset: int) -> bool:
+    """Check if byte offset is valid (not in middle of multibyte char)."""
+    utf8_bytes = text.encode("utf-8")
+    if offset < 0 or offset > len(utf8_bytes):
+        return False
+    if offset == len(utf8_bytes):
+        return True
+
+    byte = utf8_bytes[offset]
+
+    if byte < 0x80:
+        return True
+
+    if 0xC0 <= byte <= 0xDF:
+        if offset + 1 >= len(utf8_bytes):
+            return False
+        return 0x80 <= utf8_bytes[offset + 1] <= 0xBF
+
+    if 0xE0 <= byte <= 0xEF:
+        if offset + 2 >= len(utf8_bytes):
+            return False
+        return (0x80 <= utf8_bytes[offset + 1] <= 0xBF and
+                0x80 <= utf8_bytes[offset + 2] <= 0xBF)
+
+    if 0xF0 <= byte <= 0xF7:
+        if offset + 3 >= len(utf8_bytes):
+            return False
+        return (0x80 <= utf8_bytes[offset + 1] <= 0xBF and
+                0x80 <= utf8_bytes[offset + 2] <= 0xBF and
+                0x80 <= utf8_bytes[offset + 3] <= 0xBF)
+
+    return False
+
+
+def text_position(
+    text: str,
+    byte_offset: int | None = None,
+    codepoint_index: int | None = None,
+    line: int | None = None,
+    column: int | None = None,
+    utf16_offset: int | None = None,
+    line_base: int = 1,
+    column_base: int = 1,
+) -> TextPositionResult:
+    """Convert between byte offsets, codepoint indices, line/column positions, and UTF-16 offsets.
+
+    Exactly one locator mode should be provided: byte_offset, codepoint_index,
+    line+column, or utf16_offset.
+
+    Args:
+        text: Input string.
+        byte_offset: UTF-8 byte offset (0-based).
+        codepoint_index: Python string index (Unicode scalar index).
+        line: 1-based line number (with line_base).
+        column: 1-based column number (with column_base).
+        utf16_offset: UTF-16 code unit offset for LSP-style positions.
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+        column_base: Base for column numbers (1 for 1-based, 0 for 0-based).
+
+    Returns:
+        TextPositionResult with all position fields populated.
+    """
+    mode_parts: list[str] = []
+    if byte_offset is not None:
+        mode_parts.append("byte_offset")
+    if codepoint_index is not None:
+        mode_parts.append("codepoint_index")
+    if line is not None or column is not None:
+        mode_parts.append("line+column")
+    if utf16_offset is not None:
+        mode_parts.append("utf16_offset")
+
+    if len(mode_parts) != 1:
+        return TextPositionResult(
+            valid=False,
+            byte_offset=None,
+            codepoint_index=None,
+            utf16_offset=None,
+            line=None,
+            column=None,
+            line_base=line_base,
+            column_base=column_base,
+            char=None,
+            codepoint=None,
+            name=None,
+            line_text_preview=None,
+            error="Exactly one locator mode must be provided: byte_offset, codepoint_index, line+column, or utf16_offset",
+            summary="Invalid: multiple or no locator modes provided",
+        )
+
+    if not text:
+        if byte_offset is not None and byte_offset != 0:
+            return TextPositionResult(
+                valid=False,
+                byte_offset=None,
+                codepoint_index=None,
+                utf16_offset=None,
+                line=None,
+                column=None,
+                line_base=line_base,
+                column_base=column_base,
+                char=None,
+                codepoint=None,
+                name=None,
+                line_text_preview=None,
+                error="Byte offset 0 is the only valid position for empty text",
+                summary="Invalid position for empty text",
+            )
+        return TextPositionResult(
+            valid=True,
+            byte_offset=0,
+            codepoint_index=0,
+            utf16_offset=0,
+            line=line_base,
+            column=column_base,
+            line_base=line_base,
+            column_base=column_base,
+            char="",
+            codepoint=None,
+            name=None,
+            line_text_preview="",
+            error=None,
+            summary="Empty text at start position",
+        )
+
+    lines: list[str]
+    effective_codepoint_index: int
+
+    if byte_offset is not None:
+        if byte_offset < 0:
+            return TextPositionResult(
+                valid=False,
+                byte_offset=None,
+                codepoint_index=None,
+                utf16_offset=None,
+                line=None,
+                column=None,
+                line_base=line_base,
+                column_base=column_base,
+                char=None,
+                codepoint=None,
+                name=None,
+                line_text_preview=None,
+                error="Negative byte offset",
+                summary="Invalid byte offset: negative",
+            )
+        if byte_offset > len(text.encode("utf-8")):
+            return TextPositionResult(
+                valid=False,
+                byte_offset=None,
+                codepoint_index=None,
+                utf16_offset=None,
+                line=None,
+                column=None,
+                line_base=line_base,
+                column_base=column_base,
+                char=None,
+                codepoint=None,
+                name=None,
+                line_text_preview=None,
+                error="Byte offset exceeds text length",
+                summary="Invalid byte offset: beyond text end",
+            )
+        if not _is_valid_byte_offset(text, byte_offset):
+            return TextPositionResult(
+                valid=False,
+                byte_offset=None,
+                codepoint_index=None,
+                utf16_offset=None,
+                line=None,
+                column=None,
+                line_base=line_base,
+                column_base=column_base,
+                char=None,
+                codepoint=None,
+                name=None,
+                line_text_preview=None,
+                error="Byte offset falls inside multibyte character",
+                summary="Invalid byte offset: inside multibyte character",
+            )
+        lines, line_num, col = _get_line_col(text, byte_offset=byte_offset)
+        effective_codepoint_index = len(text[:byte_offset].encode("utf-8").decode("utf-8", errors="ignore"))
+
+    elif codepoint_index is not None:
+        if codepoint_index < 0 or codepoint_index > len(text):
+            return TextPositionResult(
+                valid=False,
+                byte_offset=None,
+                codepoint_index=None,
+                utf16_offset=None,
+                line=None,
+                column=None,
+                line_base=line_base,
+                column_base=column_base,
+                char=None,
+                codepoint=None,
+                name=None,
+                line_text_preview=None,
+                error="Codepoint index out of bounds",
+                summary="Invalid codepoint_index: out of bounds",
+            )
+        lines, line_num, col = _get_line_col(text, codepoint_index=codepoint_index)
+        effective_codepoint_index = codepoint_index
+
+    elif utf16_offset is not None:
+        if utf16_offset < 0:
+            return TextPositionResult(
+                valid=False,
+                byte_offset=None,
+                codepoint_index=None,
+                utf16_offset=None,
+                line=None,
+                column=None,
+                line_base=line_base,
+                column_base=column_base,
+                char=None,
+                codepoint=None,
+                name=None,
+                line_text_preview=None,
+                error="Negative UTF-16 offset",
+                summary="Invalid utf16_offset: negative",
+            )
+        effective_codepoint_index = _utf16_offset_to_codepoint_index(text, utf16_offset)
+        if effective_codepoint_index > len(text):
+            return TextPositionResult(
+                valid=False,
+                byte_offset=None,
+                codepoint_index=None,
+                utf16_offset=None,
+                line=None,
+                column=None,
+                line_base=line_base,
+                column_base=column_base,
+                char=None,
+                codepoint=None,
+                name=None,
+                line_text_preview=None,
+                error="UTF-16 offset exceeds text length",
+                summary="Invalid utf16_offset: beyond text end",
+            )
+        lines, line_num, col = _get_line_col(text, codepoint_index=effective_codepoint_index)
+
+    else:
+        if line is None or column is None:
+            return TextPositionResult(
+                valid=False,
+                byte_offset=None,
+                codepoint_index=None,
+                utf16_offset=None,
+                line=None,
+                column=None,
+                line_base=line_base,
+                column_base=column_base,
+                char=None,
+                codepoint=None,
+                name=None,
+                line_text_preview=None,
+                error="Both line and column must be provided for line+column mode",
+                summary="Invalid: line and column both required",
+            )
+        if line < line_base or (line > line_base and line >= line_base + len(text.splitlines())):
+            max_line = line_base + len(text.splitlines()) - 1
+            actual_lines = len(text.splitlines()) if text else 1
+            if line < line_base:
+                return TextPositionResult(
+                    valid=False,
+                    byte_offset=None,
+                    codepoint_index=None,
+                    utf16_offset=None,
+                    line=None,
+                    column=None,
+                    line_base=line_base,
+                    column_base=column_base,
+                    char=None,
+                    codepoint=None,
+                    name=None,
+                    line_text_preview=None,
+                    error=f"Line {line} is less than minimum line {line_base}",
+                    summary="Invalid line: below valid range",
+                )
+            return TextPositionResult(
+                valid=False,
+                byte_offset=None,
+                codepoint_index=None,
+                utf16_offset=None,
+                line=None,
+                column=None,
+                line_base=line_base,
+                column_base=column_base,
+                char=None,
+                codepoint=None,
+                name=None,
+                line_text_preview=None,
+                error=f"Line {line} exceeds maximum line {max_line}",
+                summary="Invalid line: beyond text end",
+            )
+        lines = text.splitlines(keepends=True)
+        if column < column_base:
+            return TextPositionResult(
+                valid=False,
+                byte_offset=None,
+                codepoint_index=None,
+                utf16_offset=None,
+                line=None,
+                column=None,
+                line_base=line_base,
+                column_base=column_base,
+                char=None,
+                codepoint=None,
+                name=None,
+                line_text_preview=None,
+                error=f"Column {column} is less than minimum column {column_base}",
+                summary="Invalid column: below valid range",
+            )
+        line_index = line - line_base
+        col_index = column - column_base
+        if line_index < len(lines):
+            line_text_raw = lines[line_index]
+            if line_text_raw.endswith("\r\n"):
+                max_col = column_base + len(line_text_raw) - 2
+            elif line_text_raw.endswith("\n") or line_text_raw.endswith("\r"):
+                max_col = column_base + len(line_text_raw) - 1
+            else:
+                max_col = column_base + len(line_text_raw)
+            if col_index > max_col - column_base + (1 if column_base == 1 else 0):
+                if column_base == 1:
+                    actual_max = len(line_text_raw.rstrip("\r\n"))
+                else:
+                    actual_max = len(line_text_raw.rstrip("\r\n")) - 1
+                return TextPositionResult(
+                    valid=False,
+                    byte_offset=None,
+                    codepoint_index=None,
+                    utf16_offset=None,
+                    line=None,
+                    column=None,
+                    line_base=line_base,
+                    column_base=column_base,
+                    char=None,
+                    codepoint=None,
+                    name=None,
+                    line_text_preview=None,
+                    error=f"Column {column} exceeds line length {actual_max}",
+                    summary="Invalid column: beyond line length",
+                )
+        codepoint_index_to_use = 0
+        line_idx = 0
+        for i, l_text in enumerate(lines):
+            if line_idx == line_index:
+                break
+            codepoint_index_to_use += len(l_text)
+            line_idx = i + 1
+        effective_codepoint_index = codepoint_index_to_use + col_index
+        lines, line_num, col = _get_line_col(text, codepoint_index=effective_codepoint_index)
+
+    line_1based = line_num + line_base
+    col_1based = col + column_base
+    char_at_pos = text[effective_codepoint_index] if 0 <= effective_codepoint_index < len(text) else ""
+    codepoint_str = f"U+{ord(char_at_pos):04X}" if char_at_pos else None
+    name = unicodedata.name(char_at_pos, "<unknown>") if char_at_pos else None
+
+    line_preview: str | None = None
+    if 0 <= line_num < len(lines):
+        line_preview = lines[line_num].rstrip("\r\n")
+
+    byte_offset_result = text[:effective_codepoint_index].encode("utf-8")
+    utf16_result = _codepoint_index_to_utf16_offset(text, effective_codepoint_index)
+
+    return TextPositionResult(
+        valid=True,
+        byte_offset=len(byte_offset_result),
+        codepoint_index=effective_codepoint_index,
+        utf16_offset=utf16_result,
+        line=line_1based,
+        column=col_1based,
+        line_base=line_base,
+        column_base=column_base,
+        char=char_at_pos if char_at_pos else None,
+        codepoint=codepoint_str,
+        name=name,
+        line_text_preview=line_preview,
+        error=None,
+        summary=f"Line {line_1based}, column {col_1based}",
+    )
+
+# === exact/identifier.py ===
+class IdentifierAnalyzeResult(TypedDict):
+    text: str
+    classification: str
+    python_valid: bool
+    python_keyword: bool
+    rust_valid: bool | None
+    javascript_valid: bool | None
+    env_valid: bool
+    suggestions: dict[str, str]
+    warnings: list[str]
+    summary: str
+
+
+_RUST_KEYWORDS: frozenset[str] = frozenset({
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn",
+    "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in",
+    "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+    "self", "Self", "static", "struct", "super", "trait", "true", "type",
+    "unsafe", "use", "where", "while",
+})
+
+_ENV_PATTERN = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+
+
+def _is_valid_ident_chars(text: str, extra_chars: str = "") -> bool:
+    for char in text:
+        if not (char.isalnum() or char == "_" or char in extra_chars):
+            return False
+    return True
+
+
+def _is_snake_case(text: str) -> bool:
+    if not text:
+        return False
+    if "_" not in text:
+        return False
+    if not _is_valid_ident_chars(text):
+        return False
+    parts = text.split("_")
+    if any(not part.islower() and part for part in parts):
+        return False
+    return True
+
+
+def _is_camel_case(text: str) -> bool:
+    if not text:
+        return False
+    if text[0].isupper():
+        return False
+    if "_" in text or "-" in text:
+        return False
+    if not text.isidentifier():
+        return False
+    has_upper = any(c.isupper() for c in text)
+    return has_upper
+
+
+def _is_pascal_case(text: str) -> bool:
+    if not text:
+        return False
+    if text[0].islower():
+        return False
+    if "_" in text or "-" in text:
+        return False
+    if not text.isidentifier():
+        return False
+    has_upper = any(c.isupper() for c in text)
+    return has_upper
+
+
+def _is_kebab_case(text: str) -> bool:
+    if not text:
+        return False
+    if "-" not in text:
+        return False
+    if not _is_valid_ident_chars(text, "-"):
+        return False
+    parts = text.split("-")
+    if any(not part.islower() and part for part in parts):
+        return False
+    return True
+
+
+def _is_screaming_snake_case(text: str) -> bool:
+    if not text:
+        return False
+    if not _is_valid_ident_chars(text):
+        return False
+    parts = text.split("_")
+    if any(not part.isupper() and part for part in parts):
+        return False
+    return True
+
+
+def _classify(text: str) -> str:
+    if _is_snake_case(text):
+        return "snake_case"
+    if _is_camel_case(text):
+        return "camelCase"
+    if _is_pascal_case(text):
+        return "PascalCase"
+    if _is_kebab_case(text):
+        return "kebab-case"
+    if _is_screaming_snake_case(text):
+        return "SCREAMING_SNAKE_CASE"
+    if text.isidentifier():
+        return "mixed"
+    return "invalid"
+
+
+def _to_snake_case(text: str) -> str:
+    result = []
+    prev_upper = False
+    prev_underscore = False
+    for i, char in enumerate(text):
+        if char == "_" or char == "-":
+            prev_underscore = True
+            continue
+        if char.isupper():
+            if result and not prev_underscore and (prev_upper or i + 1 < len(text) and text[i + 1].isupper()):
+                result.append("_")
+            result.append(char.lower())
+            prev_upper = True
+        else:
+            result.append(char)
+            prev_upper = False
+        prev_underscore = False
+    return "".join(result)
+
+
+def _to_pascal_case(text: str) -> str:
+    snake = _to_snake_case(text)
+    parts = snake.split("_") if "_" in snake else [snake]
+    result = []
+    for part in parts:
+        if part:
+            result.append(part[0].upper() + part[1:].lower())
+    return "".join(result)
+
+
+def _to_camel_case(text: str) -> str:
+    pascal = _to_pascal_case(text)
+    if pascal:
+        return pascal[0].lower() + pascal[1:]
+    return pascal
+
+
+def _to_kebab_case(text: str) -> str:
+    return _to_snake_case(text).replace("_", "-")
+
+
+def _to_screaming_snake_case(text: str) -> str:
+    return _to_snake_case(text).upper()
+
+
+def identifier_analyze(
+    text: str,
+    languages: list[str] | None = None,
+) -> IdentifierAnalyzeResult:
+    """Analyze an identifier and classify its naming convention.
+
+    Args:
+        text: The identifier to analyze.
+        languages: List of languages to validate against.
+                   Defaults to ["python", "rust", "javascript", "env"].
+
+    Returns:
+        IdentifierAnalyzeResult with classification, validation, and suggestions.
+    """
+    if languages is None:
+        languages = ["python", "rust", "javascript", "env"]
+
+    classification = _classify(text)
+
+    python_valid = False
+    python_keyword = False
+    if "python" in languages:
+        python_valid = text.isidentifier()
+        if python_valid:
+            python_keyword = keyword.iskeyword(text)
+
+    rust_valid: bool | None = None
+    if "rust" in languages:
+        if text.isidentifier():
+            rust_valid = text not in _RUST_KEYWORDS
+        else:
+            rust_valid = False
+
+    javascript_valid: bool | None = None
+    if "javascript" in languages:
+        if text.isidentifier():
+            javascript_valid = True
+        else:
+            javascript_valid = False
+
+    env_valid = False
+    if "env" in languages:
+        env_valid = bool(_ENV_PATTERN.match(text))
+
+    warnings: list[str] = []
+    if python_keyword:
+        warnings.append("Python keyword - cannot be used as identifier in Python")
+    if rust_valid is False and "rust" in languages:
+        warnings.append("Rust keyword - cannot be used as identifier in Rust")
+    if classification == "mixed":
+        warnings.append("Identifier has mixed naming convention")
+    if text.startswith("_"):
+        warnings.append("Identifier starts with underscore - typically reserved for private/use-only")
+
+    suggestions = {
+        "snake_case": _to_snake_case(text),
+        "kebab_case": _to_kebab_case(text),
+        "pascal_case": _to_pascal_case(text),
+        "camel_case": _to_camel_case(text),
+        "screaming_snake_case": _to_screaming_snake_case(text),
+    }
+
+    summary_parts = []
+    if classification != "invalid":
+        summary_parts.append(f"Style: {classification}")
+    else:
+        summary_parts.append("Invalid identifier")
+
+    valid_langs = []
+    if python_valid and not python_keyword:
+        valid_langs.append("Python")
+    if rust_valid is True:
+        valid_langs.append("Rust")
+    if javascript_valid is True:
+        valid_langs.append("JavaScript")
+    if env_valid:
+        valid_langs.append("env")
+
+    if valid_langs:
+        summary_parts.append(f"Valid in: {', '.join(valid_langs)}")
+
+    if python_keyword:
+        summary_parts.append("Python: reserved keyword")
+
+    summary = ". ".join(summary_parts)
+
+    return IdentifierAnalyzeResult(
+        text=text,
+        classification=classification,
+        python_valid=python_valid,
+        python_keyword=python_keyword,
+        rust_valid=rust_valid,
+        javascript_valid=javascript_valid,
+        env_valid=env_valid,
+        suggestions=suggestions,
+        warnings=warnings,
+        summary=summary,
+    )
+
+# === exact/identifier_inspect.py ===
+class IdentifierInspectResult(TypedDict):
+    """Result of identifier inspection."""
+    identifiers: list[IdentifierInfo]
+    collisions: list[CollisionInfo]
+
+
+class IdentifierInfo(TypedDict):
+    """Information about a single identifier."""
+    raw: str
+    normalized: str
+    valid: bool
+    scripts: list[str]
+    has_invisibles: bool
+    has_confusables: bool
+    warnings: list[str]
+
+
+class CollisionInfo(TypedDict):
+    """Information about a collision between two identifiers."""
+    kind: str
+    a: str
+    b: str
+
+
+_JS_KEYWORDS: frozenset[str] = frozenset({
+    "break", "case", "catch", "const", "continue", "debugger", "default",
+    "delete", "do", "else", "enum", "export", "extends", "false", "finally",
+    "for", "function", "if", "import", "in", "instanceof", "let", "new",
+    "null", "return", "static", "super", "switch", "this", "throw", "true",
+    "try", "typeof", "var", "void", "while", "with", "yield",
+})
+
+
+_SCRIPT_RANGES: list[tuple[int, int, str]] = [
+    (0x0041, 0x005a, "Latin"),
+    (0x0061, 0x007a, "Latin"),
+    (0x00c0, 0x00ff, "Latin"),
+    (0x0100, 0x017f, "Latin"),
+    (0x0180, 0x024f, "Latin"),
+    (0x0400, 0x04ff, "Cyrillic"),
+    (0x0500, 0x052f, "Cyrillic"),
+    (0x0370, 0x03ff, "Greek"),
+    (0x1f00, 0x1fff, "Greek"),
+    (0x4e00, 0x9fff, "Han"),
+    (0x3000, 0x303f, "CJK"),
+    (0x3040, 0x309f, "Hiragana"),
+    (0x30a0, 0x30ff, "Katakana"),
+    (0x0600, 0x06ff, "Arabic"),
+    (0x0590, 0x05ff, "Hebrew"),
+    (0x0900, 0x097f, "Devanagari"),
+    (0x0e00, 0x0e7f, "Thai"),
+    (0xac00, 0xd7af, "Hangul"),
+    (0x10a0, 0x10ff, "Georgian"),
+    (0x0530, 0x058f, "Armenian"),
+    (0x13a0, 0x13ff, "Cherokee"),
+    (0x1400, 0x167f, "Canadian_Aboriginal"),
+]
+
+
+def _get_script_heuristic(char: str) -> str:
+    """Determine script for a character using heuristic detection."""
+    codepoint = ord(char)
+
+    if unicodedata.category(char).startswith("M"):
+        return "Inherited"
+
+    for start, end, script_name in _SCRIPT_RANGES:
+        if start <= codepoint <= end:
+            return script_name
+
+    return "Other"
+
+
+def _normalize_nfc(text: str) -> str:
+    """Normalize text to NFC form."""
+    return unicodedata.normalize("NFC", text)
+
+
+def _casefold(text: str) -> str:
+    """Casefold text for case-insensitive comparison."""
+    return text.casefold()
+
+
+def _has_invisibles(text: str) -> bool:
+    """Check if text contains invisible characters."""
+    invisible_chars = {
+        "\u200b", "\u200c", "\u200d", "\u200e", "\u200f",
+        "\ufeff", "\u00a0", "\u2028", "\u2029",
+        "\u202a", "\u202b", "\u202c", "\u202d", "\u202e",
+        "\u2066", "\u2067", "\u2068", "\u2069", "\u2060",
+    }
+    for char in text:
+        if char in invisible_chars:
+            return True
+    return False
+
+
+def _check_python_valid(text: str) -> bool:
+    """Check if identifier is valid Python identifier."""
+    if not text:
+        return False
+    if not text.isidentifier():
+        return False
+    if keyword.iskeyword(text):
+        return False
+    return True
+
+
+def _check_js_valid(text: str) -> bool:
+    """Check if identifier is valid JavaScript identifier."""
+    if not text:
+        return False
+    if text in _JS_KEYWORDS:
+        return False
+    if not text.isidentifier():
+        return False
+    return True
+
+
+def _get_scripts(text: str) -> list[str]:
+    """Get list of Unicode scripts used in text."""
+    scripts: set[str] = set()
+    for char in text:
+        script = _get_script_heuristic(char)
+        if script not in ("Common", "Inherited", "Unknown", "Other"):
+            scripts.add(script)
+    return sorted(list(scripts))
+
+
+def identifier_inspect(
+    identifiers: list[str],
+    language: str = "generic",
+    normalization: str = "NFC",
+    casefold: bool = False,
+    check_confusables: bool = True,
+) -> IdentifierInspectResult:
+    """Inspect a list of identifiers for validity and collisions.
+
+    Detects confusables, mixed scripts, normalization issues, and
+    casefold collisions across identifiers.
+
+    Args:
+        identifiers: List of identifier strings to inspect.
+        language: Language for validation ("generic", "python", "rust",
+                  "javascript", "typescript", "json_key").
+        normalization: Unicode normalization form ("NFC", "NFD", etc).
+        casefold: Apply casefolding for collision detection.
+        check_confusables: Check for confusable characters.
+
+    Returns:
+        IdentifierInspectResult with per-identifier info and collisions.
+
+    Example:
+        >>> result = identifier_inspect(["paypal", "pаypal"], language="python")
+        >>> result["collisions"]
+        [{'kind': 'confusable', 'a': 'paypal', 'b': 'pаypal'}]
+    """
+    normalized_ids: list[str] = []
+    id_infos: list[IdentifierInfo] = []
+    collisions: list[CollisionInfo] = []
+
+    for raw_id in identifiers:
+        normalized = raw_id
+        if normalization != "raw":
+            normalized = unicodedata.normalize(normalization, raw_id)
+
+        scripts = _get_scripts(normalized)
+        has_invisibles = _has_invisibles(raw_id)
+
+        confusables_found = []
+        if check_confusables:
+            confusables_found = detect_confusables(normalized)
+
+        has_confusables = len(confusables_found) > 0
+
+        valid = True
+        warnings: list[str] = []
+
+        if language == "python":
+            valid = _check_python_valid(normalized)
+            if not valid:
+                warnings.append("Invalid Python identifier")
+        elif language in ("javascript", "typescript"):
+            valid = _check_js_valid(normalized)
+            if not valid:
+                warnings.append(f"Invalid {language} identifier")
+
+        if has_invisibles:
+            warnings.append("Contains invisible characters")
+
+        if has_confusables:
+            warnings.append("Contains confusable characters")
+
+        if len(scripts) > 1:
+            warnings.append("Mixed script identifier")
+
+        id_infos.append(IdentifierInfo(
+            raw=raw_id,
+            normalized=normalized,
+            valid=valid,
+            scripts=scripts,
+            has_invisibles=has_invisibles,
+            has_confusables=has_confusables,
+            warnings=warnings,
+        ))
+        normalized_ids.append(normalized)
+
+    collision_pairs: set[tuple[str, str]] = set()
+
+    if check_confusables:
+        for i, a_raw in enumerate(identifiers):
+            for j, b_raw in enumerate(identifiers):
+                if i >= j:
+                    continue
+
+                a_norm = normalized_ids[i]
+                b_norm = normalized_ids[j]
+
+                a_confusables = detect_confusables(a_norm)
+                b_confusables = detect_confusables(b_norm)
+
+                if a_confusables and b_confusables:
+                    a_targets = {c["confusable_with"] for c in a_confusables}
+                    b_targets = {c["confusable_with"] for c in b_confusables}
+                    shared_targets = a_targets & b_targets
+                    if shared_targets:
+                        pair = (a_raw, b_raw) if a_raw <= b_raw else (b_raw, a_raw)
+                        if pair not in collision_pairs:
+                            collision_pairs.add(pair)
+                            collisions.append(CollisionInfo(
+                                kind="confusable",
+                                a=a_raw,
+                                b=b_raw,
+                            ))
+                        continue
+
+                for a_conf in a_confusables:
+                    if a_conf["confusable_with"] in b_norm:
+                        pair = (a_raw, b_raw) if a_raw <= b_raw else (b_raw, a_raw)
+                        if pair not in collision_pairs:
+                            collision_pairs.add(pair)
+                            collisions.append(CollisionInfo(
+                                kind="confusable",
+                                a=a_raw,
+                                b=b_raw,
+                            ))
+                        break
+
+                for b_conf in b_confusables:
+                    if b_conf["confusable_with"] in a_norm:
+                        pair = (a_raw, b_raw) if a_raw <= b_raw else (b_raw, a_raw)
+                        if pair not in collision_pairs:
+                            collision_pairs.add(pair)
+                            collisions.append(CollisionInfo(
+                                kind="confusable",
+                                a=a_raw,
+                                b=b_raw,
+                            ))
+                        break
+
+    if casefold:
+        casefold_map: dict[str, list[str]] = {}
+        for i, (raw, norm) in enumerate(zip(identifiers, normalized_ids)):
+            cf_key = _casefold(norm)
+            if cf_key not in casefold_map:
+                casefold_map[cf_key] = []
+            casefold_map[cf_key].append(raw)
+
+        for cf_key, items in casefold_map.items():
+            if len(items) > 1:
+                for i in range(len(items)):
+                    for j in range(i + 1, len(items)):
+                        pair = (items[i], items[j]) if items[i] <= items[j] else (items[j], items[i])
+                        if pair not in collision_pairs:
+                            collision_pairs.add(pair)
+                            collisions.append(CollisionInfo(
+                                kind="casefold",
+                                a=items[i],
+                                b=items[j],
+                            ))
+
+    if normalization != "raw":
+        norm_map: dict[str, list[str]] = {}
+        for raw, norm in zip(identifiers, normalized_ids):
+            if norm not in norm_map:
+                norm_map[norm] = []
+            norm_map[norm].append(raw)
+
+        for norm_key, items in norm_map.items():
+            if len(items) > 1:
+                for i in range(len(items)):
+                    for j in range(i + 1, len(items)):
+                        pair = (items[i], items[j]) if items[i] <= items[j] else (items[j], items[i])
+                        if pair not in collision_pairs:
+                            collision_pairs.add(pair)
+                            collisions.append(CollisionInfo(
+                                kind="normalization",
+                                a=items[i],
+                                b=items[j],
+                            ))
+
+    return IdentifierInspectResult(
+        identifiers=id_infos,
+        collisions=collisions,
+    )
+
+
+class TableIdentifierEntry(TypedDict, total=False):
+    """An identifier entry in the table passed to identifier_table_inspect."""
+    name: str
+    kind: str
+    file: str
+    line: int
+
+
+class TableCollisionInfo(TypedDict):
+    """Information about a collision between identifiers in a table."""
+    kind: str
+    names: list[str]
+    detail: str
+
+
+class ReservedKeywordHit(TypedDict):
+    """An identifier that is a reserved keyword in the target language."""
+    name: str
+    language: str
+    file: str
+    line: int
+
+
+class MixedStyleGroup(TypedDict):
+    """A group of identifiers with the same stripped form but different styles."""
+    stripped: str
+    names: list[str]
+    styles: list[str]
+
+
+class IdentifierTableInspectResult(TypedDict):
+    """Result of identifier table inspection."""
+    count: int
+    collisions: list[TableCollisionInfo]
+    reserved_keyword_hits: list[ReservedKeywordHit]
+    mixed_style_groups: list[MixedStyleGroup]
+    findings: list[str]
+
+
+_RUST_KEYWORDS: frozenset[str] = frozenset({
+    "as", "async", "await", "break", "const", "continue", "crate", "dyn",
+    "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in",
+    "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+    "self", "Self", "static", "struct", "super", "trait", "true", "type",
+    "unsafe", "use", "where", "while",
+})
+
+_JS_KEYWORDS: frozenset[str] = frozenset({
+    "break", "case", "catch", "const", "continue", "debugger", "default",
+    "delete", "do", "else", "enum", "export", "extends", "false", "finally",
+    "for", "function", "if", "import", "in", "instanceof", "let", "new",
+    "null", "return", "static", "super", "switch", "this", "throw", "true",
+    "try", "typeof", "var", "void", "while", "with", "yield",
+})
+
+_TS_KEYWORDS: frozenset[str] = _JS_KEYWORDS | frozenset({
+    "any", "boolean", "constructor", "declare", "get", "module",
+    "require", "number", "set", "string", "symbol", "type",
+    "from", "of", "readonly", "abstract", "as", "async", "await",
+    "enum", "export", "implements", "interface", "is", "keyof",
+    "namespace", "package", "private", "protected", "public",
+    "static", "override",
+})
+
+_LANG_KEYWORDS: dict[str, frozenset[str]] = {
+    "python": frozenset(keyword.kwlist),
+    "rust": _RUST_KEYWORDS,
+    "javascript": _JS_KEYWORDS,
+    "typescript": _TS_KEYWORDS,
+}
+
+
+def _classify_style(name: str) -> str:
+    """Classify the naming style of an identifier."""
+    if not name:
+        return "invalid"
+    if name[0].isupper():
+        if "_" not in name and "-" not in name and name.isidentifier() and any(c.isupper() for c in name):
+            return "PascalCase"
+    if "_" in name and "-" not in name:
+        parts = name.split("_")
+        if all(p.islower() or not p for p in parts):
+            return "snake_case"
+        if all(p.isupper() or not p for p in parts):
+            return "SCREAMING_SNAKE_CASE"
+    if "-" in name and "_" not in name:
+        parts = name.split("-")
+        if all(p.islower() or not p for p in parts):
+            return "kebab-case"
+    if name[0].islower() and "_" not in name and "-" not in name and name.isidentifier():
+        if any(c.isupper() for c in name):
+            return "camelCase"
+    if name.isidentifier():
+        return "mixed"
+    return "invalid"
+
+
+def _strip_style(name: str) -> str:
+    """Strip case and style separators to get a canonical comparison form."""
+    stripped = re.sub(r"[_\-]", "", name)
+    return stripped.lower()
+
+
+def identifier_table_inspect(
+    identifiers: list[dict],
+    language: str = "python",
+    checks: list[str] | None = None,
+) -> IdentifierTableInspectResult:
+    """Inspect a table of identifiers for collisions, reserved keywords, and mixed styles.
+
+    Args:
+        identifiers: List of dicts with required 'name' (str), optional 'kind' (str),
+                     'file' (str), 'line' (int).
+        language: Target language for keyword checking ('python', 'rust',
+                  'javascript', 'typescript', 'json_key', 'generic').
+        checks: Subset of checks to run. Defaults to all checks:
+                ['casefold', 'normalization', 'confusable', 'style', 'reserved', 'mixed_style'].
+
+    Returns:
+        IdentifierTableInspectResult with collisions, keyword hits, and mixed style groups.
+
+    Example:
+        >>> result = identifier_table_inspect([{'name': 'myVar'}, {'name': 'MyVar'}])
+        >>> result['collisions']
+        [{'kind': 'casefold', 'names': ['myVar', 'MyVar'], ...}]
+    """
+    if checks is None:
+        checks = ["casefold", "normalization", "confusable", "style", "reserved", "mixed_style"]
+
+    valid_checks = {"casefold", "normalization", "confusable", "style", "reserved", "mixed_style"}
+    active_checks = [c for c in checks if c in valid_checks]
+
+    count = len(identifiers)
+    collisions: list[TableCollisionInfo] = []
+    reserved_hits: list[ReservedKeywordHit] = []
+    mixed_style_groups: list[MixedStyleGroup] = []
+    findings: list[str] = []
+
+    names = [entry.get("name", "") for entry in identifiers]
+
+    if "casefold" in active_checks:
+        cf_map: dict[str, list[str]] = {}
+        for name in names:
+            cf_key = name.casefold()
+            cf_map.setdefault(cf_key, []).append(name)
+        for cf_key, group in cf_map.items():
+            if len(group) > 1:
+                collisions.append(TableCollisionInfo(
+                    kind="casefold",
+                    names=group,
+                    detail=f"Casefold collision: {', '.join(group)}",
+                ))
+        if cf_map and any(len(g) > 1 for g in cf_map.values()):
+            findings.append("Casefold collisions detected")
+
+    if "normalization" in active_checks:
+        nfc_map: dict[str, list[str]] = {}
+        for name in names:
+            nfc_key = unicodedata.normalize("NFC", name)
+            nfc_map.setdefault(nfc_key, []).append(name)
+        for nfc_key, group in nfc_map.items():
+            originals = list(set(group))
+            if len(originals) > 1:
+                collisions.append(TableCollisionInfo(
+                    kind="normalization",
+                    names=originals,
+                    detail=f"Normalization collision (NFC '{nfc_key}'): {', '.join(originals)}",
+                ))
+        if nfc_map and any(len(set(g)) > 1 for g in nfc_map.values()):
+            findings.append("Normalization collisions detected")
+
+    if "confusable" in active_checks:
+        checked_pairs: set[tuple[str, str]] = set()
+        for i, entry_a in enumerate(identifiers):
+            for j, entry_b in enumerate(identifiers):
+                if i >= j:
+                    continue
+                name_a = entry_a.get("name", "")
+                name_b = entry_b.get("name", "")
+                pair = (name_a, name_b) if name_a <= name_b else (name_b, name_a)
+                if pair in checked_pairs:
+                    continue
+
+                confusables_a = detect_confusables(name_a)
+                confusables_b = detect_confusables(name_b)
+
+                is_confusable = False
+                if confusables_a and confusables_b:
+                    a_targets = {c["confusable_with"] for c in confusables_a}
+                    b_targets = {c["confusable_with"] for c in confusables_b}
+                    if a_targets & b_targets:
+                        is_confusable = True
+
+                if not is_confusable:
+                    for c in confusables_a:
+                        if c["confusable_with"] in name_b:
+                            is_confusable = True
+                            break
+                if not is_confusable:
+                    for c in confusables_b:
+                        if c["confusable_with"] in name_a:
+                            is_confusable = True
+                            break
+
+                if not is_confusable:
+                    try:
+                        dist = levenshtein_distance(name_a, name_b, max_len=200)
+                        max_len_val = max(len(name_a), len(name_b))
+                        if max_len_val > 0 and dist <= 1 and name_a != name_b:
+                            is_confusable = True
+                    except ValueError:
+                        pass
+
+                if is_confusable:
+                    checked_pairs.add(pair)
+                    collisions.append(TableCollisionInfo(
+                        kind="confusable",
+                        names=[name_a, name_b],
+                        detail=f"Confusable/near-collision: '{name_a}' and '{name_b}'",
+                    ))
+        if checked_pairs:
+            findings.append("Confusable characters or near-collisions detected")
+
+    if "style" in active_checks:
+        style_map: dict[str, list[tuple[str, str]]] = {}
+        for name in names:
+            stripped = _strip_style(name)
+            if not stripped:
+                continue
+            style = _classify_style(name)
+            style_map.setdefault(stripped, []).append((name, style))
+        for stripped, entries in style_map.items():
+            styles_present = list(set(s for _, s in entries))
+            if len(styles_present) > 1:
+                group_names = [n for n, _ in entries]
+                collisions.append(TableCollisionInfo(
+                    kind="style_variant",
+                    names=group_names,
+                    detail=f"Style variants for '{stripped}': {', '.join(styles_present)}",
+                ))
+        if any(len(set(s for _, s in e)) > 1 for e in style_map.values()):
+            findings.append("Style variant collisions detected")
+
+    if "reserved" in active_checks:
+        kw_set = _LANG_KEYWORDS.get(language, frozenset())
+        for i, entry in enumerate(identifiers):
+            name = names[i]
+            if name in kw_set:
+                reserved_hits.append(ReservedKeywordHit(
+                    name=name,
+                    language=language,
+                    file=entry.get("file", ""),
+                    line=entry.get("line", 0),
+                ))
+        if reserved_hits:
+            findings.append(f"{len(reserved_hits)} reserved keyword hit(s) in {language}")
+
+    if "mixed_style" in active_checks:
+        style_map2: dict[str, list[tuple[str, str]]] = {}
+        for name in names:
+            stripped = _strip_style(name)
+            if not stripped:
+                continue
+            style = _classify_style(name)
+            style_map2.setdefault(stripped, []).append((name, style))
+        for stripped, entries in style_map2.items():
+            styles_present = list(set(s for _, s in entries))
+            if len(styles_present) > 1:
+                mixed_style_groups.append(MixedStyleGroup(
+                    stripped=stripped,
+                    names=[n for n, _ in entries],
+                    styles=styles_present,
+                ))
+        if mixed_style_groups:
+            findings.append(f"{len(mixed_style_groups)} mixed-style group(s) detected")
+
+    return IdentifierTableInspectResult(
+        count=count,
+        collisions=collisions,
+        reserved_keyword_hits=reserved_hits,
+        mixed_style_groups=mixed_style_groups,
+        findings=findings,
+    )
+
+# === exact/glob.py ===
+class GlobMatchResult(TypedDict):
+    """Result of glob pattern matching."""
+    matches: bool
+    normalized_pattern: str
+    normalized_path: str
+    matched_segment: str | None
+    unmatched_segment: str | None
+    summary: str
+
+
+def _split_path_posix(path: str) -> list[str]:
+    """Split POSIX path into segments."""
+    if path == "":
+        return []
+    parts = path.split("/")
+    return [p for p in parts if p]
+
+
+def _split_path_windows(path: str) -> list[str]:
+    """Split Windows path into segments, handling drive letters and UNC."""
+    segments: list[str] = []
+
+    if len(path) >= 2 and path[1] == ":":
+        segments.append(path[:2])
+        rest = path[2:]
+        if rest:
+            parts = re.split(r"[/\\]", rest)
+            segments.extend([p for p in parts if p])
+        return segments
+
+    if path.startswith("\\\\"):
+        parts = re.split(r"[/\\]", path)
+        if len(parts) >= 4:
+            segments.append("\\\\" + parts[1] + "\\" + parts[2])
+            segments.extend([p for p in parts[3:] if p])
+        else:
+            segments.extend([p for p in parts if p])
+        return segments
+
+    parts = re.split(r"[/\\]", path)
+    return [p for p in parts if p]
+
+
+def _casefold(s: str) -> str:
+    """Casefold string for case-insensitive comparison."""
+    return s.casefold()
+
+
+def _fnmatch_segment(pattern: str, segment: str, case_sensitive: bool = True) -> bool:
+    """Match pattern against a single path segment using fnmatch semantics.
+
+    This implements standard fnmatch behavior:
+    - * matches everything except /
+    - ? matches exactly one character except /
+    - [char] matches character classes
+
+    Args:
+        pattern: Glob pattern for one segment.
+        segment: Path segment to match.
+        case_sensitive: Whether to match case-sensitively.
+
+    Returns:
+        True if segment matches pattern.
+    """
+    if not case_sensitive:
+        pattern = _casefold(pattern)
+        segment = _casefold(segment)
+
+    return re.match(_fnmatch_to_regex(pattern), segment) is not None
+
+
+def _fnmatch_to_regex(pattern: str) -> str:
+    """Convert fnmatch pattern to regex, keeping / as literal.
+
+    Args:
+        pattern: Glob pattern.
+
+    Returns:
+        Regex pattern string.
+    """
+    regex_parts = []
+    i = 0
+    n = len(pattern)
+
+    while i < n:
+        char = pattern[i]
+
+        if char == "*":
+            regex_parts.append("[^/]*")
+            i += 1
+
+        elif char == "?":
+            regex_parts.append("[^/]")
+            i += 1
+
+        elif char == "[":
+            j = i + 1
+            if j < n and pattern[j] == "!":
+                j += 1
+            if j < n and pattern[j] == "]":
+                j += 1
+            while j < n and pattern[j] != "]":
+                j += 1
+
+            if j >= n:
+                regex_parts.append(re.escape("["))
+                i += 1
+            else:
+                char_class = pattern[i:j+1]
+                char_class = char_class.replace("!", "^", 1)
+                regex_parts.append("[" + char_class[1:-1] + "]")
+                i = j + 1
+
+        elif char == "/":
+            regex_parts.append("/")
+            i += 1
+
+        else:
+            regex_parts.append(re.escape(char))
+            i += 1
+
+    return "^" + "".join(regex_parts) + "$"
+
+
+def _match_double_star(
+    pattern_parts: list[str],
+    path_parts: list[str],
+    p_idx: int,
+) -> tuple[bool, int, int]:
+    """Match ** pattern against path parts.
+
+    ** matches zero or more full path segments.
+
+    Args:
+        pattern_parts: Pattern split into segments.
+        path_parts: Path split into segments.
+        p_idx: Index in pattern where ** begins.
+
+    Returns:
+        Tuple of (matched, next_pattern_idx, next_path_idx).
+    """
+    next_pattern_idx = p_idx + 1
+
+    if next_pattern_idx >= len(pattern_parts):
+        return True, next_pattern_idx, len(path_parts)
+
+    next_pattern = pattern_parts[next_pattern_idx]
+
+    path_idx = p_idx
+    while path_idx <= len(path_parts):
+        remaining_pattern = pattern_parts[next_pattern_idx:]
+        remaining_path = path_parts[path_idx:] if path_idx < len(path_parts) else []
+
+        matched, consumed_p, consumed_path = _match_segments(
+            remaining_pattern,
+            remaining_path,
+            case_sensitive=True
+        )
+
+        if matched:
+            return True, next_pattern_idx + consumed_p, path_idx + consumed_path
+
+        if path_idx < len(path_parts):
+            path_idx += 1
+        else:
+            break
+
+    return False, p_idx, p_idx
+
+
+def _match_segments(
+    pattern_parts: list[str],
+    path_parts: list[str],
+    case_sensitive: bool = True,
+) -> tuple[bool, int, int]:
+    """Match pattern segments against path segments.
+
+    Returns:
+        Tuple of (matched, consumed_pattern_count, consumed_path_count).
+    """
+    p_idx = 0
+    path_idx = 0
+
+    while p_idx < len(pattern_parts) and path_idx < len(path_parts):
+        pattern_seg = pattern_parts[p_idx]
+
+        if pattern_seg == "**":
+            matched, new_p_idx, new_path_idx = _match_double_star(
+                pattern_parts, path_parts, p_idx
+            )
+            if not matched:
+                return False, p_idx, path_idx
+            p_idx = new_p_idx
+            path_idx = new_path_idx
+
+        elif "**" in pattern_seg:
+            return False, p_idx, path_idx
+
+        else:
+            if not _fnmatch_segment(pattern_seg, path_parts[path_idx], case_sensitive):
+                return False, p_idx, path_idx
+            p_idx += 1
+            path_idx += 1
+
+    while p_idx < len(pattern_parts):
+        if pattern_parts[p_idx] == "**":
+            p_idx += 1
+        else:
+            return False, p_idx, path_idx
+
+    return p_idx == len(pattern_parts), p_idx, path_idx
+
+
+def glob_match(
+    pattern: str,
+    path: str,
+    platform: str = "posix",
+    case_sensitive: bool = True,
+) -> GlobMatchResult:
+    """Match a glob pattern against a path.
+
+    Glob semantics:
+    - `*` matches any characters within one path segment (not crossing /)
+    - `**` matches zero or more full path segments
+    - `?` matches exactly one character within a segment
+
+    Note: Python's fnmatch has limitations around ** patterns. This
+    implementation provides explicit ** handling as described above.
+
+    Args:
+        pattern: Glob pattern to match (e.g., "src/**/*.rs").
+        path: Path string to match against.
+        platform: "posix" or "windows". Controls path separator handling.
+        case_sensitive: Whether to match case-sensitively.
+
+    Returns:
+        GlobMatchResult with matches boolean and normalized values.
+
+    Examples:
+        >>> glob_match("src/**/*.rs", "src/main.rs", "posix", True).matches
+        True
+        >>> glob_match("*.txt", "readme.txt", "posix", True).matches
+        True
+        >>> glob_match("src/**", "src/foo/bar/baz", "posix", True).matches
+        True
+    """
+    normalized_pattern = pattern
+    normalized_path = path
+
+    if platform == "windows":
+        path_parts = _split_path_windows(path)
+    else:
+        path_parts = _split_path_posix(path)
+
+    pattern_parts: list[str] = []
+    i = 0
+    n = len(pattern)
+
+    while i < n:
+        if i + 1 < n and pattern[i:i+2] == "**":
+            if i + 2 < n and pattern[i+2] == "/":
+                pattern_parts.append("**")
+                i += 3
+            elif i + 2 == n:
+                pattern_parts.append("**")
+                i += 2
+            else:
+                pattern_parts.append("**")
+                i += 2
+
+        elif pattern[i] == "/":
+            i += 1
+
+        else:
+            j = i
+            while j < n and pattern[j] != "/" and not (j + 1 < n and pattern[j:j+2] == "**"):
+                j += 1
+            pattern_parts.append(pattern[i:j])
+            i = j
+
+    matched, _, _ = _match_segments(pattern_parts, path_parts, case_sensitive)
+
+    if matched:
+        return GlobMatchResult(
+            matches=True,
+            normalized_pattern=normalized_pattern,
+            normalized_path=normalized_path,
+            matched_segment=None,
+            unmatched_segment=None,
+            summary="Pattern matches path",
+        )
+    else:
+        return GlobMatchResult(
+            matches=False,
+            normalized_pattern=normalized_pattern,
+            normalized_path=normalized_path,
+            matched_segment=None,
+            unmatched_segment=None,
+            summary="Pattern does not match path",
+        )
+
+# === exact/unicode_policy.py ===
+class PolicyFinding(TypedDict):
+    """A single finding from a policy check."""
+    rule: str
+    severity: str
+    message: str
+
+
+class UnicodePolicyCheckResult(TypedDict):
+    """Result of a Unicode policy check."""
+    pass_: bool
+    policy: str
+    normalized_form: str
+    findings: list[PolicyFinding]
+    summary: str
+
+
+class CanonicalizeResult(TypedDict):
+    """Result of text canonicalization."""
+    text: str
+    changed: bool
+    operations_applied: list[str]
+    fingerprint_before: str
+    fingerprint_after: str
+    findings: list[str]
+
+
+class CanonicalizeResultWithMapping(CanonicalizeResult):
+    """Result of text canonicalization with character mapping."""
+    mapping: list[dict[str, str]] | None
+
+
+# --- Policy definitions ---
+
+_VALID_POLICIES = frozenset({
+    "identifier_strict",
+    "filename_safe",
+    "source_code",
+    "human_text",
+    "json_key",
+    "domain_like",
+})
+
+# Reserved Windows device names (case-insensitive)
+_WINDOWS_RESERVED = frozenset({
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+})
+
+# Bidi control characters
+_BIDI_CHARS = frozenset({
+    "\u202a", "\u202b", "\u202c", "\u202d", "\u202e",
+    "\u2066", "\u2067", "\u2068", "\u2069",
+})
+
+# Zero-width characters
+_ZERO_WIDTH_CHARS = frozenset({
+    "\u200b", "\u200c", "\u200d", "\u2060",
+})
+
+# Windows forbidden characters
+_WIN_FORBIDDEN = frozenset({
+    "\\", "/", ":", "*", "?", "\"", "<", ">", "|",
+})
+
+
+def unicode_policy_check(
+    text: str,
+    policy: str,
+    normalization: str | None = None,
+) -> UnicodePolicyCheckResult:
+    """Apply a named deterministic Unicode safety policy to input text.
+
+    Policies are deterministic heuristics, not semantic security guarantees.
+
+    Args:
+        text: Input text to check.
+        policy: One of identifier_strict, filename_safe, source_code,
+                human_text, json_key, domain_like.
+        normalization: Optional normalization form to apply before checking.
+                      Defaults to policy-specific normalizations.
+
+    Returns:
+        UnicodePolicyCheckResult with pass/fail, findings, and summary.
+    """
+    if policy not in _VALID_POLICIES:
+        return UnicodePolicyCheckResult(
+            pass_=False,
+            policy=policy,
+            normalized_form="",
+            findings=[PolicyFinding(
+                rule="invalid_policy",
+                severity="error",
+                message=f"Unknown policy: {policy}. Valid policies: {', '.join(sorted(_VALID_POLICIES))}",
+            )],
+            summary=f"Invalid policy: {policy}",
+        )
+
+    # Determine default normalization for the policy
+    if normalization is None:
+        normalization = _default_normalization(policy)
+    elif normalization == "raw":
+        normalization = ""
+
+    # Apply normalization if requested
+    if normalization:
+        try:
+            normalized = normalize_unicode(text, normalization)
+        except ValueError:
+            return UnicodePolicyCheckResult(
+                pass_=False,
+                policy=policy,
+                normalized_form="",
+                findings=[PolicyFinding(
+                    rule="invalid_normalization",
+                    severity="error",
+                    message=f"Invalid normalization form: {normalization}",
+                )],
+                summary=f"Invalid normalization: {normalization}",
+            )
+    else:
+        normalized = text
+
+    findings: list[PolicyFinding] = []
+
+    if policy == "identifier_strict":
+        findings.extend(_check_identifier_strict(text, normalized))
+    elif policy == "filename_safe":
+        findings.extend(_check_filename_safe(text, normalized))
+    elif policy == "source_code":
+        findings.extend(_check_source_code(text, normalized))
+    elif policy == "human_text":
+        findings.extend(_check_human_text(text, normalized))
+    elif policy == "json_key":
+        findings.extend(_check_json_key(text, normalized))
+    elif policy == "domain_like":
+        findings.extend(_check_domain_like(text, normalized))
+
+    # Determine pass/fail: error findings fail, warnings pass
+    errors = [f for f in findings if f["severity"] == "error"]
+    pass_ = len(errors) == 0
+
+    summary_parts: list[str] = []
+    if pass_:
+        summary_parts.append(f"PASS ({policy})")
+    else:
+        summary_parts.append(f"FAIL ({policy})")
+        summary_parts.append(f"{len(errors)} error(s)")
+
+    warnings = [f for f in findings if f["severity"] == "warning"]
+    if warnings:
+        summary_parts.append(f"{len(warnings)} warning(s)")
+
+    return UnicodePolicyCheckResult(
+        pass_=pass_,
+        policy=policy,
+        normalized_form=normalized,
+        findings=findings,
+        summary="; ".join(summary_parts),
+    )
+
+
+def _default_normalization(policy: str) -> str:
+    """Return the default normalization form for a policy."""
+    defaults = {
+        "identifier_strict": "NFC",
+        "filename_safe": "NFC",
+        "source_code": "NFC",
+        "human_text": "NFC",
+        "json_key": "NFC",
+        "domain_like": "NFKC",
+    }
+    return defaults.get(policy, "NFC")
+
+
+def _check_identifier_strict(text: str, normalized: str) -> list[PolicyFinding]:
+    """Check text for identifier_strict policy violations."""
+    findings: list[PolicyFinding] = []
+
+    # Mixed scripts
+    ms = detect_mixed_scripts(normalized)
+    if ms["mixed_scripts"]:
+        findings.append(PolicyFinding(
+            rule="mixed_scripts",
+            severity="error",
+            message=f"Mixed scripts detected: {', '.join(ms['scripts'])}",
+        ))
+
+    # Bidi controls
+    bidi_found = [c for c in normalized if c in _BIDI_CHARS]
+    if bidi_found:
+        findings.append(PolicyFinding(
+            rule="bidi_controls",
+            severity="error",
+            message=f"Bidi control characters found: {len(bidi_found)}",
+        ))
+
+    # Zero-width characters
+    zw_found = [c for c in normalized if c in _ZERO_WIDTH_CHARS]
+    if zw_found:
+        findings.append(PolicyFinding(
+            rule="zero_width_characters",
+            severity="error",
+            message=f"Zero-width characters found: {len(zw_found)}",
+        ))
+
+    # Confusables
+    confusables = detect_confusables(normalized)
+    if confusables:
+        findings.append(PolicyFinding(
+            rule="confusables",
+            severity="error",
+            message=f"Confusable characters found: {len(confusables)}",
+        ))
+
+    # Normalization instability (NFC != NFD form)
+    if unicodedata.is_normalized("NFC", normalized) and not unicodedata.is_normalized("NFD", normalized):
+        # This is a heuristic: if NFC-normalized text is not NFD-normalized,
+        # there may be normalization instability
+        nfd_form = unicodedata.normalize("NFD", normalized)
+        if nfd_form != normalized:
+            findings.append(PolicyFinding(
+                rule="normalization_instability",
+                severity="warning",
+                message="Text has different forms under NFC vs NFD normalization",
+            ))
+
+    # Invisible characters
+    invisibles = find_invisibles(normalized)
+    if invisibles:
+        findings.append(PolicyFinding(
+            rule="invisible_characters",
+            severity="error",
+            message=f"Invisible characters found: {len(invisibles)}",
+        ))
+
+    return findings
+
+
+def _check_filename_safe(text: str, normalized: str) -> list[PolicyFinding]:
+    """Check text for filename_safe policy violations."""
+    findings: list[PolicyFinding] = []
+
+    # Control characters (exclude common whitespace)
+    for i, c in enumerate(normalized):
+        cat = unicodedata.category(c)
+        if cat.startswith("C") and c not in "\n\t\r":
+            findings.append(PolicyFinding(
+                rule="control_characters",
+                severity="error",
+                message=f"Control character at position {i}: U+{ord(c):04X}",
+            ))
+
+    # Windows forbidden characters
+    forbidden_found = [c for c in normalized if c in _WIN_FORBIDDEN]
+    if forbidden_found:
+        findings.append(PolicyFinding(
+            rule="path_separators",
+            severity="error",
+            message=f"Forbidden path characters found: {', '.join(repr(c) for c in sorted(set(forbidden_found)))}",
+        ))
+
+    # Bidi controls
+    bidi_found = [c for c in normalized if c in _BIDI_CHARS]
+    if bidi_found:
+        findings.append(PolicyFinding(
+            rule="bidi_controls",
+            severity="error",
+            message=f"Bidi control characters found: {len(bidi_found)}",
+        ))
+
+    # Zero-width characters
+    zw_found = [c for c in normalized if c in _ZERO_WIDTH_CHARS]
+    if zw_found:
+        findings.append(PolicyFinding(
+            rule="zero_width_characters",
+            severity="error",
+            message=f"Zero-width characters found: {len(zw_found)}",
+        ))
+
+    # Reserved Windows names (check stem)
+    stem = normalized.split(".")[0].upper()
+    if stem in _WINDOWS_RESERVED:
+        findings.append(PolicyFinding(
+            rule="reserved_windows_name",
+            severity="error",
+            message=f"Reserved Windows device name: {stem}",
+        ))
+
+    return findings
+
+
+def _check_source_code(text: str, normalized: str) -> list[PolicyFinding]:
+    """Check text for source_code policy violations."""
+    findings: list[PolicyFinding] = []
+
+    # Bidi controls
+    bidi_found = [c for c in normalized if c in _BIDI_CHARS]
+    if bidi_found:
+        findings.append(PolicyFinding(
+            rule="bidi_controls",
+            severity="error",
+            message=f"Bidi control characters found: {len(bidi_found)}",
+        ))
+
+    # Zero-width characters (except word joiner which is sometimes intentional)
+    zw_found = [c for c in normalized if c in _ZERO_WIDTH_CHARS and c != "\u2060"]
+    if zw_found:
+        findings.append(PolicyFinding(
+            rule="zero_width_characters",
+            severity="error",
+            message=f"Zero-width characters found: {len(zw_found)}",
+        ))
+
+    # Confusables (warning level for source code)
+    confusables = detect_confusables(normalized)
+    if confusables:
+        findings.append(PolicyFinding(
+            rule="confusables",
+            severity="warning",
+            message=f"Confusable characters found: {len(confusables)}",
+        ))
+
+    return findings
+
+
+def _check_human_text(text: str, normalized: str) -> list[PolicyFinding]:
+    """Check text for human_text policy violations (less strict)."""
+    findings: list[PolicyFinding] = []
+
+    # Bidi controls (warning only for human text)
+    bidi_found = [c for c in normalized if c in _BIDI_CHARS]
+    if bidi_found:
+        findings.append(PolicyFinding(
+            rule="bidi_controls",
+            severity="warning",
+            message=f"Bidi control characters found: {len(bidi_found)}",
+        ))
+
+    # Zero-width characters (warning only)
+    zw_found = [c for c in normalized if c in _ZERO_WIDTH_CHARS]
+    if zw_found:
+        findings.append(PolicyFinding(
+            rule="zero_width_characters",
+            severity="warning",
+            message=f"Zero-width characters found: {len(zw_found)}",
+        ))
+
+    # Mixed scripts (warning only for human text)
+    ms = detect_mixed_scripts(normalized)
+    if ms["mixed_scripts"]:
+        findings.append(PolicyFinding(
+            rule="mixed_scripts",
+            severity="warning",
+            message=f"Mixed scripts detected: {', '.join(ms['scripts'])}",
+        ))
+
+    # Confusables (warning only for human text)
+    confusables = detect_confusables(normalized)
+    if confusables:
+        findings.append(PolicyFinding(
+            rule="confusables",
+            severity="warning",
+            message=f"Confusable characters found: {len(confusables)}",
+        ))
+
+    return findings
+
+
+def _check_json_key(text: str, normalized: str) -> list[PolicyFinding]:
+    """Check text for json_key policy violations."""
+    findings: list[PolicyFinding] = []
+
+    # Bidi controls
+    bidi_found = [c for c in normalized if c in _BIDI_CHARS]
+    if bidi_found:
+        findings.append(PolicyFinding(
+            rule="bidi_controls",
+            severity="error",
+            message=f"Bidi control characters found: {len(bidi_found)}",
+        ))
+
+    # Zero-width characters
+    zw_found = [c for c in normalized if c in _ZERO_WIDTH_CHARS]
+    if zw_found:
+        findings.append(PolicyFinding(
+            rule="zero_width_characters",
+            severity="error",
+            message=f"Zero-width characters found: {len(zw_found)}",
+        ))
+
+    # Confusables (warning for JSON keys)
+    confusables = detect_confusables(normalized)
+    if confusables:
+        findings.append(PolicyFinding(
+            rule="confusables",
+            severity="warning",
+            message=f"Confusable characters found: {len(confusables)}",
+        ))
+
+    # Control characters
+    for i, c in enumerate(normalized):
+        cat = unicodedata.category(c)
+        if cat.startswith("C") and c not in "\n\t\r":
+            findings.append(PolicyFinding(
+                rule="control_characters",
+                severity="error",
+                message=f"Control character at position {i}: U+{ord(c):04X}",
+            ))
+
+    return findings
+
+
+def _check_domain_like(text: str, normalized: str) -> list[PolicyFinding]:
+    """Check text for domain_like policy violations."""
+    findings: list[PolicyFinding] = []
+
+    # Mixed scripts
+    ms = detect_mixed_scripts(normalized)
+    if ms["mixed_scripts"]:
+        findings.append(PolicyFinding(
+            rule="mixed_scripts",
+            severity="error",
+            message=f"Mixed scripts detected: {', '.join(ms['scripts'])}",
+        ))
+
+    # Confusables (error for domain-like)
+    confusables = detect_confusables(normalized)
+    if confusables:
+        findings.append(PolicyFinding(
+            rule="confusables",
+            severity="error",
+            message=f"Confusable characters found: {len(confusables)}",
+        ))
+
+    # Bidi controls
+    bidi_found = [c for c in normalized if c in _BIDI_CHARS]
+    if bidi_found:
+        findings.append(PolicyFinding(
+            rule="bidi_controls",
+            severity="error",
+            message=f"Bidi control characters found: {len(bidi_found)}",
+        ))
+
+    # Zero-width characters
+    zw_found = [c for c in normalized if c in _ZERO_WIDTH_CHARS]
+    if zw_found:
+        findings.append(PolicyFinding(
+            rule="zero_width_characters",
+            severity="error",
+            message=f"Zero-width characters found: {len(zw_found)}",
+        ))
+
+    return findings
+
+
+# --- Canonicalization profiles ---
+
+_VALID_PROFILES = frozenset({
+    "source_file_identity",
+    "identifier_compare",
+    "human_label_compare",
+    "json_key_compare",
+    "path_segment_compare",
+})
+
+
+def canonicalize_text(
+    text: str,
+    profile: str,
+    return_mapping: bool = False,
+) -> CanonicalizeResult | CanonicalizeResultWithMapping:
+    """Apply a named text canonicalization profile.
+
+    Profiles provide a single call to select common normalization
+    sequences without manually specifying many low-level flags.
+
+    Args:
+        text: Input text to canonicalize.
+        profile: One of source_file_identity, identifier_compare,
+                 human_label_compare, json_key_compare, path_segment_compare.
+        return_mapping: If True, include a character mapping showing
+                       what changed at each position.
+
+    Returns:
+        CanonicalizeResult with canonicalized text, operations applied,
+        fingerprints, and findings.
+    """
+    if profile not in _VALID_PROFILES:
+        result: CanonicalizeResultWithMapping = CanonicalizeResultWithMapping(
+            text=text,
+            changed=False,
+            operations_applied=[],
+            fingerprint_before="",
+            fingerprint_after="",
+            findings=[f"Invalid profile: {profile}. Valid profiles: {', '.join(sorted(_VALID_PROFILES))}"],
+            mapping=None,
+        )
+        return result
+
+    # Compute fingerprint of original
+    fp_before = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    current_text = text
+    operations: list[str] = []
+    findings: list[str] = []
+
+    if profile == "source_file_identity":
+        current_text, ops, founds = _canonicalize_source_file_identity(current_text)
+        operations.extend(ops)
+        findings.extend(founds)
+
+    elif profile == "identifier_compare":
+        current_text, ops, founds = _canonicalize_identifier_compare(current_text)
+        operations.extend(ops)
+        findings.extend(founds)
+
+    elif profile == "human_label_compare":
+        current_text, ops, founds = _canonicalize_human_label_compare(current_text)
+        operations.extend(ops)
+        findings.extend(founds)
+
+    elif profile == "json_key_compare":
+        current_text, ops, founds = _canonicalize_json_key_compare(current_text)
+        operations.extend(ops)
+        findings.extend(founds)
+
+    elif profile == "path_segment_compare":
+        current_text, ops, founds = _canonicalize_path_segment_compare(current_text)
+        operations.extend(ops)
+        findings.extend(founds)
+
+    # Compute fingerprint of result
+    fp_after = hashlib.sha256(current_text.encode("utf-8")).hexdigest()
+
+    changed = current_text != text
+
+    # Build mapping if requested
+    mapping_list: list[dict[str, str]] | None = None
+    if return_mapping and changed:
+        mapping_list = _build_char_mapping(text, current_text)
+
+    result_base: CanonicalizeResultWithMapping = CanonicalizeResultWithMapping(
+        text=current_text,
+        changed=changed,
+        operations_applied=operations,
+        fingerprint_before=fp_before,
+        fingerprint_after=fp_after,
+        findings=findings,
+        mapping=mapping_list,
+    )
+    return result_base
+
+
+def _build_char_mapping(original: str, canonical: str) -> list[dict[str, str]]:
+    """Build a character-level mapping between original and canonical text.
+
+    Returns a list of changes at positions where characters differ.
+    """
+    mapping: list[dict[str, str]] = []
+    max_len = max(len(original), len(canonical))
+
+    for i in range(max_len):
+        orig_char = original[i] if i < len(original) else ""
+        canon_char = canonical[i] if i < len(canonical) else ""
+
+        if orig_char != canon_char:
+            entry: dict[str, str] = {"position": str(i)}
+            if orig_char:
+                entry["original"] = orig_char
+                entry["original_codepoint"] = f"U+{ord(orig_char):04X}"
+            else:
+                entry["original"] = ""
+                entry["original_codepoint"] = ""
+            if canon_char:
+                entry["canonical"] = canon_char
+                entry["canonical_codepoint"] = f"U+{ord(canon_char):04X}"
+            else:
+                entry["canonical"] = ""
+                entry["canonical_codepoint"] = ""
+            mapping.append(entry)
+
+    return mapping
+
+
+def _canonicalize_source_file_identity(text: str) -> tuple[str, list[str], list[str]]:
+    """Canonicalize for source file identity comparison.
+
+    Operations: NFC normalization, LF newlines, strip trailing whitespace,
+    ensure final newline.
+    """
+    ops: list[str] = []
+    findings: list[str] = []
+    current = text
+
+    # NFC normalization
+    nfc = unicodedata.normalize("NFC", current)
+    if nfc != current:
+        current = nfc
+        ops.append("NFC")
+
+    # LF newlines
+    lf = current.replace("\r\n", "\n").replace("\r", "\n")
+    if lf != current:
+        current = lf
+        ops.append("LF_newlines")
+
+    # Strip trailing whitespace per line
+    lines = current.split("\n")
+    stripped = [line.rstrip() for line in lines]
+    new_text = "\n".join(stripped)
+    if new_text != current:
+        current = new_text
+        ops.append("strip_trailing_whitespace")
+
+    # Ensure final newline
+    if not current.endswith("\n"):
+        current = current + "\n"
+        ops.append("ensure_final_newline")
+    elif current.endswith("\n\n"):
+        # Normalize multiple trailing newlines
+        while current.endswith("\n\n"):
+            current = current[:-1]
+        if not current.endswith("\n"):
+            current = current + "\n"
+
+    return current, ops, findings
+
+
+def _canonicalize_identifier_compare(text: str) -> tuple[str, list[str], list[str]]:
+    """Canonicalize for identifier comparison.
+
+    Operations: NFC normalization, casefold.
+    """
+    ops: list[str] = []
+    findings: list[str] = []
+    current = text
+
+    # NFC normalization
+    nfc = unicodedata.normalize("NFC", current)
+    if nfc != current:
+        current = nfc
+        ops.append("NFC")
+
+    # Casefold
+    folded = current.casefold()
+    if folded != current:
+        current = folded
+        ops.append("casefold")
+
+    return current, ops, findings
+
+
+def _canonicalize_human_label_compare(text: str) -> tuple[str, list[str], list[str]]:
+    """Canonicalize for human label comparison.
+
+    Operations: NFC normalization, casefold, trim, collapse whitespace.
+    """
+    ops: list[str] = []
+    findings: list[str] = []
+    current = text
+
+    # NFC normalization
+    nfc = unicodedata.normalize("NFC", current)
+    if nfc != current:
+        current = nfc
+        ops.append("NFC")
+
+    # Casefold
+    folded = current.casefold()
+    if folded != current:
+        current = folded
+        ops.append("casefold")
+
+    # Trim
+    trimmed = current.strip()
+    if trimmed != current:
+        current = trimmed
+        ops.append("trim")
+
+    # Collapse whitespace
+    collapsed = re.sub(r"\s+", " ", current)
+    if collapsed != current:
+        current = collapsed
+        ops.append("collapse_whitespace")
+        findings.append("Whitespace sequences collapsed to single space")
+
+    return current, ops, findings
+
+
+def _canonicalize_json_key_compare(text: str) -> tuple[str, list[str], list[str]]:
+    """Canonicalize for JSON key comparison.
+
+    Operations: NFC normalization, casefold.
+    """
+    ops: list[str] = []
+    findings: list[str] = []
+    current = text
+
+    # NFC normalization
+    nfc = unicodedata.normalize("NFC", current)
+    if nfc != current:
+        current = nfc
+        ops.append("NFC")
+
+    # Casefold
+    folded = current.casefold()
+    if folded != current:
+        current = folded
+        ops.append("casefold")
+
+    return current, ops, findings
+
+
+def _canonicalize_path_segment_compare(text: str) -> tuple[str, list[str], list[str]]:
+    """Canonicalize for path segment comparison.
+
+    Operations: NFC normalization, lowercase, normalize newlines to LF.
+    """
+    ops: list[str] = []
+    findings: list[str] = []
+    current = text
+
+    # NFC normalization
+    nfc = unicodedata.normalize("NFC", current)
+    if nfc != current:
+        current = nfc
+        ops.append("NFC")
+
+    # Lowercase
+    lowered = current.lower()
+    if lowered != current:
+        current = lowered
+        ops.append("lowercase")
+
+    # LF newlines
+    lf = current.replace("\r\n", "\n").replace("\r", "\n")
+    if lf != current:
+        current = lf
+        ops.append("LF_newlines")
+
+    return current, ops, findings
+
+# === MCP server ===
+
+# === mcp/schemas.py ===
+class FindingSpan(TypedDict, total=False):
+    """Location span within a finding."""
+    byte_start: int
+    byte_end: int
+    char_start: int
+    char_end: int
+    line: int
+    column: int
+
+
+class Finding(TypedDict, total=False):
+    """Structured finding emitted by MCP tools."""
+    code: str
+    severity: str  # "info" | "warn" | "error"
+    message: str
+    span: FindingSpan
+    details: dict[str, Any]
+
+
+class ErrorEnvelope(TypedDict):
+    """Standard error envelope for MCP tool responses."""
+    ok: bool
+    error_type: str
+    error: str
+    hints: list[str]
+    tool: str | None
+    warnings: list[str]
+
+
+TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "math_eval": {
+        "description": "Deterministically evaluate arithmetic, unit conversions, constants, and simple scientific expressions. Use for math and unit tasks instead of asking the model to calculate.",
+        "tier": 0,
+        "tags": ["math", "evaluation", "arithmetic", "units", "constants"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "Math expression to evaluate (e.g., '5 + 3', '30m + 100ft', 'five plus three')",
+                },
+            },
+            "required": ["expression"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "result": {"type": "string", "description": "Evaluation result as string"},
+                "type": {"type": "string", "description": "Python type name of the result"},
+            },
+        },
+    },
+    "unit_convert": {
+        "description": "Convert a numeric value from one unit to another using pre-defined conversion factors.",
+        "tier": 2,
+        "tags": ["math", "units", "conversion"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "value": {"type": "number", "description": "Numeric value to convert"},
+                "from_unit": {"type": "string", "description": "Source unit (e.g., 'km', 'ft', 'kg')"},
+                "to_unit": {"type": "string", "description": "Target unit (e.g., 'm', 'in', 'lb')"},
+            },
+            "required": ["value", "from_unit", "to_unit"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "value": {"type": "number", "description": "Converted value"},
+                "from_unit": {"type": "string"},
+                "to_unit": {"type": "string"},
+                "factor": {"type": "number", "description": "Conversion factor used"},
+            },
+        },
+    },
+    "unit_info": {
+        "description": "Get information about a unit including its canonical form and category.",
+        "tier": 2,
+        "tags": ["math", "units", "information"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "unit": {"type": "string", "description": "Unit name or alias (e.g., 'km', 'kilogram', '℃')"},
+            },
+            "required": ["unit"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "unit": {"type": "string"},
+                "canonical": {"type": "string", "description": "Canonical unit name"},
+                "category": {"type": "string", "description": "Unit category (e.g., 'length', 'mass', 'temperature')"},
+                "is_valid": {"type": "boolean"},
+            },
+        },
+    },
+    "constant_lookup": {
+        "description": "Look up physical constant values and symbols (Avogadro, Planck, speed of light, etc.).",
+        "tier": 2,
+        "tags": ["math", "constants", "physics", "lookup"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Constant name (e.g., 'avogadro', 'planck', 'c', 'G')"},
+            },
+            "required": ["name"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "value": {"type": "number", "description": "Constant value"},
+                "symbol": {"type": "string", "description": " display symbol (e.g., 'N_A', 'h', 'c')"},
+                "display_name": {"type": "string", "description": "Human-readable name"},
+            },
+        },
+    },
+    "text_measure": {
+        "description": "Measure exact text properties: UTF-8 byte length, codepoint count, words, lines, whitespace, newline style, Unicode normalization state, invisibles, and mixed-script signals.",
+        "tier": 0,
+        "tags": ["text", "measurement", "unicode", "metrics"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Input string to measure",
+                },
+                "detail": {
+                    "type": "string",
+                    "enum": ["summary", "normal", "full"],
+                    "default": "normal",
+                    "description": "Detail level for output",
+                },
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "bytes_utf8": {"type": "integer"},
+                "codepoints": {"type": "integer"},
+                "graphemes": {"type": "integer"},
+                "words": {"type": "integer"},
+                "lines": {"type": "integer"},
+                "nonempty_lines": {"type": "integer"},
+                "blank_lines": {"type": "integer"},
+                "warnings": {"type": "array"},
+            },
+        },
+    },
+    "text_equal": {
+        "description": "Compare two strings under raw, Unicode-normalized, casefolded, or trimmed modes and report exact equality evidence.",
+        "tier": 0,
+        "tags": ["text", "comparison", "equality", "unicode"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "description": "First string"},
+                "b": {"type": "string", "description": "Second string"},
+                "normalization": {
+                    "type": "string",
+                    "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"],
+                    "default": "raw",
+                    "description": "Unicode normalization form",
+                },
+                "casefold": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Use casefolded comparison",
+                },
+                "trim": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Trim whitespace",
+                },
+                "ignore_newline_style": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Normalize different newline styles before comparison",
+                },
+                "ignore_trailing_whitespace": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Ignore trailing whitespace on each line",
+                },
+                "ignore_final_newline": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Ignore trailing newline at end of strings",
+                },
+            },
+            "required": ["a", "b"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "equal": {"type": "boolean"},
+                "classification": {"type": "string"},
+            },
+        },
+    },
+    "text_diff_explain": {
+        "description": "Explain why two strings differ, including spans, codepoints, Unicode names, normalization equivalence, confusables, invisibles, and agent-facing classification.",
+        "tier": 1,
+        "tags": ["text", "diff", "comparison", "unicode"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "description": "First string"},
+                "b": {"type": "string", "description": "Second string"},
+                "max_diffs": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "Maximum diff spans to return",
+                },
+                "include_codepoints": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Include codepoint details",
+                },
+                "include_context": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Include context notes",
+                },
+                "detail": {
+                    "type": "string",
+                    "enum": ["summary", "normal", "full"],
+                    "default": "normal",
+                    "description": "Detail level: summary (compact), normal, or full",
+                },
+            },
+            "required": ["a", "b"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "classification": {"type": "string"},
+                "truncated": {"type": "boolean"},
+                "spans": {"type": "array"},
+                "a_codepoints": {"type": "array"},
+                "b_codepoints": {"type": "array"},
+            },
+        },
+    },
+    "text_inspect": {
+        "description": "Inspect a string for hidden characters, Unicode confusables, mixed scripts, normalization state, and display-safe representation. Can report both original and normalized text analysis.",
+        "tier": 1,
+        "tags": ["text", "unicode", "inspection", "security"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string to inspect"},
+                "include_codepoints": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Include codepoint details in invisibles",
+                },
+                "include_confusables": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Check for confusables",
+                },
+                "detail": {
+                    "type": "string",
+                    "enum": ["summary", "normal", "full"],
+                    "default": "normal",
+                    "description": "Detail level: summary (compact), normal, or full",
+                },
+                "normalize": {
+                    "type": "string",
+                    "enum": ["none", "NFC", "NFD", "NFKC", "NFKD"],
+                    "default": "none",
+                    "description": "Normalization form to analyze",
+                },
+                "compare_normalized": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Report both original and normalized analysis",
+                },
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "invisibles": {"type": "array"},
+                "confusables": {"type": "array"},
+                "bidi_controls": {"type": "array"},
+                "scripts": {"type": "array"},
+                "normalization": {"type": "string"},
+                "visible_repr": {"type": "string"},
+                "warnings": {"type": "array"},
+                "limits_applied": {"type": "array"},
+                "normalize": {"type": "string"},
+                "compare_normalized": {"type": "boolean"},
+                "original": {"type": "object"},
+                "normalized": {"type": "object"},
+                "normalization_findings": {"type": "array"},
+            },
+        },
+    },
+    "text_count": {
+        "description": "Count exact characters or produce a character frequency table with codepoint positions, grapheme clusters, bytes, or substring matches.",
+        "tier": 0,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string"},
+                "target": {
+                    "type": "string",
+                    "description": "Single character to count (None for frequency table)",
+                },
+                "normalization": {
+                    "type": "string",
+                    "enum": ["raw", "NFC", "NFKC"],
+                    "default": "raw",
+                    "description": "Unicode normalization form",
+                },
+                "count_mode": {
+                    "type": "string",
+                    "enum": ["codepoint", "grapheme", "byte", "substring"],
+                    "default": "codepoint",
+                    "description": "Count mode: codepoint (Python str), grapheme (user-perceived), byte (UTF-8), substring",
+                },
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer"},
+                "positions": {"type": "array"},
+                "frequency": {"type": "object"},
+                "text_length_codepoints": {"type": "integer"},
+            },
+        },
+    },
+    "text_truncate": {
+        "description": "Truncate a string to a specified number of grapheme clusters (user-perceived characters). Preserves emoji, combining sequences, and flag sequences intact. Useful for AI agent prompts where visual length matters.",
+        "tier": 3,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string to truncate"},
+                "max_graphemes": {
+                    "type": "integer",
+                    "description": "Maximum number of grapheme clusters to return",
+                    "minimum": 0,
+                },
+            },
+            "required": ["text", "max_graphemes"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Result string (truncated if truncation occurred)"},
+                "original_graphemes": {"type": "integer", "description": "Original grapheme count"},
+                "truncated_graphemes": {"type": "integer", "description": "Grapheme count in result"},
+                "truncated": {"type": "boolean", "description": "True if text was truncated"},
+            },
+        },
+    },
+    "text_transform": {
+        "description": "Apply deterministic text transformations: Unicode normalization (NFC/NFD/NFKC/NFKD), casefold, trim, newline normalization, zero-width removal, bidi control stripping, and visible representation.",
+        "tier": 2,
+        "tags": ["text", "unicode", "transform", "normalization", "sanitation"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string to transform"},
+                "operations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Operations to apply: normalize_nfc, normalize_nfd, normalize_nfkc, normalize_nfkd, casefold, trim, trim_trailing_whitespace, normalize_newlines_lf, ensure_final_newline, strip_final_newline, remove_zero_width, remove_bidi_controls, visible_repr",
+                },
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["text", "operations"],
+        },
+    },
+    "validate_brackets": {
+        "description": "Check whether delimiters are structurally balanced and report unmatched delimiters with line/column positions.",
+        "tier": 1,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string"},
+                "pairs": {
+                    "type": "object",
+                    "description": "Bracket pair mapping (default: () [] {} <>)",
+                },
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "balanced": {"type": "boolean"},
+                "unmatched_openers": {"type": "array"},
+                "unmatched_closers": {"type": "array"},
+            },
+        },
+    },
+    "validate_json": {
+        "description": "Validate JSON and report precise parse errors or top-level structure information.",
+        "tier": 0,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string to validate as JSON"},
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid": {"type": "boolean"},
+                "error": {"type": "string"},
+                "line": {"type": "integer"},
+                "column": {"type": "integer"},
+            },
+        },
+    },
+    "validate_regex": {
+        "description": "Test a Python regular expression against sample strings and report match/fullmatch status, spans, groups, and errors.",
+        "tier": 1,
+        "tags": ["text", "regex", "validation", "pattern"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regular expression pattern"},
+                "samples": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of strings to test against",
+                },
+                "flags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Flag names (IGNORECASE, MULTILINE, etc.)",
+                },
+                "ignore_case": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Use IGNORECASE flag",
+                },
+                "multiline": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Use MULTILINE flag",
+                },
+                "dotall": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Use DOTALL flag",
+                },
+                "ascii": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Use ASCII flag",
+                },
+            },
+            "required": ["pattern", "samples"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid_pattern": {"type": "boolean"},
+                "results": {"type": "array"},
+                "error": {"type": "string"},
+                "flags_used": {"type": "object"},
+            },
+        },
+    },
+    "list_compare": {
+        "description": "Compare two lists with explicit modes: ordered ( LCS-based alignment), set (presence only), multiset (count deltas). Near matches are optional and never replace exact missing/extra results.",
+        "tier": 2,
+        "tags": ["text", "list", "comparison", "set"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "First list",
+                },
+                "b": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Second list",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["ordered", "set", "multiset"],
+                    "default": "set",
+                    "description": "Comparison mode: ordered (first diff, aligned ops), set (presence only), multiset (count deltas)",
+                },
+                "casefold": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Casefold elements before comparison",
+                },
+                "normalization": {
+                    "type": "string",
+                    "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"],
+                    "default": "NFC",
+                    "description": "Unicode normalization form",
+                },
+                "trim": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Trim whitespace from each element",
+                },
+                "include_near_matches": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Include near matches (fuzzy matching)",
+                },
+                "near_match_threshold": {
+                    "type": "integer",
+                    "default": 2,
+                    "description": "Maximum edit distance for near matches",
+                },
+                "ignore_order": {
+                    "type": "boolean",
+                    "description": "Legacy: use mode=set or mode=multiset instead",
+                },
+                "treat_as_multiset": {
+                    "type": "boolean",
+                    "description": "Legacy: use mode=multiset instead",
+                },
+            },
+            "required": ["a", "b"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "equal": {"type": "boolean"},
+                "first_diff_index": {"type": "integer", "description": "Index of first difference (ordered mode)"},
+                "equal_prefix_length": {"type": "integer", "description": "Length of equal prefix (ordered mode)"},
+                "aligned": {"type": "array", "description": "Aligned operations (ordered mode)"},
+                "count_deltas": {"type": "object", "description": "Count differences (multiset mode)"},
+                "only_in_a": {"type": "array"},
+                "only_in_b": {"type": "array"},
+                "duplicates_in_a": {"type": "array"},
+                "duplicates_in_b": {"type": "array"},
+                "near_matches": {"type": "array", "description": "Items that differ only by edit distance"},
+            },
+        },
+    },
+    "validate_toml": {
+        "description": "Validate TOML configuration files (Cargo.toml, pyproject.toml, etc.) and report parse errors with line/column positions.",
+        "tier": 1,
+        "tags": ["validation", "structured-data", "toml", "config", "rust", "python"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "TOML document string to validate"},
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["text"],
+        },
+    },
+    "json_extract": {
+        "description": "Extract a value from JSON using RFC 6901 JSON Pointer (e.g., /foo/bar/0). Navigate nested objects and arrays.",
+        "tier": 2,
+        "tags": ["json", "structured-data", "extraction", "config", "pointer"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "JSON document string"},
+                "pointer": {"type": "string", "default": "", "description": "RFC 6901 JSON Pointer path (e.g., /dependencies/tokio)"},
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+                "max_output_chars": {"type": "integer", "default": 4000},
+            },
+            "required": ["text"],
+        },
+    },
+    "json_compare": {
+        "description": "Compare two JSON documents semantically, ignoring formatting and key order.",
+        "tier": 1,
+        "tags": ["json", "structured-data", "comparison", "config"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "description": "First JSON document"},
+                "b": {"type": "string", "description": "Second JSON document"},
+                "ignore_object_order": {"type": "boolean", "default": True},
+                "ignore_array_order": {"type": "boolean", "default": False},
+                "numeric_string_equivalence": {"type": "boolean", "default": False},
+                "casefold_keys": {"type": "boolean", "default": False},
+                "treat_missing_null_as_equal": {"type": "boolean", "default": False},
+                "max_diffs": {"type": "integer", "default":    50},
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["a", "b"],
+        },
+    },
+    "text_position": {
+        "description": "Convert between byte offsets, codepoint indices, line/column positions, and UTF-16 offsets.",
+        "tier": 2,
+        "tags": ["text", "position", "offset", "unicode", "lsp"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "byte_offset": {"type": "integer"},
+                "codepoint_index": {"type": "integer"},
+                "line": {"type": "integer"},
+                "column": {"type": "integer"},
+                "utf16_offset": {"type": "integer"},
+                "line_base": {"type": "integer", "default": 1},
+                "column_base": {"type": "integer", "default": 1},
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["text"],
+        },
+    },
+    "text_hash": {
+        "description": "Compute cryptographic hashes of text for identity checking.",
+        "tier": 2,
+        "tags": ["text", "hash", "identity", "security"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "algorithms": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Hash algorithms (sha256, sha1, md5, crc32)",
+                    "default": ["sha256"],
+                },
+                "encoding": {"type": "string", "default": "utf-8"},
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["text"],
+        },
+    },
+    "escape_text": {
+        "description": "Escape text for various output formats.",
+        "tier": 1,
+        "tags": ["text", "escape", "encoding", "shell", "json", "regex"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "mode": {
+                    "type": "string",
+                    "enum": ["json_string", "python_string", "rust_string", "posix_shell_single", "regex_literal", "markdown_inline_code", "markdown_code_block", "html_text", "url_component"],
+                },
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["text", "mode"],
+        },
+    },
+    "unescape_text": {
+        "description": "Unescape text from various formats.",
+        "tier": 1,
+        "tags": ["text", "escape", "encoding", "shell", "json", "regex"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "mode": {
+                    "type": "string",
+                    "enum": ["json_string", "python_string", "unicode_escape", "url_component"],
+                },
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["text", "mode"],
+        },
+    },
+    "identifier_analyze": {
+        "description": "Classify and validate identifier naming conventions across languages.",
+        "tier": 3,
+        "tags": ["text", "identifier", "naming", "validation", "language"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "languages": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Languages to check (python, rust, javascript, env)",
+                    "default": ["python", "rust", "javascript", "env"],
+                },
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["text"],
+        },
+    },
+    "regex_finditer": {
+        "description": "Find all regex matches in text with positions, line/column info, and capture groups.",
+        "tier": 1,
+        "tags": ["text", "regex", "search", "find", "pattern"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regular expression pattern"},
+                "text": {"type": "string", "description": "Input string to search"},
+                "flags": {"type": "array", "items": {"type": "string"}, "description": "Flag names (IGNORECASE, MULTILINE, DOTALL, etc.)"},
+                "max_matches": {"type": "integer", "default": 100, "description": "Maximum matches to return"},
+                "include_line_column": {"type": "boolean", "default": True, "description": "Include line and column info"},
+                "include_groups": {"type": "boolean", "default": True, "description": "Include capture groups"},
+            },
+            "required": ["pattern", "text"],
+        },
+    },
+    "regex_safety_check": {
+        "description": "Heuristic check for potential catastrophic backtracking risks in regex patterns. Flags nested quantifiers, repeated alternations, ambiguous dot-star, and backreferences.",
+        "tier": 1,
+        "tags": ["text", "regex", "safety", "security", "backtracking"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regular expression pattern to check"},
+            },
+            "required": ["pattern"],
+        },
+    },
+    "validate_schema_light": {
+        "description": "Validate JSON against a simple schema format with type, required, enum, pattern, and nested constraints.",
+        "tier": 3,
+        "tags": ["validation", "json", "schema", "structured-data"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "JSON document to validate"},
+                "schema": {"type": "object", "description": "Schema to validate against"},
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["text", "schema"],
+        },
+    },
+    "path_normalize": {
+        "description": "Normalize a path using posixpath or ntpath semantics. Collapse dot segments, resolve components.",
+        "tier": 0,
+        "tags": ["text", "path", "filesystem", "normalize"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path string to normalize"},
+                "platform": {"type": "string", "enum": ["posix", "windows"], "default": "posix", "description": "Platform semantics to use"},
+                "collapse_dot_segments": {"type": "boolean", "default": True, "description": "Collapse dot and dot-dot segments"},
+                "preserve_trailing_separator": {"type": "boolean", "default": False, "description": "Preserve trailing separator"},
+            },
+            "required": ["path"],
+        },
+    },
+    "path_analyze": {
+        "description": "Analyze path components, extensions, hidden status, and traversal without filesystem access.",
+        "tier": 2,
+        "tags": ["text", "path", "filesystem", "lexical"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "style": {"type": "string", "enum": ["auto", "posix", "windows"], "default": "auto"},
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["path"],
+        },
+    },
+    "path_compare": {
+        "description": "Compare two paths under explicit normalization rules: separator normalization, dot-segment collapsing, and optional case-insensitive comparison.",
+        "tier": 2,
+        "tags": ["text", "path", "filesystem", "comparison"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "left": {"type": "string", "description": "First path string"},
+                "right": {"type": "string", "description": "Second path string"},
+                "platform": {"type": "string", "enum": ["posix", "windows"], "default": "posix", "description": "Platform semantics"},
+                "case_sensitive": {"type": "boolean", "default": True, "description": "Case-sensitive comparison"},
+                "normalize_separators": {"type": "boolean", "default": True, "description": "Normalize path separators"},
+                "collapse_dot_segments": {"type": "boolean", "default": True, "description": "Collapse . and .. segments"},
+            },
+            "required": ["left", "right"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "equal": {"type": "boolean", "description": "Whether paths are equal under normalization"},
+                "left_normalized": {"type": "string", "description": "Normalized left path"},
+                "right_normalized": {"type": "string", "description": "Normalized right path"},
+                "differences": {"type": "array", "description": "List of differences found"},
+                "findings": {"type": "array", "description": "Normalization notes"},
+            },
+        },
+    },
+    "path_scope_check": {
+        "description": "Determine whether a target path remains lexically inside a declared root. Lexical only, does not resolve symlinks.",
+        "tier": 2,
+        "tags": ["text", "path", "filesystem", "security", "scope"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "root": {"type": "string", "description": "Root directory path"},
+                "target": {"type": "string", "description": "Target path to check"},
+                "platform": {"type": "string", "enum": ["posix", "windows"], "default": "posix", "description": "Platform semantics"},
+                "case_sensitive": {"type": "boolean", "default": True, "description": "Case-sensitive comparison"},
+            },
+            "required": ["root", "target"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "inside_root": {"type": "boolean", "description": "Whether target is lexically inside root"},
+                "root_normalized": {"type": "string", "description": "Normalized root path"},
+                "target_normalized": {"type": "string", "description": "Normalized target path"},
+                "relative_path": {"type": "string", "description": "Relative path from root to target (if inside)"},
+                "escapes_via_dotdot": {"type": "boolean", "description": "Whether target contains parent traversal"},
+                "absolute_target": {"type": "string", "description": "Absolute form of target"},
+                "findings": {"type": "array", "description": "Analysis notes"},
+            },
+        },
+    },
+    "json_shape": {
+        "description": "Analyze the structure of a JSON document without returning values. Shows type, keys, and nested structure with configurable depth limits.",
+        "tier": 3,
+        "tags": ["json", "structured-data", "shape", "schema"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "JSON document string to analyze"},
+                "max_depth": {"type": "integer", "default": 4, "description": "Maximum depth for nested structure"},
+                "max_keys": {"type": "integer", "default": 100, "description": "Maximum keys to show per object"},
+                "max_array_items": {"type": "integer", "default": 5, "description": "Maximum array item previews"},
+            },
+            "required": ["text"],
+        },
+    },
+    "text_window": {
+        "description": "Get a window around a position in text with context lines. Shows line at position with surrounding context, position metrics, and character details.",
+        "tier": 1,
+        "tags": ["text", "position", "context", "unicode", "window"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string to analyze"},
+                "position": {
+                    "type": "object",
+                    "description": "Position specification with kind and value",
+                    "properties": {
+                        "kind": {"type": "string", "enum": ["byte_offset", "codepoint_index", "grapheme_index", "line_column"]},
+                        "value": {"type": "integer", "description": "Value for byte_offset, codepoint_index, or grapheme_index"},
+                        "byte_offset": {"type": "integer", "description": "UTF-8 byte offset (alternative to value)"},
+                        "codepoint_index": {"type": "integer", "description": "Codepoint index (alternative to value)"},
+                        "grapheme_index": {"type": "integer", "description": "Grapheme index (alternative to value)"},
+                        "line": {"type": "integer", "description": "Line number for line_column kind"},
+                        "column": {"type": "integer", "description": "Column number for line_column kind"},
+                        "line_base": {"type": "integer", "default": 1, "description": "Base for line numbers (1 for 1-based)"},
+                        "column_base": {"type": "integer", "default": 1, "description": "Base for column numbers (1 for 1-based)"},
+                    },
+                    "required": ["kind"],
+                },
+                "context_lines": {"type": "integer", "default": 2, "description": "Number of context lines before and after"},
+                "include_visible_repr": {"type": "boolean", "default": True, "description": "Include visible representation of the line"},
+            },
+            "required": ["text", "position"],
+        },
+    },
+    "json_canonicalize": {
+        "description": "Canonicalize JSON with deterministic formatting, key ordering, duplicate key detection, and stable hashes.",
+        "tier": 1,
+        "tags": ["json", "canonical", "hash", "deterministic", "format"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input JSON string to canonicalize"},
+                "sort_keys": {"type": "boolean", "default": True, "description": "Sort object keys alphabetically"},
+                "indent": {"type": "integer", "description": "Indentation spaces (None for minified)"},
+                "ensure_ascii": {"type": "boolean", "default": False, "description": "Use ASCII escaping for non-ASCII characters"},
+                "detect_duplicate_keys": {"type": "boolean", "default": True, "description": "Report duplicate keys in the input"},
+                "trailing_newline": {"type": "boolean", "default": False, "description": "Add a trailing newline to the canonical form"},
+            },
+            "required": ["text"],
+        },
+    },
+    "json_query": {
+        "description": "Extract a value from JSON using RFC 6901 JSON Pointer. Navigate nested objects and arrays.",
+        "tier": 1,
+        "tags": ["json", "pointer", "extraction", "query", "rfc6901"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "JSON document string"},
+                "pointer": {"type": "string", "default": "", "description": "RFC 6901 JSON Pointer path (e.g., /foo/bar/0)"},
+            },
+            "required": ["text"],
+        },
+    },
+    "glob_match": {
+        "description": "Match a glob pattern against a path with explicit semantics: * matches within one segment, ** matches zero or more segments, ? matches one char. Python fnmatch limitations around ** are documented.",
+        "tier": 1,
+        "tags": ["text", "glob", "pattern", "path", "wildcard"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Glob pattern to match (e.g., src/**/*.rs)"},
+                "path": {"type": "string", "description": "Path string to match against"},
+                "platform": {"type": "string", "enum": ["posix", "windows"], "default": "posix", "description": "Path platform"},
+                "case_sensitive": {"type": "boolean", "default": True, "description": "Case-sensitive matching"},
+            },
+            "required": ["pattern", "path"],
+        },
+    },
+    "text_fingerprint": {
+        "description": "Compute a deterministic SHA-256 fingerprint of text with canonicalization options for Unicode normalization, newline style, casefold, and final newline trimming.",
+        "tier": 0,
+        "tags": ["text", "hash", "fingerprint", "sha256", "identity", "canonicalization"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input string to fingerprint"},
+                "unicode": {"type": "string", "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"], "default": "raw", "description": "Unicode normalization form"},
+                "newline": {"type": "string", "enum": ["raw", "LF"], "default": "raw", "description": "Newline normalization"},
+                "trim_final_newline": {"type": "boolean", "default": False, "description": "Remove trailing newline before hashing"},
+                "casefold": {"type": "boolean", "default": False, "description": "Apply casefolding before hashing"},
+            },
+            "required": ["text"],
+        },
+    },
+    "identifier_inspect": {
+        "description": "Inspect identifiers for validity and collisions. Detects confusables, mixed scripts, normalization issues, and casefold collisions across a list of identifiers.",
+        "tier": 1,
+        "tags": ["text", "identifier", "collision", "confusable", "security", "validation"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "identifiers": {"type": "array", "items": {"type": "string"}, "description": "List of identifier strings to inspect"},
+                "language": {"type": "string", "enum": ["generic", "python", "rust", "javascript", "typescript", "json_key"], "default": "generic", "description": "Language for validation"},
+                "normalization": {"type": "string", "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"], "default": "NFC", "description": "Unicode normalization form"},
+                "casefold": {"type": "boolean", "default": False, "description": "Apply casefolding for collision detection"},
+                "check_confusables": {"type": "boolean", "default": True, "description": "Check for confusable characters"},
+            },
+            "required": ["identifiers"],
+        },
+    },
+    "version_compare": {
+        "description": "Compare two version strings with explicit scheme. Supports semver (major.minor.patch), loose (numeric parts), and deferred pep440.",
+        "tier": 2,
+        "tags": ["version", "semver", "comparison"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "string", "description": "First version string"},
+                "b": {"type": "string", "description": "Second version string"},
+                "scheme": {"type": "string", "enum": ["semver", "pep440", "loose"], "default": "semver", "description": "Version scheme"},
+            },
+            "required": ["a", "b"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "comparison": {"type": "integer", "description": "Comparison result: -1 (a < b), 0 (equal), 1 (a > b)"},
+                "valid": {"type": "boolean", "description": "Whether versions are valid for the scheme"},
+                "scheme": {"type": "string"},
+                "summary": {"type": "string"},
+            },
+        },
+    },
+    "toml_shape": {
+        "description": "Analyze the structure of a TOML document: top-level keys, tables, and nesting hierarchy.",
+        "tier": 2,
+        "tags": ["toml", "structure", "shape", "config", "validation"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "TOML document string"},
+                "max_tables": {"type": "integer", "default": 100, "description": "Maximum tables to return"},
+                "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
+            },
+            "required": ["text"],
+        },
+    },
+    "list_dedupe": {
+        "description": "Remove duplicates from a list while preserving order. Supports Unicode normalization and casefolding.",
+        "tier": 1,
+        "tags": ["list", "dedupe", "unique", "normalization"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "items": {"type": "array", "items": {"type": "string"}, "description": "List of strings to dedupe"},
+                "normalization": {"type": "string", "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"], "default": "NFC"},
+                "casefold": {"type": "boolean", "default": False, "description": "Apply casefolding before comparison"},
+                "stable": {"type": "boolean", "default": True, "description": "Preserve first occurrence order"},
+            },
+            "required": ["items"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "items": {"type": "array", "items": {"type": "string"}},
+                "original_count": {"type": "integer"},
+                "deduped_count": {"type": "integer"},
+                "duplicates_removed": {"type": "integer"},
+            },
+        },
+    },
+    "list_sort": {
+        "description": "Sort a list of strings with Unicode normalization and casefold support.",
+        "tier": 1,
+        "tags": ["list", "sort", "order", "normalization"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "items": {"type": "array", "items": {"type": "string"}, "description": "List of strings to sort"},
+                "normalization": {"type": "string", "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"], "default": "NFC"},
+                "casefold": {"type": "boolean", "default": False, "description": "Apply casefolding for sorting"},
+                "reverse": {"type": "boolean", "default": False, "description": "Sort in descending order"},
+                "stable": {"type": "boolean", "default": True, "description": "Preserve original order for equal elements"},
+            },
+            "required": ["items"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "items": {"type": "array", "items": {"type": "string"}},
+                "original_count": {"type": "integer"},
+                "sorted_count": {"type": "integer"},
+            },
+        },
+    },
+    "text_replace_check": {
+        "description": "Check whether a text replacement would apply cleanly before an agent attempts to edit. Reports match count, positions, ambiguity, and optional preview of before/after.",
+        "tier": 1,
+        "tags": ["text", "replace", "edit", "safety", "check"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Source text to search in"},
+                "old": {"type": "string", "description": "Text to find"},
+                "new": {"type": "string", "description": "Replacement text"},
+                "mode": {
+                    "type": "string",
+                    "enum": ["exact", "nfc", "nfkc", "casefold", "whitespace_collapse"],
+                    "default": "exact",
+                    "description": "Matching mode",
+                },
+                "expected_count": {
+                    "type": "integer",
+                    "description": "Expected number of matches (optional)",
+                },
+                "allow_multiple": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If False and more than one match, add a finding",
+                },
+                "newline_policy": {
+                    "type": "string",
+                    "enum": ["preserve", "normalize_lf", "normalize_crlf"],
+                    "default": "preserve",
+                    "description": "How to handle newlines",
+                },
+                "return_preview": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If True, include before/after text previews",
+                },
+                "max_preview_chars": {
+                    "type": "integer",
+                    "default": 2000,
+                    "description": "Maximum characters in preview output",
+                },
+            },
+            "required": ["text", "old", "new"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "match_count": {"type": "integer", "description": "Number of matches found"},
+                "unique_match": {"type": "boolean", "description": "True if exactly one match"},
+                "expected_count_met": {"type": "boolean", "description": "True if match count matches expected_count"},
+                "would_change": {"type": "boolean", "description": "True if replacement would change text"},
+                "positions": {"type": "array", "description": "Match positions with byte offsets and line/column"},
+                "changed_text_fingerprint": {"type": "string", "description": "SHA-256 fingerprint of changed text"},
+                "newline_style_before": {"type": "string"},
+                "newline_style_after": {"type": "string"},
+                "preview_before": {"type": "string"},
+                "preview_after": {"type": "string"},
+                "findings": {"type": "array", "description": "Warnings and info messages"},
+            },
+        },
+    },
+    "line_range_extract": {
+        "description": "Extract exact line ranges from text and return stable offsets, byte positions, line counts, and optional fingerprint.",
+        "tier": 1,
+        "tags": ["text", "line", "range", "extract", "offset"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input text"},
+                "start_line": {"type": "integer", "description": "First line to extract"},
+                "end_line": {"type": "integer", "description": "Last line to extract (inclusive)"},
+                "line_base": {
+                    "type": "integer",
+                    "default": 1,
+                    "description": "Base for line numbers (1 for 1-based, 0 for 0-based)",
+                },
+                "include_line_numbers": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Include line number in each line dict",
+                },
+                "include_fingerprint": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Compute SHA-256 fingerprint of extracted text",
+                },
+            },
+            "required": ["text", "start_line", "end_line"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "line_count_total": {"type": "integer", "description": "Total line count in input"},
+                "start_line": {"type": "integer"},
+                "end_line": {"type": "integer"},
+                "valid_range": {"type": "boolean", "description": "True if range is within bounds"},
+                "text": {"type": "string", "description": "Extracted text (lines joined by LF)"},
+                "lines": {"type": "array", "description": "Structured line list"},
+                "byte_start": {"type": "integer", "description": "UTF-8 byte offset of start"},
+                "byte_end": {"type": "integer", "description": "UTF-8 byte offset of end"},
+                "char_start": {"type": "integer", "description": "Codepoint index of start"},
+                "char_end": {"type": "integer", "description": "Codepoint index of end"},
+                "newline_style": {"type": "string"},
+                "ends_with_newline": {"type": "boolean"},
+                "fingerprint": {"type": "string"},
+                "findings": {"type": "array"},
+            },
+        },
+    },
+    "line_range_compare": {
+        "description": "Compare a line range from two text inputs with exact, trailing-whitespace-ignoring, or newline-normalizing comparison.",
+        "tier": 2,
+        "tags": ["text", "line", "range", "compare", "diff"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "left_text": {"type": "string", "description": "First text input"},
+                "right_text": {"type": "string", "description": "Second text input"},
+                "start_line": {"type": "integer", "description": "First line to compare"},
+                "end_line": {"type": "integer", "description": "Last line to compare (inclusive)"},
+                "line_base": {
+                    "type": "integer",
+                    "default": 1,
+                    "description": "Base for line numbers",
+                },
+                "comparison_mode": {
+                    "type": "string",
+                    "enum": ["exact", "ignore_trailing_whitespace", "normalize_newlines"],
+                    "default": "exact",
+                    "description": "Comparison mode",
+                },
+            },
+            "required": ["left_text", "right_text", "start_line", "end_line"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "equal": {"type": "boolean", "description": "True if ranges are equal under the chosen mode"},
+                "left_fingerprint": {"type": "string", "description": "SHA-256 fingerprint of left range"},
+                "right_fingerprint": {"type": "string", "description": "SHA-256 fingerprint of right range"},
+                "diff_summary": {"type": "string", "description": "Human-readable diff summary"},
+                "first_difference": {"type": "object", "description": "First differing line (if any)"},
+            },
+        },
+    },
+    "shell_split": {
+        "description": "Parse a shell-like command string into argv tokens and report risky lexical features (pipes, redirections, command substitution, variable expansion, globs, control operators). Lexical POSIX-like parsing only, not full shell evaluation.",
+        "tier": 2,
+        "tags": ["shell", "argv", "parsing", "security", "sanity"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command string to parse",
+                },
+                "shell": {
+                    "type": "string",
+                    "enum": ["posix"],
+                    "default": "posix",
+                    "description": "Shell dialect (only posix is supported)",
+                },
+                "detect_risky_features": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Whether to detect risky lexical features",
+                },
+            },
+            "required": ["command"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "parse_ok": {"type": "boolean", "description": "True if the command parsed successfully"},
+                "argv": {"type": "array", "items": {"type": "string"}, "description": "Parsed argument tokens"},
+                "argc": {"type": "integer", "description": "Number of arguments"},
+                "features": {
+                    "type": "object",
+                    "description": "Detected risky features",
+                    "properties": {
+                        "has_pipe": {"type": "boolean"},
+                        "has_redirection": {"type": "boolean"},
+                        "has_command_substitution": {"type": "boolean"},
+                        "has_variable_expansion": {"type": "boolean"},
+                        "has_glob_pattern": {"type": "boolean"},
+                        "has_control_operator": {"type": "boolean"},
+                        "has_unbalanced_quotes": {"type": "boolean"},
+                    },
+                },
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes and warnings"},
+            },
+        },
+    },
+    "shell_quote_join": {
+        "description": "Safely quote a list of argv tokens into a POSIX-like shell string. Verifies round-trip safety with shell_split.",
+        "tier": 2,
+        "tags": ["shell", "argv", "quoting", "safety"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of argument strings to join",
+                },
+                "shell": {
+                    "type": "string",
+                    "enum": ["posix"],
+                    "default": "posix",
+                    "description": "Shell dialect (only posix is supported)",
+                },
+            },
+            "required": ["argv"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Safely quoted command string"},
+                "roundtrip_ok": {"type": "boolean", "description": "True if shell_split(quote_join(argv)) produces equivalent argv"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes"},
+            },
+        },
+    },
+    "argv_compare": {
+        "description": "Compare two command strings or argv lists by parsed argv tokens rather than raw text. Supports command strings, pre-parsed argv lists, or both.",
+        "tier": 2,
+        "tags": ["shell", "argv", "comparison", "sanity"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "left_command": {
+                    "type": "string",
+                    "description": "Left command string to parse and compare",
+                },
+                "right_command": {
+                    "type": "string",
+                    "description": "Right command string to parse and compare",
+                },
+                "left_argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Left pre-parsed argv list",
+                },
+                "right_argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Right pre-parsed argv list",
+                },
+                "shell": {
+                    "type": "string",
+                    "enum": ["posix"],
+                    "default": "posix",
+                    "description": "Shell dialect (only posix is supported)",
+                },
+            },
+            "required": [],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "argv_equal": {"type": "boolean", "description": "True if parsed argv lists are identical"},
+                "left_argv": {"type": "array", "items": {"type": "string"}, "description": "Resolved left argv"},
+                "right_argv": {"type": "array", "items": {"type": "string"}, "description": "Resolved right argv"},
+                "first_difference": {"type": "integer", "description": "Index of first differing token, or null if equal"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes"},
+            },
+        },
+    },
+    "markdown_structure": {
+        "description": "Parse Markdown structure with a deterministic line scanner: headings (level, text, slug), code fences (language, open/close state), links (visible vs target mismatch), HTML comments, frontmatter detection, and table detection. Not a full CommonMark parser.",
+        "tier": 2,
+        "tags": ["markdown", "structure", "headings", "code-fences", "links", "frontmatter"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Markdown text to analyze"},
+                "include_sections": {"type": "boolean", "default": True, "description": "Include heading detection"},
+                "include_links": {"type": "boolean", "default": True, "description": "Include link detection"},
+                "include_code_fences": {"type": "boolean", "default": True, "description": "Include code fence detection"},
+                "include_html_comments": {"type": "boolean", "default": True, "description": "Include HTML comment detection"},
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "headings": {"type": "array", "description": "Headings with level, text, line, slug"},
+                "code_fences": {"type": "array", "description": "Code fences with language, lines, closed state"},
+                "links": {"type": "array", "description": "Links with visible text, target, mismatch flags"},
+                "html_comments": {"type": "array", "description": "HTML comments with text and position"},
+                "frontmatter": {"type": "object", "description": "Frontmatter detection (present, format, line range)"},
+                "tables_detected": {"type": "boolean", "description": "Whether Markdown tables were detected"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Warnings and findings"},
+            },
+        },
+    },
+    "code_fence_extract": {
+        "description": "Extract fenced code blocks from Markdown with exact line ranges, optional language filter, content, and SHA-256 fingerprints. Reports unclosed fences.",
+        "tier": 2,
+        "tags": ["markdown", "code-fences", "extraction", "fingerprint"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Markdown text to scan"},
+                "language": {"type": "string", "description": "Optional language filter (case-insensitive)"},
+                "include_content": {"type": "boolean", "default": True, "description": "Include block content in output"},
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "blocks": {"type": "array", "description": "Extracted code blocks with index, language, lines, content, fingerprint"},
+                "unclosed_fences": {"type": "array", "description": "Unclosed code fences found"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Warnings and findings"},
+            },
+        },
+    },
+    "dotenv_validate": {
+        "description": "Validate .env-style key=value configuration text. Detects invalid keys, duplicate keys, missing quotes, and variable expansion syntax. Line-by-line parser, no shell evaluation.",
+        "tier": 2,
+        "tags": ["validation", "config", "env", "dotenv"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": ".env file content to validate"},
+                "allow_export": {"type": "boolean", "default": True, "description": "Allow export KEY=VALUE syntax"},
+                "key_pattern": {"type": "string", "default": "^[A-Za-z_][A-Za-z0-9_]*$", "description": "Regex pattern keys must match"},
+                "duplicate_policy": {"type": "string", "enum": ["warn", "error", "allow"], "default": "warn", "description": "How to handle duplicate keys"},
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "parse_ok": {"type": "boolean", "description": "True if no parse errors found"},
+                "entries": {"type": "array", "description": "Parsed entries with key, value, quote_style, line"},
+                "duplicates": {"type": "array", "description": "Duplicate key entries with line numbers"},
+                "invalid_lines": {"type": "array", "description": "Lines that failed to parse"},
+                "requires_quoting": {"type": "array", "description": "Keys whose values contain spaces and should be quoted"},
+                "contains_expansion_syntax": {"type": "array", "description": "Keys with ${VAR} or $VAR expansion syntax"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Human-readable findings"},
+            },
+        },
+    },
+    "ini_validate": {
+        "description": "Validate simple INI-style configuration files. Supports [section] headers, key=value and key:value lines, comments. Detects duplicate sections, duplicate keys, and malformed lines.",
+        "tier": 2,
+        "tags": ["validation", "config", "ini"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "INI file content to validate"},
+                "duplicate_policy": {"type": "string", "enum": ["warn", "error", "allow"], "default": "warn", "description": "How to handle duplicate keys/sections"},
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "parse_ok": {"type": "boolean", "description": "True if no parse errors found"},
+                "sections": {"type": "array", "description": "Ordered list of section names"},
+                "keys_by_section": {"type": "object", "description": "Keys grouped by section"},
+                "duplicates": {"type": "array", "description": "Duplicate keys/sections with line numbers"},
+                "invalid_lines": {"type": "array", "description": "Lines that failed to parse"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Human-readable findings"},
+            },
+        },
+    },
+    "patch_apply_check": {
+        "description": "Validate and simulate a unified diff against provided in-memory files/text without touching the filesystem. Reports parse status, application success, failed hunks with context, and optional result fingerprint.",
+        "tier": 2,
+        "tags": ["patch", "diff", "unified", "validation", "apply"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "original_text": {
+                    "type": "string",
+                    "description": "The original source text to apply the patch to",
+                },
+                "patch_text": {
+                    "type": "string",
+                    "description": "The unified diff patch text",
+                },
+                "strict": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If True, context lines must match exactly",
+                },
+                "return_result_fingerprint": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If True, compute SHA-256 fingerprint of the result",
+                },
+                "return_result_text": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If True, include the resulting text (bounded to 50000 chars)",
+                },
+            },
+            "required": ["original_text", "patch_text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "patch_parse_ok": {"type": "boolean", "description": "True if patch parsed successfully"},
+                "applies": {"type": "boolean", "description": "True if all hunks applied cleanly"},
+                "hunks_total": {"type": "integer", "description": "Total number of hunks in patch"},
+                "hunks_applied": {"type": "integer", "description": "Number of hunks that applied successfully"},
+                "hunks_failed": {"type": "integer", "description": "Number of hunks that failed to apply"},
+                "failed_hunks": {
+                    "type": "array",
+                    "description": "Details of each failed hunk",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "hunk_index": {"type": "integer"},
+                            "old_start": {"type": "integer"},
+                            "old_count": {"type": "integer"},
+                            "expected_context": {"type": "array", "items": {"type": "string"}},
+                            "actual_context": {"type": "array", "items": {"type": "string"}},
+                            "reason": {"type": "string"},
+                        },
+                    },
+                },
+                "affected_line_ranges": {
+                    "type": "array",
+                    "description": "Line ranges affected by successful hunks",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "integer"},
+                            "end": {"type": "integer"},
+                        },
+                    },
+                },
+                "newline_style_before": {"type": "string", "description": "Newline style in original text"},
+                "newline_style_after": {"type": "string", "description": "Newline style in result text"},
+                "result_fingerprint": {"type": "string", "description": "SHA-256 of the result text"},
+                "result_text": {"type": ["string", "null"], "description": "Resulting text if requested"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes and warnings"},
+            },
+        },
+    },
+    "patch_summary": {
+        "description": "Summarize a unified diff without applying it. Reports file counts, hunk counts, additions, deletions, renames, and line ranges by file.",
+        "tier": 2,
+        "tags": ["patch", "diff", "unified", "summary", "statistics"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "patch_text": {
+                    "type": "string",
+                    "description": "The unified diff text to summarize",
+                },
+            },
+            "required": ["patch_text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "files_changed": {"type": "integer", "description": "Number of files changed"},
+                "hunks_total": {"type": "integer", "description": "Total number of hunks across all files"},
+                "additions": {"type": "integer", "description": "Total number of added lines"},
+                "deletions": {"type": "integer", "description": "Total number of deleted lines"},
+                "renames_detected": {
+                    "type": "array",
+                    "description": "Detected file renames",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "from": {"type": "string"},
+                            "to": {"type": "string"},
+                        },
+                    },
+                },
+                "binary_patch_detected": {"type": "boolean", "description": "True if binary patch content detected"},
+                "line_ranges_by_file": {
+                    "type": "object",
+                    "description": "Line ranges affected per file",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "start": {"type": "integer"},
+                                "end": {"type": "integer"},
+                            },
+                        },
+                    },
+                },
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes and warnings"},
+            },
+        },
+    },
+    "unicode_policy_check": {
+        "description": "Apply a named deterministic Unicode safety policy to input text. Policies include identifier_strict (mixed scripts, bidi, confusables), filename_safe (control chars, path separators, reserved names), source_code, human_text (warn-only), json_key, and domain_like.",
+        "tier": 2,
+        "tags": ["text", "unicode", "policy", "security", "validation"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input text to check"},
+                "policy": {
+                    "type": "string",
+                    "enum": ["identifier_strict", "filename_safe", "source_code", "human_text", "json_key", "domain_like"],
+                    "description": "Policy to apply",
+                },
+                "normalization": {
+                    "type": "string",
+                    "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"],
+                    "default": None,
+                    "description": "Normalization form (default: policy-specific)",
+                },
+            },
+            "required": ["text", "policy"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "pass": {"type": "boolean", "description": "True if text passes the policy (no errors)"},
+                "policy": {"type": "string", "description": "Policy name that was applied"},
+                "normalized_form": {"type": "string", "description": "Text after normalization"},
+                "findings": {
+                    "type": "array",
+                    "description": "Policy findings with rule, severity, and message",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "rule": {"type": "string"},
+                            "severity": {"type": "string"},
+                            "message": {"type": "string"},
+                        },
+                    },
+                },
+                "summary": {"type": "string", "description": "Human-readable summary"},
+            },
+        },
+    },
+    "canonicalize_text": {
+        "description": "Apply a named text canonicalization profile. Profiles include source_file_identity (NFC + LF + newline), identifier_compare (NFC + casefold), human_label_compare (NFC + casefold + whitespace collapse), json_key_compare (NFC + casefold), and path_segment_compare (NFC + lowercase + LF).",
+        "tier": 2,
+        "tags": ["text", "unicode", "canonicalization", "normalization", "identity"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input text to canonicalize"},
+                "profile": {
+                    "type": "string",
+                    "enum": ["source_file_identity", "identifier_compare", "human_label_compare", "json_key_compare", "path_segment_compare"],
+                    "description": "Canonicalization profile to apply",
+                },
+                "return_mapping": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If True, include a character mapping of changes",
+                },
+            },
+            "required": ["text", "profile"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Canonicalized text"},
+                "changed": {"type": "boolean", "description": "True if text was modified"},
+                "operations_applied": {"type": "array", "description": "List of operations applied"},
+                "fingerprint_before": {"type": "string", "description": "SHA-256 of original text"},
+                "fingerprint_after": {"type": "string", "description": "SHA-256 of canonicalized text"},
+                "mapping": {"type": "array", "description": "Character mapping if return_mapping was True"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes and warnings"},
+            },
+        },
+    },
+    "identifier_table_inspect": {
+        "description": "Inspect a table of identifiers for casefold collisions, normalization collisions, confusable/near-collisions, style variants, reserved keyword hits, and mixed naming style groups. Accepts structured entries with name, kind, file, and line metadata.",
+        "tier": 3,
+        "tags": ["text", "identifier", "collision", "naming", "style", "reserved", "validation"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "identifiers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Identifier name (required)"},
+                            "kind": {"type": "string", "description": "Optional kind/category"},
+                            "file": {"type": "string", "description": "Source file path"},
+                            "line": {"type": "integer", "description": "Line number"},
+                        },
+                        "required": ["name"],
+                    },
+                    "description": "List of identifier entries to inspect",
+                },
+                "language": {
+                    "type": "string",
+                    "enum": ["generic", "python", "rust", "javascript", "typescript", "json_key"],
+                    "default": "python",
+                    "description": "Target language for reserved keyword checking",
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Subset of checks: casefold, normalization, confusable, style, reserved, mixed_style",
+                },
+            },
+            "required": ["identifiers"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "description": "Number of identifiers inspected"},
+                "collisions": {
+                    "type": "array",
+                    "description": "Detected collisions",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string"},
+                            "names": {"type": "array", "items": {"type": "string"}},
+                            "detail": {"type": "string"},
+                        },
+                    },
+                },
+                "reserved_keyword_hits": {
+                    "type": "array",
+                    "description": "Identifiers matching reserved keywords",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "language": {"type": "string"},
+                            "file": {"type": "string"},
+                            "line": {"type": "integer"},
+                        },
+                    },
+                },
+                "mixed_style_groups": {
+                    "type": "array",
+                    "description": "Groups with mixed naming styles",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "stripped": {"type": "string"},
+                            "names": {"type": "array", "items": {"type": "string"}},
+                            "styles": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                },
+                "findings": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    },
+    "version_constraint_check": {
+        "description": "Check whether a version satisfies a constraint under a declared versioning scheme (semver or cargo). Supports comparison operators, caret, tilde, wildcard, range, and comma-separated constraints.",
+        "tier": 3,
+        "tags": ["version", "semver", "cargo", "constraint", "satisfiability"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "type": "string",
+                    "description": "Version string to check (e.g., '1.2.3', '0.5.0-beta.1')",
+                },
+                "constraint": {
+                    "type": "string",
+                    "description": "Version constraint (e.g., '>=1.0,<2.0', '^1.2.3', '~0.5', '1.*')",
+                },
+                "scheme": {
+                    "type": "string",
+                    "enum": ["semver", "cargo"],
+                    "default": "semver",
+                    "description": "Versioning scheme to use for parsing and evaluation",
+                },
+            },
+            "required": ["version", "constraint"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "satisfies": {"type": "boolean", "description": "Whether the version satisfies the constraint"},
+                "parsed_version": {"type": "object", "description": "Parsed version components"},
+                "parsed_constraint": {"type": "object", "description": "Parsed constraint components"},
+                "scheme": {"type": "string", "description": "Versioning scheme used"},
+                "explanation": {"type": "string", "description": "Human-readable explanation"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes and warnings"},
+            },
+        },
+    },
+    "cargo_toml_inspect": {
+        "description": "Inspect Cargo.toml text without network or filesystem access. Reports package metadata, workspace configuration, dependency forms (version/path/git/workspace), path dependencies, suspicious or confusable dependency names, and structural findings.",
+        "tier": 3,
+        "tags": ["rust", "cargo", "toml", "dependencies", "workspace", "inspection"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The Cargo.toml content to inspect",
+                },
+                "check_workspace": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Whether to analyze [workspace] section",
+                },
+                "check_dependencies": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Whether to analyze dependency sections",
+                },
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "parse_ok": {"type": "boolean", "description": "Whether TOML parsed successfully"},
+                "package": {
+                    "type": "object",
+                    "description": "Package metadata from [package] section",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "version": {"type": "string"},
+                        "edition": {"type": "string"},
+                        "license": {"type": "string"},
+                        "repository": {"type": "string"},
+                        "readme": {"type": "string"},
+                    },
+                },
+                "workspace": {
+                    "type": "object",
+                    "description": "Workspace section information",
+                    "properties": {
+                        "present": {"type": "boolean"},
+                        "members": {"type": "array", "items": {"type": "string"}},
+                        "exclude": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+                "dependencies": {
+                    "type": "object",
+                    "description": "Dependencies by section",
+                },
+                "path_dependencies": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Extracted path dependency values",
+                },
+                "suspicious_dependency_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Dependency names with suspicious patterns",
+                },
+                "duplicate_or_confusable_dependency_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Dependency names that normalize to the same form",
+                },
+                "findings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Structural findings and warnings",
+                },
+            },
+        },
+    },
+    "prompt_input_inspect": {
+        "description": "Deterministically inspect text for red flags that may influence agents or humans unexpectedly. Detects hidden Unicode characters, bidirectional controls, HTML comments, Markdown link mismatches, ANSI escapes, terminal controls, base64-like blobs, instruction-like phrases, and very long minified lines. This is NOT a prompt-injection detector -- it reports observable features only, not intent.",
+        "tier": 2,
+        "tags": ["text", "security", "inspection", "prompt", "unicode", "hidden"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to inspect for red flags",
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Subset of checks to run: unicode_hidden, bidi, html_comments, markdown_links, ansi_escapes, terminal_controls, base64_like_blobs, instruction_phrases, long_minified_lines",
+                },
+                "phrase_patterns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional literal strings or safe regexes to detect as instruction-like phrases",
+                },
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "findings": {
+                    "type": "array",
+                    "description": "Structured findings with code, severity, message, span, and details",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string"},
+                            "severity": {"type": "string"},
+                            "message": {"type": "string"},
+                            "span": {"type": "object"},
+                            "details": {"type": "object"},
+                        },
+                    },
+                },
+                "summary": {"type": "string", "description": "Human-readable summary"},
+                "risk_score": {"type": "integer", "description": "Deterministic risk score"},
+                "recommended_next_tool": {
+                    "type": ["string", "array"],
+                    "description": "Recommended follow-up tool(s)",
+                },
+                "text_length": {"type": "integer", "description": "Input text length"},
+                "checks_run": {"type": "array", "items": {"type": "string"}, "description": "Checks that were executed"},
+            },
+        },
+    },
+}
+
+# === mcp/tools.py ===
+MAX_TEXT_LENGTH = 100_000
+MAX_EXPRESSION_LENGTH = 10_000
+MAX_LIST_ITEMS = 10_000
+MAX_REGEX_SAMPLES = 100
+
+
+def _sanitize_error(message: str) -> str:
+    """Remove non-ASCII characters from error messages."""
+    return message.encode("ascii", "replace").decode("ascii")
+
+
+def _get_tool_tier(name: str) -> int:
+    """Get the tier for a tool (1, 2, or 3)."""
+    from schemas import TOOL_SCHEMAS
+    return TOOL_SCHEMAS.get(name, {}).get("tier", 3)
+
+
+def apply_detail_defaults(
+    detail: str,
+    min_items: int,
+    default_items: int,
+    max_items: int,
+) -> tuple[int, str]:
+    """Apply detail level to determine effective limit.
+
+    Args:
+        detail: Detail level ("summary", "normal", or "full")
+        min_items: Minimum allowed items
+        default_items: Default items for "normal" detail
+        max_items: Maximum allowed items
+
+    Returns:
+        Tuple of (effective_limit, detail_used)
+    """
+    if detail == "summary":
+        effective = min_items
+        detail_used = "summary"
+    elif detail == "full":
+        effective = max_items
+        detail_used = "full"
+    else:
+        effective = default_items
+        detail_used = "normal"
+
+    if effective > max_items:
+        effective = max_items
+        detail_used = "max"
+    elif effective < min_items:
+        effective = min_items
+        detail_used = "min"
+
+    return effective, detail_used
+
+
+def truncate_list(
+    items: list,
+    max_items: int,
+    detail: str,
+) -> tuple[list, list[str]]:
+    """Truncate a list based on detail level.
+
+    Args:
+        items: List to truncate
+        max_items: Maximum items to return
+        detail: Detail level
+
+    Returns:
+        Tuple of (truncated_list, limits_applied_msgs)
+    """
+    limits_applied: list[str] = []
+    effective_limit, detail_used = apply_detail_defaults(detail, 1, 100, max_items)
+
+    if len(items) > effective_limit:
+        truncated = items[:effective_limit]
+        limits_applied.append(f"max_items={effective_limit} (detail={detail_used})")
+        return truncated, limits_applied
+
+    return items, limits_applied
+
+
+def truncate_text(
+    text: str,
+    max_chars: int,
+    detail: str,
+) -> tuple[str, list[str]]:
+    """Truncate text based on detail level.
+
+    Args:
+        text: Text to truncate
+        max_chars: Maximum characters to return
+        detail: Detail level
+
+    Returns:
+        Tuple of (truncated_text, limits_applied_msgs)
+    """
+    limits_applied: list[str] = []
+    effective_limit, detail_used = apply_detail_defaults(detail, 100, 1000, max_chars)
+
+    if len(text) > effective_limit:
+        truncated = text[:effective_limit]
+        limits_applied.append(f"max_chars={effective_limit} (detail={detail_used})")
+        return truncated, limits_applied
+
+    return text, limits_applied
+
+
+def _error_response(
+    error_type: str,
+    error: str,
+    hints: list[str] | None = None,
+    tool: str | None = None,
+) -> dict:
+    """Create a standardized error envelope."""
+    return ErrorEnvelope(
+        ok=False,
+        tool=tool,
+        error_type=error_type,
+        error=_sanitize_error(error),
+        hints=[_sanitize_error(h) for h in (hints or [])],
+        warnings=[],
+    )
+
+
+def _success_response(
+    result: Any,
+    tool: str | None = None,
+    warnings: list[str] | None = None,
+    limits_applied: list[str] | None = None,
+    findings: list[dict] | None = None,
+    machine_code: str | None = None,
+    recommended_next_tool: str | list[str] | None = None,
+) -> dict:
+    """Create a standardized success envelope."""
+    envelope: dict[str, Any] = {
+        "ok": True,
+        "tool": tool,
+        "result": result,
+        "warnings": warnings or [],
+        "limits_applied": limits_applied or [],
+    }
+    if findings:
+        envelope["findings"] = findings
+    if machine_code is not None:
+        envelope["machine_code"] = machine_code
+    if recommended_next_tool is not None:
+        envelope["recommended_next_tool"] = recommended_next_tool
+    return envelope
+
+
+def math_eval(expression: str) -> dict:
+    """Evaluate a math expression.
+
+    Args:
+        expression: Math expression (e.g., "5 + 3", "30m + 100ft", "five plus three").
+
+    Returns:
+        Success response with result, or error envelope.
+    """
+    if len(expression) > MAX_EXPRESSION_LENGTH:
+        return _error_response("input_too_large", f"Expression exceeds maximum length of {MAX_EXPRESSION_LENGTH}", tool="math_eval")
+    try:
+        result = evaluate_raw(expression)
+        if hasattr(result, 'value'):
+            result_val = result.value
+        else:
+            result_val = result
+        return _success_response({"result": str(result_val), "type": type(result_val).__name__}, tool="math_eval")
+    except EvaluationError as e:
+        return _error_response("evaluation_error", str(e), ["Check expression syntax"], tool="math_eval")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="math_eval")
+
+
+def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
+    """Convert a value from one unit to another.
+
+    Args:
+        value: Numeric value to convert.
+        from_unit: Source unit.
+        to_unit: Target unit.
+
+    Returns:
+        Success response with conversion result.
+    """
+    try:
+
+        if not is_unit(from_unit):
+            return _error_response("invalid_arguments", f"Unknown unit: {from_unit}", tool="unit_convert")
+        if not is_unit(to_unit):
+            return _error_response("invalid_arguments", f"Unknown unit: {to_unit}", tool="unit_convert")
+
+        factor = get_conversion_factor(from_unit, to_unit)
+        result = value * factor
+
+        return _success_response({
+            "value": result,
+            "from_unit": from_unit,
+            "to_unit": to_unit,
+            "factor": factor,
+        }, tool="unit_convert")
+    except ValueError as e:
+        return _error_response("conversion_error", str(e), tool="unit_convert")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="unit_convert")
+
+
+def unit_info(unit: str) -> dict:
+    """Get information about a unit.
+
+    Args:
+        unit: Unit name or alias.
+
+    Returns:
+        Success response with unit information.
+    """
+    try:
+
+        if unit not in UNIT_ALIASES:
+            return _error_response("invalid_arguments", f"Unknown unit: {unit}", tool="unit_info")
+
+        canonical = UNIT_ALIASES[unit]
+        category = None
+        for cat, units in UNIT_CATEGORIES.items():
+            if canonical in units:
+                category = cat
+                break
+
+        if category is None:
+            for base_unit, units_dict in UNIT_BASE.items():
+                if canonical in units_dict:
+                    category = base_unit
+                    break
+
+        return _success_response({
+            "unit": unit,
+            "canonical": canonical,
+            "category": category,
+            "is_valid": True,
+        }, tool="unit_info")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="unit_info")
+
+
+def constant_lookup(name: str) -> dict:
+    """Look up a physical constant.
+
+    Args:
+        name: Constant name (e.g., "avogadro", "planck", "c").
+
+    Returns:
+        Success response with constant value and symbol.
+    """
+    try:
+        constants = {
+            "na": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
+            "avogadro": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
+            "avogadros": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
+            "r": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
+            "gasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
+            "idealgasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
+            "h": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
+            "planck": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
+            "planckconstant": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
+            "k": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
+            "boltzmann": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
+            "boltzmannconstant": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
+            "c": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+            "c0": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+            "speedoflight": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+            "speedoflightvacuum": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+            "elementarycharge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
+            "echarge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
+            "f": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
+            "faraday": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
+            "faradayconstant": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
+            "u": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
+            "amu": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
+            "atomicmassunit": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
+            "epsilon0": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
+            "vacuumpermittivity": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
+            "mu0": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
+            "vacuumpermeability": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
+            "g": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
+            "standardgravity": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
+            "G": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
+            "gravitationalconstant": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
+            "rydberg": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
+            "rydbergconstant": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
+            "stefan": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
+            "stefanboltzmann": {"value": 5.670374419e-8, "symbol": "σ-", "name": "Stefan-Boltzmann constant"},
+            "planckbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
+            "hbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
+            "reducedplanck": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
+            "me": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
+            "electronmass": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
+            "mp": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
+            "protonmass": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
+            "mn": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
+            "neutronmass": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
+            "re": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
+            "electronradius": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
+            "alpha": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
+            "finestructure": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
+            "wien": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
+            "wienconstant": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
+        }
+
+        key = name.lower()
+        if key not in constants:
+            return _error_response("invalid_arguments", f"Unknown constant: {name}", tool="constant_lookup")
+
+        return _success_response({
+            "name": name,
+            "value": constants[key]["value"],
+            "symbol": constants[key]["symbol"],
+            "display_name": constants[key]["name"],
+        }, tool="constant_lookup")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="constant_lookup")
+
+
+def text_measure(text: str, detail: str = "normal") -> dict:
+    """Measure text properties.
+
+    Args:
+        text: Input string.
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with metrics, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_measure",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="text_measure",
+        )
+
+    try:
+        result = _measure_text(text)
+        if detail == "summary":
+            summary_result = {
+                "codepoints": result["codepoints"],
+                "graphemes": result["graphemes"],
+                "words": result["words"],
+                "bytes_utf8": result["bytes_utf8"],
+                "ascii": result["ascii"],
+                "non_ascii": result["non_ascii"],
+                "warnings": result.get("warnings", []),
+            }
+        elif detail == "full":
+            summary_result = dict(result)
+        else:
+            summary_result = dict(result)
+        return _success_response(summary_result, tool="text_measure")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="text_measure")
+
+
+def _mcp_text_equal(
+    a: str,
+    b: str,
+    normalization: str = "raw",
+    casefold: bool = False,
+    trim: bool = False,
+    ignore_newline_style: bool = False,
+    ignore_trailing_whitespace: bool = False,
+    ignore_final_newline: bool = False,
+) -> dict:
+    """Compare two strings for equality.
+
+    Args:
+        a: First string.
+        b: Second string.
+        normalization: "raw", "NFC", "NFD", "NFKC", or "NFKD".
+        casefold: Use casefolded comparison.
+        trim: Trim whitespace.
+        ignore_newline_style: Normalize different newline styles before comparison.
+        ignore_trailing_whitespace: Ignore trailing whitespace on each line.
+        ignore_final_newline: Ignore trailing newline at end of strings.
+
+    Returns:
+        Success envelope with comparison result, or error envelope.
+    """
+    valid_normalizations = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
+    if normalization not in valid_normalizations:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported normalization form: {normalization}",
+            [f"Use one of: {', '.join(valid_normalizations)}"],
+            tool="text_equal",
+        )
+
+    try:
+        result = _text_equal(a, b, normalization, casefold, trim,
+                            ignore_newline_style, ignore_trailing_whitespace, ignore_final_newline)
+        return _success_response(result, tool="text_equal")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_equal")
+
+
+def text_diff_explain(
+    a: str,
+    b: str,
+    max_diffs: int = 20,
+    include_codepoints: bool = True,
+    include_context: bool = True,
+    detail: str = "normal",
+) -> dict:
+    """Explain differences between two strings.
+
+    Args:
+        a: First string.
+        b: Second string.
+        max_diffs: Maximum diff spans to return.
+        include_codepoints: Include codepoint details.
+        include_context: Include context notes.
+        detail: "summary", "normal", or "full".
+
+    Returns:
+        Success envelope with diff explanation, or error envelope.
+    """
+    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_diff_explain",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="text_diff_explain",
+        )
+
+    try:
+        result = _explain_diff(a, b, max_diffs, include_codepoints, include_context, detail)
+        return _success_response(result, tool="text_diff_explain")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="text_diff_explain")
+
+
+def text_inspect(
+    text: str,
+    include_codepoints: bool = True,
+    include_confusables: bool = True,
+    detail: str = "normal",
+    normalize: str = "none",
+    compare_normalized: bool = False,
+) -> dict:
+    """Inspect text for Unicode signals and hidden characters.
+
+    Args::
+        text: Input string.
+        include_codepoints: Include codepoint details in invisibles.
+        include_confusables: Check for confusables.
+        detail: "summary", "normal", or "full".
+        normalize: Normalization form ("none", "NFC", "NFD", "NFKC", "NFKD").
+        compare_normalized: Report both original and normalized analysis.
+
+    Returns:
+        Success envelope with inspection result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_inspect",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="text_inspect",
+        )
+
+    valid_normalizations = {"none", "NFC", "NFD", "NFKC", "NFKD"}
+    if normalize not in valid_normalizations:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported normalization form: {normalize}",
+            [f"Use one of: {', '.join(valid_normalizations)}"],
+            tool="text_inspect",
+        )
+
+    try:
+        result = _inspect_text(text, include_codepoints, include_confusables, detail, normalize, compare_normalized)
+
+        findings: list[dict] = []
+        for inv in result.get("invisibles", []):
+            findings.append({
+                "code": "INVISIBLE_CHAR",
+                "severity": "warn",
+                "message": f"Invisible character: {inv.get('name', 'unknown')} at index {inv.get('index', '?')}",
+                "span": {"char_start": inv.get("index", 0), "char_end": inv.get("index", 0) + 1},
+                "details": {"codepoint": inv.get("codepoint"), "category": inv.get("category")},
+            })
+        for conf in result.get("confusables", []):
+            findings.append({
+                "code": "CONFUSABLE_CHAR",
+                "severity": "warn",
+                "message": f"Confusable character at index {conf.get('index', '?')}",
+                "span": {"char_start": conf.get("index", 0), "char_end": conf.get("index", 0) + 1},
+                "details": {"original": conf.get("original"), "confusable": conf.get("confusable")},
+            })
+        for bidi in result.get("bidi_controls", []):
+            findings.append({
+                "code": "BIDI_CONTROL",
+                "severity": "warn",
+                "message": f"Bidirectional control character: {bidi.get('name', 'unknown')} at index {bidi.get('index', '?')}",
+                "span": {"char_start": bidi.get("index", 0), "char_end": bidi.get("index", 0) + 1},
+                "details": {"codepoint": bidi.get("codepoint")},
+            })
+
+        machine_code: str | None = None
+        if findings:
+            codes = {f["code"] for f in findings}
+            if "CONFUSABLE_CHAR" in codes:
+                machine_code = "CONFUSABLES_DETECTED"
+            elif "BIDI_CONTROL" in codes:
+                machine_code = "BIDI_DETECTED"
+            elif "INVISIBLE_CHAR" in codes:
+                machine_code = "INVISIBLES_DETECTED"
+
+        return _success_response(result, tool="text_inspect", findings=findings or None, machine_code=machine_code)
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="text_inspect")
+
+
+def text_count(
+    text: str,
+    target: str | None = None,
+    normalization: str = "raw",
+    count_mode: str = "codepoint",
+) -> dict:
+    """Count character occurrences or return frequency table.
+
+    Args:
+        text: Input string.
+        target: Single character to count (None for frequency table).
+        normalization: "raw", "NFC", or "NFKC".
+        count_mode: "codepoint", "grapheme", "byte", or "substring".
+
+    Returns:
+        Success envelope with count result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_count",
+        )
+
+    if target is not None and len(target) != 1 and count_mode != "substring":
+        return _error_response(
+            "invalid_arguments",
+            "target must be a single character",
+            ["Provide a single character or None for frequency table"],
+            tool="text_count",
+        )
+
+    valid_normalizations = {"raw", "NFC", "NFKC"}
+    if normalization not in valid_normalizations:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported normalization form: {normalization}",
+            [f"Use one of: {', '.join(valid_normalizations)}"],
+            tool="text_count",
+        )
+
+    valid_modes = {"codepoint", "grapheme", "byte", "substring"}
+    if count_mode not in valid_modes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported count_mode: {count_mode}",
+            [f"Use one of: {', '.join(valid_modes)}"],
+            tool="text_count",
+        )
+
+    try:
+        result = _count_chars(text, target, normalization, count_mode)
+        return _success_response(result, tool="text_count")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="text_count")
+
+
+def validate_brackets(text: str, pairs: dict[str, str] | None = None) -> dict:
+    """Check bracket balance.
+
+    Args:
+        text: Input string.
+        pairs: Bracket pair mapping (default: () [] {} <>).
+
+    Returns:
+        Success envelope with bracket check result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="validate_brackets",
+        )
+
+    if pairs is not None and not isinstance(pairs, dict):
+        return _error_response(
+            "invalid_arguments",
+            f"pairs must be a dict or None, got {type(pairs).__name__}",
+            tool="validate_brackets",
+        )
+
+    try:
+        result = _check_brackets(text, pairs)
+        return _success_response(result, tool="validate_brackets")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="validate_brackets")
+
+
+def validate_json(text: str) -> dict:
+    """Validate JSON string.
+
+    Args:
+        text: Input string.
+
+    Returns:
+        Success envelope with validation result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="validate_json",
+        )
+
+    try:
+        result = _validate_json(text)
+
+        findings: list[dict] = []
+        if not result.get("valid", True):
+            span: dict = {}
+            if result.get("line") is not None:
+                span["line"] = result["line"]
+            if result.get("column") is not None:
+                span["column"] = result["column"]
+            findings.append({
+                "code": "JSON_PARSE_ERROR",
+                "severity": "error",
+                "message": result.get("error", "Invalid JSON"),
+                "span": span or None,
+                "details": {"position": result.get("position")},
+            })
+
+        machine_code: str | None = None
+        if not result.get("valid", True):
+            machine_code = "JSON_INVALID"
+
+        return _success_response(result, tool="validate_json", findings=findings or None, machine_code=machine_code)
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="validate_json")
+
+
+def validate_toml(text: str, detail: str = "normal") -> dict:
+    """Validate TOML string.
+
+    Args:
+        text: Input string.
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with validation result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="validate_toml",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="validate_toml",
+        )
+
+    try:
+        result = _validate_toml_text(text)
+
+        if detail == "summary":
+            result = {
+                "valid": result["valid"],
+                "error": result["error"],
+            }
+        elif detail == "full":
+            pass
+
+        return _success_response(result, tool="validate_toml")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="validate_toml")
+
+
+def json_compare(
+    a: str,
+    b: str,
+    ignore_object_order: bool = True,
+    ignore_array_order: bool = False,
+    numeric_string_equivalence: bool = False,
+    casefold_keys: bool = False,
+    treat_missing_null_as_equal: bool = False,
+    max_diffs: int = 50,
+    detail: str = "normal",
+) -> dict:
+    """Compare two JSON documents semantically.
+
+    Args:
+        a: First JSON document.
+        b: Second JSON document.
+        ignore_object_order: Sort object keys for comparison.
+        ignore_array_order: Sort arrays if all items are serializable.
+        numeric_string_equivalence: Treat numeric strings as numbers.
+        casefold_keys: Casefold object keys before comparison.
+        treat_missing_null_as_equal: Treat missing and null as equal.
+        max_diffs: Maximum number of differences to report.
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with comparison result, or error envelope.
+    """
+    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="json_compare",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="json_compare",
+        )
+
+    try:
+        result = _json_compare(a, b, ignore_object_order, ignore_array_order,
+                              numeric_string_equivalence, casefold_keys,
+                              treat_missing_null_as_equal, max_diffs)
+
+        if detail == "summary":
+            result = {
+                "equal": result["equal"],
+                "valid_json_a": result["valid_json_a"],
+                "valid_json_b": result["valid_json_b"],
+                "diff_count": result["diff_count"],
+                "summary": result["summary"],
+            }
+
+        return _success_response(result, tool="json_compare")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="json_compare")
+
+
+_VALID_TRANSFORM_OPERATIONS = {
+    "normalize_nfc",
+    "normalize_nfd",
+    "normalize_nfkc",
+    "normalize_nfkd",
+    "casefold",
+    "trim",
+    "trim_trailing_whitespace",
+    "normalize_newlines_lf",
+    "ensure_final_newline",
+    "strip_final_newline",
+    "remove_zero_width",
+    "remove_bidi_controls",
+    "visible_repr",
+}
+
+
+def validate_regex(
+    pattern: str,
+    samples: list[str],
+    flags: list[str] | None = None,
+    ignore_case: bool = False,
+    multiline: bool = False,
+    dotall: bool = False,
+    ascii: bool = False,
+) -> dict:
+    """Test regex pattern against samples.
+
+    Args:
+        pattern: Regular expression pattern.
+        samples: List of strings to test.
+        flags: List of flag names (IGNORECASE, MULTILINE, etc.).
+        ignore_case: Use IGNORECASE flag.
+        multiline: Use MULTILINE flag.
+        dotall: Use DOTALL flag.
+        ascii: Use ASCII flag.
+
+    Returns:
+        Success envelope with regex test results, or error envelope.
+    """
+    if len(samples) > MAX_REGEX_SAMPLES:
+        return _error_response(
+            "input_too_large",
+            f"Number of samples {len(samples)} exceeds MAX_REGEX_SAMPLES {MAX_REGEX_SAMPLES}",
+            [f"Maximum {MAX_REGEX_SAMPLES} samples allowed"],
+            tool="validate_regex",
+        )
+
+    try:
+        result = _regex_test(pattern, samples, flags, ignore_case, multiline, dotall, ascii)
+        return _success_response(result, tool="validate_regex")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="validate_regex")
+
+
+def json_extract(
+    text: str,
+    pointer: str = "",
+    detail: str = "normal",
+    max_output_chars: int = 4000,
+) -> dict:
+    """Extract a value from JSON using RFC 6901 JSON Pointer.
+
+    Args:
+        text: JSON document string.
+        pointer: JSON Pointer path (e.g., "/foo/bar/0").
+        detail: Detail level ("summary", "normal", "full").
+        max_output_chars: Maximum output characters.
+
+    Returns:
+        Success envelope with extraction result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="json_extract",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="json_extract",
+        )
+
+    try:
+        result = _json_extract(text, pointer, max_output_chars)
+
+        if detail == "summary":
+            return _success_response({
+                "valid_json": result["valid_json"],
+                "found": result["found"],
+                "summary": result["summary"],
+            }, tool="json_extract")
+        elif detail == "normal":
+            return _success_response(result, tool="json_extract")
+        else:
+            return _success_response(result, tool="json_extract")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="json_extract")
+
+
+def json_shape(text: str, max_depth: int = 4, max_keys: int = 100, max_array_items: int = 5) -> dict:
+    """Analyze the structure of a JSON document.
+
+    Args:
+        text: JSON document string.
+        max_depth: Maximum depth for nested structure (default 4).
+        max_keys: Maximum keys to show per object (default 100).
+        max_array_items: Maximum array item previews (default 5).
+
+    Returns:
+        Success envelope with shape result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="json_shape",
+        )
+
+    if max_depth < 1:
+        return _error_response(
+            "invalid_arguments",
+            f"max_depth must be at least 1, got {max_depth}",
+            ["Set max_depth to 1 or higher"],
+            tool="json_shape",
+        )
+
+    if max_keys < 1:
+        return _error_response(
+            "invalid_arguments",
+            f"max_keys must be at least 1, got {max_keys}",
+            ["Set max_keys to 1 or higher"],
+            tool="json_shape",
+        )
+
+    if max_array_items < 1:
+        return _error_response(
+            "invalid_arguments",
+            f"max_array_items must be at least 1, got {max_array_items}",
+            ["Set max_array_items to 1 or higher"],
+            tool="json_shape",
+        )
+
+    try:
+        result = _json_shape(text, max_depth, max_keys, max_array_items)
+        return _success_response(result, tool="json_shape")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="json_shape")
+
+
+MAX_TEXT_LENGTH_REGEX = 100_000
+MAX_PATTERN_LENGTH_REGEX = 1000
+MAX_MATCHES_REGEX = 100
+
+
+def regex_finditer(
+    pattern: str,
+    text: str,
+    flags: list[str] | None = None,
+    max_matches: int = MAX_MATCHES_REGEX,
+    include_line_column: bool = True,
+    include_groups: bool = True,
+) -> dict:
+    """Find all regex matches in text with positions.
+
+    Args:
+        pattern: Regular expression pattern.
+        text: Input string to search.
+        flags: List of flag names (IGNORECASE, MULTILINE, DOTALL, etc.).
+        max_matches: Maximum number of matches to return (default 100).
+        include_line_column: Include line and column info (default True).
+        include_groups: Include capture groups (default True).
+
+    Returns:
+        Success envelope with matches result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH_REGEX:
+        return _error_response(
+            "input_too_large",
+            f"Text length {len(text)} exceeds MAX_TEXT_LENGTH_REGEX {MAX_TEXT_LENGTH_REGEX}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH_REGEX} characters"],
+            tool="regex_finditer",
+        )
+
+    if len(pattern) > MAX_PATTERN_LENGTH_REGEX:
+        return _error_response(
+            "input_too_large",
+            f"Pattern length {len(pattern)} exceeds MAX_PATTERN_LENGTH_REGEX {MAX_PATTERN_LENGTH_REGEX}",
+            [f"Maximum pattern length is {MAX_PATTERN_LENGTH_REGEX} characters"],
+            tool="regex_finditer",
+        )
+
+    if max_matches < 1:
+        return _error_response(
+            "invalid_arguments",
+            f"max_matches must be at least 1, got {max_matches}",
+            ["Set max_matches to 1 or higher"],
+            tool="regex_finditer",
+        )
+
+    try:
+        result = _regex_finditer(pattern, text, flags, max_matches, include_line_column, include_groups)
+        return _success_response(result, tool="regex_finditer")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="regex_finditer")
+
+
+def regex_safety_check(pattern: str) -> dict:
+    """Check regex pattern for potential catastrophic backtracking risks.
+
+    Args:
+        pattern: Regular expression pattern to check.
+
+    Returns:
+        Success envelope with safety check result, or error envelope.
+    """
+    if len(pattern) > MAX_PATTERN_LENGTH_REGEX:
+        return _error_response(
+            "input_too_large",
+            f"Pattern length {len(pattern)} exceeds MAX_PATTERN_LENGTH_REGEX {MAX_PATTERN_LENGTH_REGEX}",
+            [f"Maximum pattern length is {MAX_PATTERN_LENGTH_REGEX} characters"],
+            tool="regex_safety_check",
+        )
+
+    try:
+        result = _regex_safety_check(pattern)
+
+        findings: list[dict] = []
+        for risk in result.get("findings", []):
+            findings.append({
+                "code": risk.get("kind", "UNKNOWN_RISK").upper(),
+                "severity": risk.get("severity", "warn"),
+                "message": risk.get("message", risk.get("kind", "Unknown risk")),
+                "details": {"pattern_length": result.get("pattern_length", len(pattern))},
+            })
+
+        machine_code: str | None = None
+        if result.get("risk") in ("medium", "high"):
+            machine_code = "REGEX_UNSAFE"
+
+        return _success_response(result, tool="regex_safety_check", findings=findings or None, machine_code=machine_code)
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="regex_safety_check")
+
+
+def validate_schema_light(text: str, schema: dict, detail: str = "normal") -> dict:
+    """Validate JSON against a simple schema format.
+
+    Args:
+        text: JSON document string to validate.
+        schema: Schema to validate against.
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with validation result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="validate_schema_light",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="validate_schema_light",
+        )
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        return _error_response(
+            "invalid_arguments",
+            f"Invalid JSON: {e.msg}",
+            ["Provide valid JSON"],
+            tool="validate_schema_light",
+        )
+
+    try:
+        result = _validate_schema_light(parsed, schema)
+
+        if detail == "summary":
+            return _success_response({
+                "valid": result["valid"],
+                "summary": result["summary"],
+            }, tool="validate_schema_light")
+        else:
+            return _success_response(result, tool="validate_schema_light")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="validate_schema_light")
+
+
+def _mcp_list_compare(
+    a: list[str],
+    b: list[str],
+    mode: str = "set",
+    casefold: bool = False,
+    normalization: str = "NFC",
+    trim: bool = False,
+    include_near_matches: bool = False,
+    near_match_threshold: int = 2,
+    ignore_order: bool | None = None,
+    treat_as_multiset: bool | None = None,
+) -> dict:
+    """Compare two lists.
+
+    Args:
+        a: First list.
+        b: Second list.
+        mode: Comparison mode - "ordered", "set", or "multiset".
+        casefold: Casefold elements before comparison.
+        normalization: Unicode normalization form.
+        trim: Trim whitespace from each element.
+        include_near_matches: Include near matches (fuzzy).
+        near_match_threshold: Maximum edit distance for near matches.
+        ignore_order: Legacy, use mode="set" or mode="multiset" instead.
+        treat_as_multiset: Legacy, use mode="multiset" instead.
+
+    Returns:
+        Success envelope with comparison result, or error envelope.
+    """
+    if len(a) > MAX_LIST_ITEMS or len(b) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"List length exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} items per list"],
+            tool="list_compare",
+        )
+
+    valid_modes = {"ordered", "set", "multiset"}
+    if mode not in valid_modes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported mode: {mode}",
+            [f"Use one of: {', '.join(valid_modes)}"],
+            tool="list_compare",
+        )
+
+    valid_normalizations = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
+    if normalization not in valid_normalizations:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported normalization form: {normalization}",
+            [f"Use one of: {', '.join(valid_normalizations)}"],
+            tool="list_compare",
+        )
+
+    if near_match_threshold < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"near_match_threshold must be non-negative, got {near_match_threshold}",
+            ["Set near_match_threshold to 0 or higher"],
+            tool="list_compare",
+        )
+
+    treat_as_multiset_val = treat_as_multiset if treat_as_multiset is not None else (mode == "multiset")
+    ignore_order_val = ignore_order if ignore_order is not None else (mode != "ordered")
+
+    try:
+        raw_result = _list_compare(
+            a, b, ignore_order_val, casefold, normalization, trim,
+            treat_as_multiset_val, include_near_matches, near_match_threshold
+        )
+        if mode == "ordered":
+            equal = raw_result["same_ordered"]
+        elif mode == "set":
+            equal = raw_result["same_unordered"] and raw_result["only_in_a"] == [] and raw_result["only_in_b"] == []
+        else:
+            equal = raw_result["same_unordered"]
+
+        if mode == "ordered":
+            aligned = []
+            max_len = max(len(a), len(b))
+            for i in range(max_len):
+                if i >= len(a):
+                    aligned.append({"op": "insert", "b_index": i, "b": b[i]})
+                elif i >= len(b):
+                    aligned.append({"op": "delete", "a_index": i, "a": a[i]})
+                elif a[i] != b[i]:
+                    aligned.append({"op": "replace", "a_index": i, "a": a[i], "b_index": i, "b": b[i]})
+                else:
+                    aligned.append({"op": "equal", "a_index": i, "a": a[i], "b_index": i, "b": b[i]})
+
+            first_diff = None
+            for i, al in enumerate(aligned):
+                if al["op"] != "equal":
+                    first_diff = i
+                    break
+
+            equal_prefix_len = first_diff if first_diff is not None else len(a)
+
+            result = {
+                "equal": equal,
+                "first_diff_index": first_diff,
+                "equal_prefix_length": equal_prefix_len,
+                "aligned": aligned,
+                "only_in_a": raw_result["only_in_a"],
+                "only_in_b": raw_result["only_in_b"],
+                "missing_in_a": raw_result["only_in_b"],
+                "missing_in_b": raw_result["only_in_a"],
+                "duplicates_in_a": raw_result["duplicates_a"],
+                "duplicates_in_b": raw_result["duplicates_b"],
+                "near_matches": raw_result["near_matches"],
+            }
+        elif mode == "set":
+            result = {
+                "equal": equal,
+                "only_in_a": raw_result["only_in_a"],
+                "only_in_b": raw_result["only_in_b"],
+                "missing_in_a": raw_result["only_in_b"],
+                "missing_in_b": raw_result["only_in_a"],
+                "near_matches": raw_result["near_matches"],
+            }
+        else:
+            from collections import Counter
+            a_transformed = a
+            b_transformed = b
+            def transform(s: str) -> str:
+                result = s
+                if trim:
+                    result = result.strip()
+                if normalization != "raw":
+                    import unicodedata
+                    result = unicodedata.normalize(normalization, result)
+                if casefold:
+                    result = result.casefold()
+                return result
+
+            a_counts = Counter(transform(x) for x in a)
+            b_counts = Counter(transform(x) for x in b)
+            count_deltas = {}
+            all_keys = set(a_counts.keys()) | set(b_counts.keys())
+            for k in all_keys:
+                delta = a_counts.get(k, 0) - b_counts.get(k, 0)
+                if delta != 0:
+                    count_deltas[k] = delta
+
+            result = {
+                "equal": equal,
+                "count_deltas": count_deltas,
+                "missing_in_a": raw_result["only_in_b"],
+                "missing_in_b": raw_result["only_in_a"],
+                "duplicates_in_a": raw_result["duplicates_a"],
+                "duplicates_in_b": raw_result["duplicates_b"],
+                "only_in_a": raw_result["only_in_a"],
+                "only_in_b": raw_result["only_in_b"],
+                "near_matches": raw_result["near_matches"],
+            }
+        return _success_response(result, tool="list_compare")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="list_compare")
+
+
+def text_truncate(text: str, max_graphemes: int) -> dict:
+    """Truncate a string to a specified number of grapheme clusters.
+
+    Args:
+        text: Input string to truncate.
+        max_graphemes: Maximum number of grapheme clusters to return.
+
+    Returns:
+        Success envelope with truncation result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_truncate",
+        )
+
+    if max_graphemes < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"max_graphemes must be non-negative, got {max_graphemes}",
+            ["Set max_graphemes to 0 or higher"],
+            tool="text_truncate",
+        )
+
+    try:
+        original_graphemes = count_graphemes(text)
+        if original_graphemes <= max_graphemes:
+            return _success_response({
+                "original_graphemes": original_graphemes,
+                "truncated_graphemes": original_graphemes,
+                "truncated": False,
+                "text": text,
+            }, tool="text_truncate")
+
+        truncated_text = _truncate_to_grapheme(text, max_graphemes)
+        return _success_response({
+            "original_graphemes": original_graphemes,
+            "truncated_graphemes": max_graphemes,
+            "truncated": True,
+            "text": truncated_text,
+        }, tool="text_truncate")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_truncate")
+
+
+def _mcp_text_transform(text: str, operations: list[str], detail: str = "normal") -> dict:
+    """Apply deterministic text transformations.
+
+    Args:
+        text: Input string to transform.
+        operations: List of operations to apply.
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with transformation result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_transform",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="text_transform",
+        )
+
+    unknown_ops = [op for op in operations if op.lower() not in _VALID_TRANSFORM_OPERATIONS]
+    if unknown_ops:
+        return _error_response(
+            "invalid_arguments",
+            f"Unknown operation(s): {', '.join(unknown_ops)}",
+            [f"Valid operations: {', '.join(sorted(_VALID_TRANSFORM_OPERATIONS))}"],
+            tool="text_transform",
+        )
+
+    try:
+        result = _text_transform(text, operations, detail)
+        return _success_response(result, tool="text_transform")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_transform")
+
+
+def _mcp_text_position(
+    text: str,
+    byte_offset: int | None = None,
+    codepoint_index: int | None = None,
+    line: int | None = None,
+    column: int | None = None,
+    utf16_offset: int | None = None,
+    line_base: int = 1,
+    column_base: int = 1,
+    detail: str = "normal",
+) -> dict:
+    """Convert between byte offsets, codepoint indices, line/column positions, and UTF-16 offsets.
+
+    Args:
+        text: Input string.
+        byte_offset: UTF-8 byte offset (0-based).
+        codepoint_index: Python string index (Unicode scalar index).
+        line: 1-based line number (with line_base).
+        column: 1-based column number (with column_base).
+        utf16_offset: UTF-16 code unit offset for LSP-style positions.
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+        column_base: Base for column numbers (1 for 1-based, 0 for 0-based).
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with position result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_position",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="text_position",
+        )
+
+    try:
+        result = _text_position(
+            text,
+            byte_offset=byte_offset,
+            codepoint_index=codepoint_index,
+            line=line,
+            column=column,
+            utf16_offset=utf16_offset,
+            line_base=line_base,
+            column_base=column_base,
+        )
+
+        if not result["valid"]:
+            return _error_response(
+                "invalid_arguments",
+                result["error"] or "Invalid position",
+                tool="text_position",
+            )
+
+        if detail == "summary":
+            summary_result = {
+                "summary": result["summary"],
+            }
+        elif detail == "full":
+            summary_result = dict(result)
+        else:
+            summary_result = dict(result)
+
+        return _success_response(summary_result, tool="text_position")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_position")
+
+
+def _mcp_escape_text(text: str, mode: str, detail: str = "normal") -> dict:
+    """Escape text for various output formats.
+
+    Args:
+        text: Input string to escape.
+        mode: Escape mode (json_string, python_string, rust_string,
+              posix_shell_single, regex_literal, markdown_inline_code,
+              markdown_code_block, html_text, url_component).
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with escape result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="escape_text",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="escape_text",
+        )
+
+    valid_modes = {
+        "json_string",
+        "python_string",
+        "rust_string",
+        "posix_shell_single",
+        "regex_literal",
+        "markdown_inline_code",
+        "markdown_code_block",
+        "html_text",
+        "url_component",
+    }
+    if mode not in valid_modes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported escape mode: {mode}",
+            [f"Valid modes: {', '.join(sorted(valid_modes))}"],
+            tool="escape_text",
+        )
+
+    try:
+        result = _escape_text(text, mode)
+
+        if detail == "summary":
+            return _success_response({
+                "mode": result["mode"],
+                "changed": result["changed"],
+                "summary": result["summary"],
+            }, tool="escape_text")
+        else:
+            return _success_response(result, tool="escape_text")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="escape_text")
+
+
+def _mcp_unescape_text(text: str, mode: str, detail: str = "normal") -> dict:
+    """Unescape text from various formats.
+
+    Args:
+        text: Input string to unescape.
+        mode: Unescape mode (json_string, python_string,
+              unicode_escape, url_component).
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with unescape result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="unescape_text",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="unescape_text",
+        )
+
+    valid_modes = {
+        "json_string",
+        "python_string",
+        "unicode_escape",
+        "url_component",
+    }
+    if mode not in valid_modes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported unescape mode: {mode}",
+            [f"Valid modes: {', '.join(sorted(valid_modes))}"],
+            tool="unescape_text",
+        )
+
+    try:
+        result = _unescape_text(text, mode)
+
+        if detail == "summary":
+            return _success_response({
+                "mode": result["mode"],
+                "changed": result["changed"],
+                "error": result["error"],
+                "summary": result["summary"],
+            }, tool="unescape_text")
+        else:
+            return _success_response(result, tool="unescape_text")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="unescape_text")
+
+
+def _mcp_text_hash(
+    text: str,
+    algorithms: list[str] | None = None,
+    encoding: str = "utf-8",
+    detail: str = "normal",
+) -> dict:
+    """Compute cryptographic hashes of text for identity checking.
+
+    Args:
+        text: Input string to hash.
+        algorithms: List of hash algorithms (sha256, sha1, md5, crc32).
+        encoding: Text encoding for byte conversion.
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with hash result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_hash",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="text_hash",
+        )
+
+    if algorithms is None:
+        algorithms = ["sha256"]
+
+    try:
+        result = _text_hash(text, algorithms, encoding)
+    except (LookupError, UnicodeDecodeError):
+        return _error_response(
+            "invalid_arguments",
+            f"Invalid encoding: {encoding}",
+            ["Use a valid Python encoding name like 'utf-8', 'ascii', 'latin-1'"],
+            tool="text_hash",
+        )
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_hash")
+
+    if detail == "summary":
+        return _success_response({
+            "summary": result["summary"],
+        }, tool="text_hash")
+    else:
+        return _success_response(result, tool="text_hash")
+
+
+def path_analyze_mcp(path: str, style: str = "auto", detail: str = "normal") -> dict:
+    """Analyze path components, extensions, hidden status, and traversal.
+
+    Args:
+        path: Path string to analyze.
+        style: "auto", "posix", or "windows".
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with path analysis result, or error envelope.
+    """
+    if len(path) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Path length {len(path)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="path_analyze",
+        )
+
+    valid_styles = {"auto", "posix", "windows"}
+    if style not in valid_styles:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported style: {style}",
+            [f"Use one of: {', '.join(valid_styles)}"],
+            tool="path_analyze",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="path_analyze",
+        )
+
+    try:
+        result = _path_analyze(path, style)
+
+        findings: list[dict] = []
+        if result.get("has_traversal"):
+            findings.append({
+                "code": "PATH_TRAVERSAL",
+                "severity": "warn",
+                "message": "Path contains parent directory traversal (..)",
+                "details": {"normalized_lexical": result.get("normalized_lexical")},
+            })
+        if result.get("hidden"):
+            findings.append({
+                "code": "PATH_HIDDEN",
+                "severity": "info",
+                "message": "Path starts with a dot (hidden file/directory)",
+            })
+
+        machine_code: str | None = None
+        if result.get("has_traversal"):
+            machine_code = "PATH_HAS_TRAVERSAL"
+        elif result.get("hidden"):
+            machine_code = "PATH_IS_HIDDEN"
+
+        if detail == "summary":
+            summary_result = {
+                "summary": result["summary"],
+                "style": result["style"],
+                "absolute": result["absolute"],
+                "hidden": result["hidden"],
+                "has_traversal": result["has_traversal"],
+                "warnings": result["warnings"],
+            }
+        else:
+            summary_result = dict(result)
+
+        return _success_response(summary_result, tool="path_analyze", findings=findings or None, machine_code=machine_code)
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="path_analyze")
+
+
+def _mcp_path_normalize(
+    path: str,
+    platform: str = "posix",
+    collapse_dot_segments: bool = True,
+    preserve_trailing_separator: bool = False,
+) -> dict:
+    """Normalize a path using posixpath or ntpath semantics.
+
+    Args:
+        path: Path string to normalize.
+        platform: "posix" or "windows".
+        collapse_dot_segments: If True, collapse . and .. segments.
+        preserve_trailing_separator: If True, keep trailing separator.
+
+    Returns:
+        Success envelope with path normalization result, or error envelope.
+    """
+    if len(path) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Path length {len(path)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="path_normalize",
+        )
+
+    valid_platforms = {"posix", "windows"}
+    if platform not in valid_platforms:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported platform: {platform}",
+            [f"Use one of: {', '.join(valid_platforms)}"],
+            tool="path_normalize",
+        )
+
+    try:
+        result = _path_normalize(path, platform, collapse_dot_segments, preserve_trailing_separator)
+        return _success_response(result, tool="path_normalize")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="path_normalize")
+
+
+def path_compare_mcp(
+    left: str,
+    right: str,
+    platform: str = "posix",
+    case_sensitive: bool = True,
+    normalize_separators: bool = True,
+    collapse_dot_segments: bool = True,
+) -> dict:
+    """Compare two paths under explicit normalization rules.
+
+    Args:
+        left: First path string.
+        right: Second path string.
+        platform: "posix" or "windows".
+        case_sensitive: Whether comparison is case-sensitive.
+        normalize_separators: Whether to normalize path separators.
+        collapse_dot_segments: Whether to collapse . and .. segments.
+
+    Returns:
+        Success envelope with comparison result, or error envelope.
+    """
+    if len(left) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Left path length {len(left)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="path_compare",
+        )
+
+    if len(right) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Right path length {len(right)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="path_compare",
+        )
+
+    valid_platforms = {"posix", "windows"}
+    if platform not in valid_platforms:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported platform: {platform}",
+            [f"Use one of: {', '.join(valid_platforms)}"],
+            tool="path_compare",
+        )
+
+    try:
+        result = _path_compare(left, right, platform, case_sensitive, normalize_separators, collapse_dot_segments)
+        return _success_response(result, tool="path_compare")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="path_compare")
+
+
+def path_scope_check_mcp(
+    root: str,
+    target: str,
+    platform: str = "posix",
+    case_sensitive: bool = True,
+) -> dict:
+    """Determine whether a target path remains lexically inside a declared root.
+
+    This is lexical only. Does NOT resolve symlinks.
+
+    Args:
+        root: Root directory path.
+        target: Target path to check.
+        platform: "posix" or "windows".
+        case_sensitive: Whether comparison is case-sensitive.
+
+    Returns:
+        Success envelope with scope check result, or error envelope.
+    """
+    if len(root) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Root path length {len(root)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="path_scope_check",
+        )
+
+    if len(target) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Target path length {len(target)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="path_scope_check",
+        )
+
+    valid_platforms = {"posix", "windows"}
+    if platform not in valid_platforms:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported platform: {platform}",
+            [f"Use one of: {', '.join(valid_platforms)}"],
+            tool="path_scope_check",
+        )
+
+    try:
+        result = _path_scope_check(root, target, platform, case_sensitive)
+        return _success_response(result, tool="path_scope_check")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="path_scope_check")
+
+
+def _mcp_identifier_analyze(
+    text: str,
+    languages: list[str] | None = None,
+    detail: str = "normal",
+) -> dict:
+    """Classify and validate identifier naming conventions across languages.
+
+    Args:
+        text: Identifier to analyze.
+        languages: Languages to check (python, rust, javascript, env).
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with analysis result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="identifier_analyze",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="identifier_analyze",
+        )
+
+    if languages is None:
+        languages = ["python", "rust", "javascript", "env"]
+
+    valid_languages = {"python", "rust", "javascript", "env"}
+    invalid_langs = [l for l in languages if l not in valid_languages]
+    if invalid_langs:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported language(s): {', '.join(invalid_langs)}",
+            [f"Valid languages: {', '.join(sorted(valid_languages))}"],
+            tool="identifier_analyze",
+        )
+
+    try:
+        result = _identifier_analyze(text, languages)
+
+        if detail == "summary":
+            summary_result = {
+                "text": result["text"],
+                "classification": result["classification"],
+                "python_valid": result["python_valid"],
+                "python_keyword": result["python_keyword"],
+                "env_valid": result["env_valid"],
+                "summary": result["summary"],
+            }
+        else:
+            summary_result = dict(result)
+
+        return _success_response(summary_result, tool="identifier_analyze")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="identifier_analyze")
+
+
+def _mcp_text_window(
+    text: str,
+    position: dict,
+    context_lines: int = 2,
+    include_visible_repr: bool = True,
+) -> dict:
+    """Get a window around a position in text with context lines.
+
+    Args:
+        text: Input string.
+        position: Dict with kind (byte_offset/codepoint_index/grapheme_index/line_column)
+                  and value (numeric) or line/column for line_column kind.
+        context_lines: Number of lines before and after to return.
+        include_visible_repr: Include visible representation of the line.
+
+    Returns:
+        Success envelope with text_window result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_window",
+        )
+
+    if context_lines < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"context_lines must be non-negative, got {context_lines}",
+            ["Set context_lines to 0 or higher"],
+            tool="text_window",
+        )
+
+    valid_kinds = {"byte_offset", "codepoint_index", "grapheme_index", "line_column"}
+    kind = position.get("kind", "codepoint_index")
+    if kind not in valid_kinds:
+        return _error_response(
+            "invalid_arguments",
+            f"Unknown position kind: {kind}",
+            [f"Use one of: {', '.join(valid_kinds)}"],
+            tool="text_window",
+        )
+
+    try:
+        result = _text_window(text, position, context_lines, include_visible_repr)
+        return _success_response(result, tool="text_window")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="text_window")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_window")
+
+
+def json_canonicalize(
+    text: str,
+    sort_keys: bool = True,
+    indent: int | None = None,
+    ensure_ascii: bool = False,
+    detect_duplicate_keys: bool = True,
+    trailing_newline: bool = False,
+) -> dict:
+    """Canonicalize JSON with deterministic formatting.
+
+    Args:
+        text: Input JSON string.
+        sort_keys: Sort object keys alphabetically.
+        indent: Indentation spaces (None for minified).
+        ensure_ascii: Use ASCII escaping for non-ASCII characters.
+        detect_duplicate_keys: Report duplicate keys in the input.
+        trailing_newline: Add a trailing newline to the canonical form.
+
+    Returns:
+        Success envelope with canonicalization result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="json_canonicalize",
+        )
+
+    if indent is not None and (indent < 0 or indent > 100):
+        return _error_response(
+            "invalid_arguments",
+            f"indent must be 0-100 or None, got {indent}",
+            ["Use a value between 0-100 or None for minified"],
+            tool="json_canonicalize",
+        )
+
+    try:
+        result = _json_canonicalize(
+            text,
+            sort_keys=sort_keys,
+            indent=indent,
+            ensure_ascii=ensure_ascii,
+            detect_duplicate_keys=detect_duplicate_keys,
+            trailing_newline=trailing_newline,
+        )
+        return _success_response(result, tool="json_canonicalize")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="json_canonicalize")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="json_canonicalize")
+
+
+def json_query(text: str, pointer: str = "") -> dict:
+    """Query JSON using RFC 6901 JSON Pointer.
+
+    Args:
+        text: JSON document string.
+        pointer: RFC 6901 JSON Pointer path (e.g., "/foo/bar/0").
+
+    Returns:
+        Success envelope with query result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="json_query",
+        )
+
+    try:
+        result = _json_query(text, pointer)
+        return _success_response(result, tool="json_query")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="json_query")
+
+
+def glob_match_mcp(
+    pattern: str,
+    path: str,
+    platform: str = "posix",
+    case_sensitive: bool = True,
+) -> dict:
+    """Match a glob pattern against a path.
+
+    Args:
+        pattern: Glob pattern to match.
+        path: Path string to match against.
+        platform: "posix" or "windows".
+        case_sensitive: Whether to match case-sensitively.
+
+    Returns:
+        Success envelope with match result, or error envelope.
+    """
+    valid_platforms = {"posix", "windows"}
+    if platform not in valid_platforms:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported platform: {platform}",
+            [f"Use one of: {', '.join(valid_platforms)}"],
+            tool="glob_match",
+        )
+
+    try:
+        result = _glob_match(pattern, path, platform, case_sensitive)
+        return _success_response(result, tool="glob_match")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="glob_match")
+
+
+def text_fingerprint_mcp(
+    text: str,
+    unicode: str = "raw",
+    newline: str = "raw",
+    trim_final_newline: bool = False,
+    casefold: bool = False,
+) -> dict:
+    """Compute a deterministic fingerprint of text.
+
+    Args:
+        text: Input string to fingerprint.
+        unicode: Unicode normalization ("raw", "NFC", "NFD", "NFKC", "NFKD").
+        newline: Newline normalization ("raw", "LF").
+        trim_final_newline: Remove trailing newline before hashing.
+        casefold: Apply casefolding before hashing.
+
+    Returns:
+        Success envelope with fingerprint result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_fingerprint",
+        )
+
+    valid_unicode = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
+    if unicode not in valid_unicode:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported unicode normalization: {unicode}",
+            [f"Use one of: {', '.join(valid_unicode)}"],
+            tool="text_fingerprint",
+        )
+
+    valid_newline = {"raw", "LF"}
+    if newline not in valid_newline:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported newline normalization: {newline}",
+            [f"Use one of: {', '.join(valid_newline)}"],
+            tool="text_fingerprint",
+        )
+
+    try:
+        result = _text_fingerprint(text, unicode, newline, trim_final_newline, casefold)
+        return _success_response(result, tool="text_fingerprint")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_fingerprint")
+
+
+def identifier_inspect_mcp(
+    identifiers: list[str],
+    language: str = "generic",
+    normalization: str = "NFC",
+    casefold: bool = False,
+    check_confusables: bool = True,
+) -> dict:
+    """Inspect identifiers for validity and collisions.
+
+    Args:
+        identifiers: List of identifier strings to inspect.
+        language: Language for validation ("generic", "python", "rust",
+                  "javascript", "typescript", "json_key").
+        normalization: Unicode normalization form ("NFC", "NFD", etc).
+        casefold: Apply casefolding for collision detection.
+        check_confusables: Check for confusable characters.
+
+    Returns:
+        Success envelope with inspection result, or error envelope.
+    """
+    if len(identifiers) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"Number of identifiers {len(identifiers)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} identifiers allowed"],
+            tool="identifier_inspect",
+        )
+
+    for ident in identifiers:
+        if len(ident) > MAX_TEXT_LENGTH:
+            return _error_response(
+                "input_too_large",
+                f"Identifier length {len(ident)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+                [f"Maximum identifier length is {MAX_TEXT_LENGTH}"],
+                tool="identifier_inspect",
+            )
+
+    valid_languages = {"generic", "python", "rust", "javascript", "typescript", "json_key"}
+    if language not in valid_languages:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported language: {language}",
+            [f"Use one of: {', '.join(valid_languages)}"],
+            tool="identifier_inspect",
+        )
+
+    valid_normalizations = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
+    if normalization not in valid_normalizations:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported normalization form: {normalization}",
+            [f"Use one of: {', '.join(valid_normalizations)}"],
+            tool="identifier_inspect",
+        )
+
+    try:
+        result = _identifier_inspect(identifiers, language, normalization, casefold, check_confusables)
+
+        findings: list[dict] = []
+        for ident_info in result.get("identifiers", []):
+            for issue in ident_info.get("issues", []):
+                findings.append({
+                    "code": issue.get("code", "IDENT_ISSUE"),
+                    "severity": issue.get("severity", "warn"),
+                    "message": issue.get("message", "Identifier issue"),
+                    "details": {"identifier": ident_info.get("raw", "")},
+                })
+        for collision in result.get("collisions", []):
+            findings.append({
+                "code": "IDENT_COLLISION",
+                "severity": "warn",
+                "message": collision.get("message", "Identifier collision detected"),
+                "details": collision,
+            })
+
+        machine_code: str | None = None
+        if result.get("collisions"):
+            machine_code = "IDENT_COLLISIONS"
+        elif any(f.get("severity") == "error" for f in findings):
+            machine_code = "IDENT_INVALID"
+
+        return _success_response(result, tool="identifier_inspect", findings=findings or None, machine_code=machine_code)
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="identifier_inspect")
+
+
+def markdown_structure_mcp(
+    text: str,
+    include_sections: bool = True,
+    include_links: bool = True,
+    include_code_fences: bool = True,
+    include_html_comments: bool = True,
+) -> dict:
+    """Parse Markdown structure using a deterministic line scanner.
+
+    Args:
+        text: Markdown text to analyze.
+        include_sections: Include heading detection (default true).
+        include_links: Include link detection (default true).
+        include_code_fences: Include code fence detection (default true).
+        include_html_comments: Include HTML comment detection (default true).
+
+    Returns:
+        Success envelope with Markdown structure, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="markdown_structure",
+        )
+
+    try:
+        result = _markdown_structure(
+            text,
+            include_sections=include_sections,
+            include_links=include_links,
+            include_code_fences=include_code_fences,
+            include_html_comments=include_html_comments,
+        )
+        return _success_response(result, tool="markdown_structure")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="markdown_structure")
+
+
+def code_fence_extract_mcp(
+    text: str,
+    language: str | None = None,
+    include_content: bool = True,
+) -> dict:
+    """Extract fenced code blocks with exact line ranges and fingerprints.
+
+    Args:
+        text: Markdown text to scan.
+        language: Optional language filter (case-insensitive).
+        include_content: Include block content in output (default true).
+
+    Returns:
+        Success envelope with extracted code blocks, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="code_fence_extract",
+        )
+
+    try:
+        result = _code_fence_extract(
+            text,
+            language=language,
+            include_content=include_content,
+        )
+        return _success_response(result, tool="code_fence_extract")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="code_fence_extract")
+
+
+def version_compare_mcp(
+    a: str,
+    b: str,
+    scheme: str = "semver",
+) -> dict:
+    """Compare two version strings with explicit scheme.
+
+    Args:
+        a: First version string.
+        b: Second version string.
+        scheme: Version scheme ("semver", "pep440", or "loose").
+
+    Returns:
+        Success envelope with comparison result, or error envelope.
+    """
+    valid_schemes = {"semver", "pep440", "loose"}
+    if scheme not in valid_schemes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported scheme: {scheme}",
+            [f"Use one of: {', '.join(valid_schemes)}"],
+            tool="version_compare",
+        )
+
+    try:
+        result = _version_compare(a, b, scheme)
+        return _success_response(result, tool="version_compare")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="version_compare")
+
+
+def toml_shape_mcp(
+    text: str,
+    max_tables: int = 100,
+    detail: str = "normal",
+) -> dict:
+    """Analyze the structure of a TOML document.
+
+    Args:
+        text: TOML document string.
+        max_tables: Maximum tables to return (default 100).
+        detail: Detail level ("summary", "normal", "full").
+
+    Returns:
+        Success envelope with shape result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="toml_shape",
+        )
+
+    valid_details = {"summary", "normal", "full"}
+    if detail not in valid_details:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported detail level: {detail}",
+            [f"Use one of: {', '.join(valid_details)}"],
+            tool="toml_shape",
+        )
+
+    try:
+        result = _toml_shape(text, max_tables)
+
+        if detail == "summary":
+            summary_result = {
+                "valid": result["valid"],
+                "summary": result["summary"],
+                "truncated": result["truncated"],
+            }
+        else:
+            summary_result = dict(result)
+
+        return _success_response(summary_result, tool="toml_shape")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="toml_shape")
+
+
+def list_dedupe_mcp(
+    items: list[str],
+    normalization: str = "NFC",
+    casefold: bool = False,
+    stable: bool = True,
+) -> dict:
+    """Remove duplicates from list while preserving order.
+
+    Args:
+        items: List of strings to dedupe.
+        normalization: Unicode normalization form ("raw", "NFC", "NFD", "NFKC", "NFKD").
+        casefold: Apply casefolding before comparison.
+        stable: If True, preserve first occurrence order.
+
+    Returns:
+        Success envelope with deduped list, or error envelope.
+    """
+    if len(items) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"List length {len(items)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="list_dedupe",
+        )
+
+    valid_normalizations = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
+    if normalization not in valid_normalizations:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported normalization form: {normalization}",
+            [f"Use one of: {', '.join(valid_normalizations)}"],
+            tool="list_dedupe",
+        )
+
+    try:
+        result = _list_dedupe(items, normalization, casefold, stable)
+        return _success_response({
+            "items": result,
+            "original_count": len(items),
+            "deduped_count": len(result),
+            "duplicates_removed": len(items) - len(result),
+        }, tool="list_dedupe")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="list_dedupe")
+
+
+def list_sort_mcp(
+    items: list[str],
+    normalization: str = "NFC",
+    casefold: bool = False,
+    reverse: bool = False,
+    stable: bool = True,
+) -> dict:
+    """Sort list of strings with normalization support.
+
+    Args:
+        items: List of strings to sort.
+        normalization: Unicode normalization form ("raw", "NFC", "NFD", "NFKC", "NFKD").
+        casefold: Apply casefolding for sorting.
+        reverse: Sort in descending order.
+        stable: If True, preserve original order for equal elements.
+
+    Returns:
+        Success envelope with sorted list, or error envelope.
+    """
+    if len(items) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"List length {len(items)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="list_sort",
+        )
+
+    valid_normalizations = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
+    if normalization not in valid_normalizations:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported normalization form: {normalization}",
+            [f"Use one of: {', '.join(valid_normalizations)}"],
+            tool="list_sort",
+        )
+
+    try:
+        result = _list_sort(items, normalization, casefold, reverse, stable)
+        return _success_response({
+            "items": result,
+            "original_count": len(items),
+            "sorted_count": len(result),
+        }, tool="list_sort")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="list_sort")
+
+
+def _mcp_text_replace_check(
+    text: str,
+    old: str,
+    new: str,
+    mode: str = "exact",
+    expected_count: int | None = None,
+    allow_multiple: bool = False,
+    newline_policy: str = "preserve",
+    return_preview: bool = False,
+    max_preview_chars: int = 2000,
+) -> dict:
+    """Check whether a replacement would apply cleanly before editing.
+
+    Args:
+        text: Source text.
+        old: Text to find.
+        new: Replacement text.
+        mode: Matching mode (exact, nfc, nfkc, casefold, whitespace_collapse).
+        expected_count: Expected number of matches.
+        allow_multiple: If False and more than one match, add a finding.
+        newline_policy: How to handle newlines.
+        return_preview: If True, include before/after previews.
+        max_preview_chars: Maximum characters in preview output.
+
+    Returns:
+        Success envelope with replace check result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_replace_check",
+        )
+
+    valid_modes = {"exact", "nfc", "nfkc", "casefold", "whitespace_collapse"}
+    if mode not in valid_modes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported mode: {mode}",
+            [f"Use one of: {', '.join(valid_modes)}"],
+            tool="text_replace_check",
+        )
+
+    valid_newline = {"preserve", "normalize_lf", "normalize_crlf"}
+    if newline_policy not in valid_newline:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported newline_policy: {newline_policy}",
+            [f"Use one of: {', '.join(valid_newline)}"],
+            tool="text_replace_check",
+        )
+
+    if max_preview_chars < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"max_preview_chars must be non-negative, got {max_preview_chars}",
+            tool="text_replace_check",
+        )
+
+    try:
+        result = _text_replace_check(
+            text, old, new, mode, expected_count, allow_multiple,
+            newline_policy, return_preview, max_preview_chars,
+        )
+        return _success_response(result, tool="text_replace_check")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="text_replace_check")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_replace_check")
+
+
+def _mcp_line_range_extract(
+    text: str,
+    start_line: int,
+    end_line: int,
+    line_base: int = 1,
+    include_line_numbers: bool = False,
+    include_fingerprint: bool = True,
+) -> dict:
+    """Extract exact line ranges and return stable offsets/fingerprints.
+
+    Args:
+        text: Input string.
+        start_line: First line to extract.
+        end_line: Last line to extract (inclusive).
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+        include_line_numbers: If True, include line number in each line dict.
+        include_fingerprint: If True, compute SHA-256 fingerprint.
+
+    Returns:
+        Success envelope with line range extract result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="line_range_extract",
+        )
+
+    if start_line > end_line:
+        return _error_response(
+            "invalid_arguments",
+            f"start_line ({start_line}) must be <= end_line ({end_line})",
+            tool="line_range_extract",
+        )
+
+    try:
+        result = _line_range_extract(
+            text, start_line, end_line, line_base,
+            include_line_numbers, include_fingerprint,
+        )
+        return _success_response(result, tool="line_range_extract")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="line_range_extract")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="line_range_extract")
+
+
+def _mcp_line_range_compare(
+    left_text: str,
+    right_text: str,
+    start_line: int,
+    end_line: int,
+    line_base: int = 1,
+    comparison_mode: str = "exact",
+) -> dict:
+    """Compare a line range from two text inputs.
+
+    Args:
+        left_text: First text input.
+        right_text: Second text input.
+        start_line: First line to compare.
+        end_line: Last line to compare (inclusive).
+        line_base: Base for line numbers.
+        comparison_mode: "exact", "ignore_trailing_whitespace", or "normalize_newlines".
+
+    Returns:
+        Success envelope with line range compare result, or error envelope.
+    """
+    for label, t in [("left_text", left_text), ("right_text", right_text)]:
+        if len(t) > MAX_TEXT_LENGTH:
+            return _error_response(
+                "input_too_large",
+                f"{label} length {len(t)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+                [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+                tool="line_range_compare",
+            )
+
+    valid_modes = {"exact", "ignore_trailing_whitespace", "normalize_newlines"}
+    if comparison_mode not in valid_modes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported comparison_mode: {comparison_mode}",
+            [f"Use one of: {', '.join(valid_modes)}"],
+            tool="line_range_compare",
+        )
+
+    try:
+        result = _line_range_compare(
+            left_text, right_text, start_line, end_line,
+            line_base, comparison_mode,
+        )
+        return _success_response(result, tool="line_range_compare")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="line_range_compare")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="line_range_compare")
+
+
+def _mcp_shell_split(
+    command: str,
+    shell: str = "posix",
+    detect_risky_features: bool = True,
+) -> dict:
+    """Parse a shell-like command string into argv and report risky features.
+
+    This performs lexical POSIX-like parsing only, not full shell evaluation.
+
+    Args:
+        command: The command string to parse.
+        shell: Shell dialect (only "posix" is supported).
+        detect_risky_features: Whether to detect risky lexical features.
+
+    Returns:
+        Success envelope with parsed argv and features, or error envelope.
+    """
+    if len(command) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Command length {len(command)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="shell_split",
+        )
+
+    valid_shells = {"posix"}
+    if shell not in valid_shells:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported shell: {shell}",
+            [f"Use one of: {', '.join(valid_shells)}"],
+            tool="shell_split",
+        )
+
+    try:
+        result = _shell_split(command, shell=shell, detect_risky_features=detect_risky_features)
+        return _success_response(result, tool="shell_split")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="shell_split")
+
+
+def _mcp_shell_quote_join(
+    argv: list[str],
+    shell: str = "posix",
+) -> dict:
+    """Safely quote a list of argv tokens into a POSIX-like shell string.
+
+    Args:
+        argv: List of argument strings to join.
+        shell: Shell dialect (only "posix" is supported).
+
+    Returns:
+        Success envelope with quoted command and roundtrip status, or error envelope.
+    """
+    if len(argv) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"argv length {len(argv)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="shell_quote_join",
+        )
+
+    valid_shells = {"posix"}
+    if shell not in valid_shells:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported shell: {shell}",
+            [f"Use one of: {', '.join(valid_shells)}"],
+            tool="shell_quote_join",
+        )
+
+    try:
+        result = _shell_quote_join(argv, shell=shell)
+        return _success_response(result, tool="shell_quote_join")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="shell_quote_join")
+
+
+def shell_argv_compare(
+    left_command: str | None = None,
+    right_command: str | None = None,
+    left_argv: list[str] | None = None,
+    right_argv: list[str] | None = None,
+    shell: str = "posix",
+) -> dict:
+    """Compare two command strings or argv lists by parsed argv.
+
+    Args:
+        left_command: Left command string to parse and compare.
+        right_command: Right command string to parse and compare.
+        left_argv: Left pre-parsed argv list.
+        right_argv: Right pre-parsed argv list.
+        shell: Shell dialect (only "posix" is supported).
+
+    Returns:
+        Success envelope with comparison results, or error envelope.
+    """
+    valid_shells = {"posix"}
+    if shell not in valid_shells:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported shell: {shell}",
+            [f"Use one of: {', '.join(valid_shells)}"],
+            tool="argv_compare",
+        )
+
+    if left_command is not None and len(left_command) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Left command length {len(left_command)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="argv_compare",
+        )
+
+    if right_command is not None and len(right_command) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Right command length {len(right_command)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="argv_compare",
+        )
+
+    if left_argv is not None and len(left_argv) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"left_argv length {len(left_argv)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="argv_compare",
+        )
+
+    if right_argv is not None and len(right_argv) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"right_argv length {len(right_argv)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="argv_compare",
+        )
+
+    try:
+        result = _argv_compare(
+            left_command=left_command,
+            right_command=right_command,
+            left_argv=left_argv,
+            right_argv=right_argv,
+            shell=shell,
+        )
+        return _success_response(result, tool="argv_compare")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="argv_compare")
+
+
+def dotenv_validate_mcp(
+    text: str,
+    allow_export: bool = True,
+    key_pattern: str = r"^[A-Za-z_][A-Za-z0-9_]*$",
+    duplicate_policy: str = "warn",
+) -> dict:
+    """Validate .env-style key=value text.
+
+    Args:
+        text: Input text to validate.
+        allow_export: If True, allow ``export KEY=VALUE`` syntax (default true).
+        key_pattern: Regex pattern keys must match (default POSIX-ish identifier).
+        duplicate_policy: ``warn``, ``error``, or ``allow`` (default ``warn``).
+
+    Returns:
+        Success envelope with validation result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="dotenv_validate",
+        )
+
+    valid_policies = {"warn", "error", "allow"}
+    if duplicate_policy not in valid_policies:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported duplicate_policy: {duplicate_policy}",
+            [f"Use one of: {', '.join(sorted(valid_policies))}"],
+            tool="dotenv_validate",
+        )
+
+    if len(key_pattern) > 1000:
+        return _error_response(
+            "input_too_large",
+            f"key_pattern length {len(key_pattern)} exceeds 1000",
+            tool="dotenv_validate",
+        )
+
+    try:
+        result = _dotenv_validate(text, allow_export, key_pattern, duplicate_policy)
+        return _success_response(result, tool="dotenv_validate")
+    except re.error:
+        return _error_response(
+            "invalid_arguments",
+            f"Invalid key_pattern regex: {key_pattern}",
+            ["Provide a valid regular expression for key_pattern"],
+            tool="dotenv_validate",
+        )
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="dotenv_validate")
+
+
+def ini_validate_mcp(
+    text: str,
+    duplicate_policy: str = "warn",
+) -> dict:
+    """Validate simple INI-style configuration.
+
+    Args:
+        text: Input text to validate.
+        duplicate_policy: ``warn``, ``error``, or ``allow`` (default ``warn``).
+
+    Returns:
+        Success envelope with validation result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="ini_validate",
+        )
+
+    valid_policies = {"warn", "error", "allow"}
+    if duplicate_policy not in valid_policies:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported duplicate_policy: {duplicate_policy}",
+            [f"Use one of: {', '.join(sorted(valid_policies))}"],
+            tool="ini_validate",
+        )
+
+    try:
+        result = _ini_validate(text, duplicate_policy)
+        return _success_response(result, tool="ini_validate")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="ini_validate")
+
+
+def patch_apply_check_mcp(
+    original_text: str,
+    patch_text: str,
+    strict: bool = True,
+    return_result_fingerprint: bool = True,
+    return_result_text: bool = False,
+) -> dict:
+    """Check whether a unified diff applies cleanly to original text.
+
+    Args:
+        original_text: The original source text.
+        patch_text: The unified diff patch.
+        strict: If True, context lines must match exactly.
+        return_result_fingerprint: If True, compute SHA-256 of result.
+        return_result_text: If True, include the resulting text (bounded).
+
+    Returns:
+        Success envelope with patch apply check result, or error envelope.
+    """
+
+    if len(original_text) > MAX_ORIGINAL_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Original text length {len(original_text)} exceeds maximum of {MAX_ORIGINAL_LENGTH}",
+            [f"Maximum original text length is {MAX_ORIGINAL_LENGTH}"],
+            tool="patch_apply_check",
+        )
+
+    if len(patch_text) > MAX_PATCH_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Patch text length {len(patch_text)} exceeds maximum of {MAX_PATCH_LENGTH}",
+            [f"Maximum patch text length is {MAX_PATCH_LENGTH}"],
+            tool="patch_apply_check",
+        )
+
+    try:
+        result = _patch_apply_check(
+            original_text,
+            patch_text,
+            strict=strict,
+            return_result_fingerprint=return_result_fingerprint,
+            return_result_text=return_result_text,
+        )
+        return _success_response(result, tool="patch_apply_check")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="patch_apply_check")
+
+
+def patch_summary_mcp(
+    patch_text: str,
+) -> dict:
+    """Summarize a unified diff without applying it.
+
+    Args:
+        patch_text: The unified diff text.
+
+    Returns:
+        Success envelope with patch summary result, or error envelope.
+    """
+
+    if len(patch_text) > MAX_PATCH_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Patch text length {len(patch_text)} exceeds maximum of {MAX_PATCH_LENGTH}",
+            [f"Maximum patch text length is {MAX_PATCH_LENGTH}"],
+            tool="patch_summary",
+        )
+
+    try:
+        result = _patch_summary(patch_text)
+        return _success_response(result, tool="patch_summary")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="patch_summary")
+
+
+def unicode_policy_check_mcp(
+    text: str,
+    policy: str,
+    normalization: str | None = None,
+) -> dict:
+    """Apply a named Unicode safety policy to text.
+
+    Args:
+        text: Input text to check.
+        policy: One of identifier_strict, filename_safe, source_code,
+                human_text, json_key, domain_like.
+        normalization: Optional normalization form (defaults to policy-specific).
+
+    Returns:
+        Success envelope with policy check result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="unicode_policy_check",
+        )
+
+    valid_policies = {
+        "identifier_strict", "filename_safe", "source_code",
+        "human_text", "json_key", "domain_like",
+    }
+    if policy not in valid_policies:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported policy: {policy}",
+            [f"Use one of: {', '.join(sorted(valid_policies))}"],
+            tool="unicode_policy_check",
+        )
+
+    if normalization is not None:
+        valid_normalizations = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
+        if normalization not in valid_normalizations:
+            return _error_response(
+                "invalid_arguments",
+                f"Unsupported normalization form: {normalization}",
+                [f"Use one of: {', '.join(valid_normalizations)}"],
+                tool="unicode_policy_check",
+            )
+
+    try:
+        result = _unicode_policy_check(text, policy, normalization)
+        return _success_response(result, tool="unicode_policy_check")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="unicode_policy_check")
+
+
+def canonicalize_text_mcp(
+    text: str,
+    profile: str,
+    return_mapping: bool = False,
+) -> dict:
+    """Apply a named text canonicalization profile.
+
+    Args:
+        text: Input text to canonicalize.
+        profile: One of source_file_identity, identifier_compare,
+                 human_label_compare, json_key_compare, path_segment_compare.
+        return_mapping: If True, include a character mapping.
+
+    Returns:
+        Success envelope with canonicalization result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="canonicalize_text",
+        )
+
+    valid_profiles = {
+        "source_file_identity", "identifier_compare", "human_label_compare",
+        "json_key_compare", "path_segment_compare",
+    }
+    if profile not in valid_profiles:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported profile: {profile}",
+            [f"Use one of: {', '.join(sorted(valid_profiles))}"],
+            tool="canonicalize_text",
+        )
+
+    try:
+        result = _canonicalize_text(text, profile, return_mapping)
+        return _success_response(result, tool="canonicalize_text")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="canonicalize_text")
+
+
+def identifier_table_inspect_mcp(
+    identifiers: list[dict],
+    language: str = "python",
+    checks: list[str] | None = None,
+) -> dict:
+    """Inspect a table of identifiers for collisions, reserved keywords, and mixed styles.
+
+    Args:
+        identifiers: List of dicts with required 'name' (str), optional 'kind' (str),
+                     'file' (str), 'line' (int).
+        language: Target language for keyword checking.
+        checks: Subset of checks to run.
+
+    Returns:
+        Success envelope with inspection result, or error envelope.
+    """
+    if len(identifiers) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"Number of identifiers {len(identifiers)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} identifiers allowed"],
+            tool="identifier_table_inspect",
+        )
+
+    valid_languages = {"generic", "python", "rust", "javascript", "typescript", "json_key"}
+    if language not in valid_languages:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported language: {language}",
+            [f"Use one of: {', '.join(valid_languages)}"],
+            tool="identifier_table_inspect",
+        )
+
+    valid_checks = {"casefold", "normalization", "confusable", "style", "reserved", "mixed_style"}
+    if checks is not None:
+        invalid = [c for c in checks if c not in valid_checks]
+        if invalid:
+            return _error_response(
+                "invalid_arguments",
+                f"Unknown check(s): {', '.join(invalid)}",
+                [f"Valid checks: {', '.join(sorted(valid_checks))}"],
+                tool="identifier_table_inspect",
+            )
+
+    try:
+        result = _identifier_table_inspect(identifiers, language, checks)
+
+        findings: list[dict] = []
+        for collision in result.get("collisions", []):
+            findings.append({
+                "code": f"COLLISION_{collision['kind'].upper()}",
+                "severity": "warn",
+                "message": collision.get("detail", "Collision detected"),
+                "details": {"names": collision.get("names", [])},
+            })
+        for hit in result.get("reserved_keyword_hits", []):
+            findings.append({
+                "code": "RESERVED_KEYWORD",
+                "severity": "warn",
+                "message": f"'{hit['name']}' is a reserved keyword in {hit['language']}",
+                "details": {"file": hit.get("file"), "line": hit.get("line")},
+            })
+        for group in result.get("mixed_style_groups", []):
+            findings.append({
+                "code": "MIXED_STYLE",
+                "severity": "info",
+                "message": f"Mixed styles for '{group['stripped']}': {', '.join(group['styles'])}",
+                "details": {"names": group.get("names", [])},
+            })
+
+        machine_code: str | None = None
+        if result.get("reserved_keyword_hits"):
+            machine_code = "RESERVED_KEYWORDS"
+        elif result.get("collisions"):
+            machine_code = "IDENT_COLLISIONS"
+
+        return _success_response(result, tool="identifier_table_inspect", findings=findings or None, machine_code=machine_code)
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="identifier_table_inspect")
+
+
+def version_constraint_check_mcp(
+    version: str,
+    constraint: str,
+    scheme: str = "semver",
+) -> dict:
+    """Check whether a version satisfies a constraint under a given versioning scheme.
+
+    Args:
+        version: Version string to check (e.g., '1.2.3', '0.5.0-beta.1').
+        constraint: Version constraint (e.g., '>=1.0,<2.0', '^1.2.3', '~0.5', '1.*').
+        scheme: Versioning scheme ('semver' or 'cargo').
+
+    Returns:
+        Success envelope with constraint check result, or error envelope.
+    """
+    valid_schemes = {"semver", "cargo"}
+    if scheme not in valid_schemes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported scheme: {scheme}",
+            [f"Use one of: {', '.join(valid_schemes)}"],
+            tool="version_constraint_check",
+        )
+
+    if not version.strip():
+        return _error_response(
+            "invalid_arguments",
+            "Version string is empty",
+            ["Provide a valid version string like '1.2.3'"],
+            tool="version_constraint_check",
+        )
+
+    if not constraint.strip():
+        return _error_response(
+            "invalid_arguments",
+            "Constraint string is empty",
+            ["Provide a valid constraint like '>=1.0' or '^1.2.3'"],
+            tool="version_constraint_check",
+        )
+
+    try:
+        result = _check_version_constraint(version, constraint, scheme)
+
+        findings: list[dict] = []
+        for msg in result.get("findings", []):
+            findings.append({
+                "code": "CONSTRAINT_NOTE",
+                "severity": "info",
+                "message": msg,
+            })
+
+        machine_code: str | None = None
+        if result.get("findings"):
+            machine_code = "CONSTRAINT_NOTE"
+        elif not result.get("satisfies"):
+            machine_code = "CONSTRAINT_NOT_SATISFIED"
+
+        return _success_response(
+            result,
+            tool="version_constraint_check",
+            findings=findings or None,
+            machine_code=machine_code,
+        )
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="version_constraint_check")
+
+
+def cargo_toml_inspect_mcp(
+    text: str,
+    check_workspace: bool = True,
+    check_dependencies: bool = True,
+) -> dict:
+    """Inspect Cargo.toml text without network or filesystem access.
+
+    Args:
+        text: The Cargo.toml content.
+        check_workspace: Whether to analyze workspace section.
+        check_dependencies: Whether to analyze dependencies sections.
+
+    Returns:
+        Success envelope with Cargo.toml inspection result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="cargo_toml_inspect",
+        )
+
+    try:
+        result = _cargo_toml_inspect(text, check_workspace, check_dependencies)
+
+        findings: list[dict] = []
+        for msg in result.get("findings", []):
+            if "parse error" in msg.lower() or "not a table" in msg.lower():
+                severity = "error"
+                code = "CARGO_PARSE_ERROR"
+            elif "missing" in msg.lower():
+                severity = "warn"
+                code = "CARGO_MISSING_FIELD"
+            elif "confusable" in msg.lower():
+                severity = "warn"
+                code = "CARGO_CONFUSABLE_NAMES"
+            elif "suspicious" in msg.lower():
+                severity = "warn"
+                code = "CARGO_SUSPICIOUS_NAME"
+            elif "unrecognized" in msg.lower():
+                severity = "warn"
+                code = "CARGO_UNRECOGNIZED_VALUE"
+            else:
+                severity = "info"
+                code = "CARGO_NOTE"
+            findings.append({
+                "code": code,
+                "severity": severity,
+                "message": msg,
+            })
+
+        machine_code: str | None = None
+        if not result.get("parse_ok"):
+            machine_code = "CARGO_PARSE_FAILED"
+        elif result.get("findings"):
+            machine_code = "CARGO_HAS_FINDINGS"
+
+        return _success_response(
+            result,
+            tool="cargo_toml_inspect",
+            findings=findings or None,
+            machine_code=machine_code,
+        )
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="cargo_toml_inspect")
+
+
+def prompt_input_inspect_mcp(
+    text: str,
+    checks: list[str] | None = None,
+    phrase_patterns: list[str] | None = None,
+) -> dict:
+    """Inspect text for deterministic red flags.
+
+    Surfaces observable features that may influence agents or humans
+    unexpectedly. Does NOT infer intent or detect prompt injection
+    semantically.
+
+    Args:
+        text: The text to inspect.
+        checks: Subset of check names to run.
+        phrase_patterns: Optional literal strings or safe regexes to detect.
+
+    Returns:
+        Success envelope with inspection result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="prompt_input_inspect",
+        )
+
+    valid_checks = {
+        "unicode_hidden", "bidi", "html_comments", "markdown_links",
+        "ansi_escapes", "terminal_controls", "base64_like_blobs",
+        "instruction_phrases", "long_minified_lines",
+    }
+    if checks is not None:
+        invalid = [c for c in checks if c not in valid_checks]
+        if invalid:
+            return _error_response(
+                "invalid_arguments",
+                f"Unknown check(s): {', '.join(invalid)}",
+                [f"Valid checks: {', '.join(sorted(valid_checks))}"],
+                tool="prompt_input_inspect",
+            )
+
+    try:
+        result = _prompt_input_inspect(text, checks, phrase_patterns)
+
+        findings: list[dict] = []
+        for f in result.get("findings", []):
+            findings.append({
+                "code": f.get("code", "UNKNOWN"),
+                "severity": f.get("severity", "info"),
+                "message": f.get("message", ""),
+                "span": f.get("span"),
+                "details": f.get("details"),
+            })
+
+        machine_code: str | None = None
+        if findings:
+            codes = {f["code"] for f in findings}
+            if any(c in codes for c in ("HIDDEN_CHAR", "BIDI_CONTROL", "ANSI_ESCAPE")):
+                machine_code = "PROMPT_HIDDEN_CONTENT"
+            elif codes:
+                machine_code = "PROMPT_HAS_FLAGS"
+
+        return _success_response(
+            result,
+            tool="prompt_input_inspect",
+            findings=findings or None,
+            machine_code=machine_code,
+            recommended_next_tool=result.get("recommended_next_tool"),
+        )
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="prompt_input_inspect")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="prompt_input_inspect")
+
+# === mcp/server.py ===
+TOOL_HANDLERS: dict[str, Any] = {
+    "cargo_toml_inspect": cargo_toml_inspect_mcp,
+    "code_fence_extract": code_fence_extract_mcp,
+    "dotenv_validate": dotenv_validate_mcp,
+    "ini_validate": ini_validate_mcp,
+    "escape_text": _mcp_escape_text,
+    "line_range_compare": _mcp_line_range_compare,
+    "line_range_extract": _mcp_line_range_extract,
+    "unescape_text": _mcp_unescape_text,
+    "json_canonicalize": json_canonicalize,
+    "json_compare": json_compare,
+    "json_extract": json_extract,
+    "json_query": json_query,
+    "json_shape": json_shape,
+    "list_compare": _mcp_list_compare,
+    "list_dedupe": list_dedupe_mcp,
+    "list_sort": list_sort_mcp,
+    "math_eval": math_eval,
+    "patch_apply_check": patch_apply_check_mcp,
+    "patch_summary": patch_summary_mcp,
+    "path_analyze": path_analyze_mcp,
+    "path_compare": path_compare_mcp,
+    "path_normalize": _mcp_path_normalize,
+    "path_scope_check": path_scope_check_mcp,
+    "regex_finditer": regex_finditer,
+    "regex_safety_check": regex_safety_check,
+    "shell_split": _mcp_shell_split,
+    "shell_quote_join": _mcp_shell_quote_join,
+    "argv_compare": shell_argv_compare,
+    "text_count": text_count,
+    "text_diff_explain": text_diff_explain,
+    "text_equal": _mcp_text_equal,
+    "text_hash": _mcp_text_hash,
+    "text_inspect": text_inspect,
+    "text_measure": text_measure,
+    "text_position": _mcp_text_position,
+    "text_replace_check": _mcp_text_replace_check,
+    "text_truncate": text_truncate,
+    "text_transform": _mcp_text_transform,
+    "text_window": _mcp_text_window,
+    "toml_shape": toml_shape_mcp,
+    "unit_convert": unit_convert,
+    "unit_info": unit_info,
+    "constant_lookup": constant_lookup,
+    "validate_brackets": validate_brackets,
+    "validate_json": validate_json,
+    "validate_regex": validate_regex,
+    "validate_schema_light": validate_schema_light,
+    "validate_toml": validate_toml,
+    "version_compare": version_compare_mcp,
+    "version_constraint_check": version_constraint_check_mcp,
+    "identifier_analyze": _mcp_identifier_analyze,
+    "glob_match": glob_match_mcp,
+    "text_fingerprint": text_fingerprint_mcp,
+    "identifier_inspect": identifier_inspect_mcp,
+    "identifier_table_inspect": identifier_table_inspect_mcp,
+    "markdown_structure": markdown_structure_mcp,
+    "unicode_policy_check": unicode_policy_check_mcp,
+    "canonicalize_text": canonicalize_text_mcp,
+    "prompt_input_inspect": prompt_input_inspect_mcp,
+}
+
+MAX_REQUEST_BYTES = 1_000_000
+
+
+def _invalid_request(request_id: Any, message: str) -> dict:
+    """Build JSON-RPC invalid request/params error."""
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {
+            "code": -32600,
+            "message": message,
+        },
+    }
+
+
+def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
+    """Find a case-insensitive close match for tool name."""
+    name_lower = name.lower()
+    for tool_name in handlers:
+        if tool_name.lower() == name_lower:
+            return tool_name
+        if name_lower in tool_name.lower() or tool_name.lower() in name_lower:
+            return tool_name
+    return None
+
+
+def _handle_call_tool(request: dict) -> dict:
+    """Handle a tools/call MCP request."""
+    params = request.get("params", {})
+    if not isinstance(params, dict):
+        return _invalid_request(request.get("id"), "Invalid params: expected object")
+
+    name = params.get("name", "")
+    arguments = params.get("arguments", {})
+    if not isinstance(arguments, dict):
+        return _invalid_request(request.get("id"), "Invalid arguments: expected object")
+
+    if name not in TOOL_HANDLERS:
+        close = _find_close_match(name, TOOL_HANDLERS)
+        msg = f"Unknown tool: {name}"
+        if close:
+            msg += f". Did you mean: {close}?"
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32602,
+                "message": msg,
+            },
+        }
+
+    try:
+        handler = TOOL_HANDLERS[name]
+        result = handler(**arguments)
+
+        # If result is an error envelope, return as error
+        if isinstance(result, dict) and result.get("ok") is False:
+            return {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "error": {
+                    "code": -32000,
+                    "message": result.get("error", "Unknown error"),
+                    "data": result,
+                },
+            }
+
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(result),
+                    }
+                ]
+            },
+        }
+
+    except Exception as e:
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32000,
+                "message": f"Tool execution error: {str(e)}",
+            },
+        }
+
+
+def _handle_list_tools(request: dict) -> dict:
+    """Handle a tools/list MCP request with optional filtering."""
+    params = request.get("params", {})
+
+    tier_filter: int | None = params.get("tier")
+    tags_filter: list[str] | None = params.get("tags")
+    names_filter: list[str] | None = params.get("names")
+
+    tools = []
+    for name, schema in TOOL_SCHEMAS.items():
+        if names_filter is not None:
+            if name not in names_filter:
+                continue
+
+        if tier_filter is not None:
+            if schema.get("tier") != tier_filter:
+                continue
+
+        if tags_filter is not None:
+            tool_tags = set(schema.get("tags", []))
+            if not all(tag in tool_tags for tag in tags_filter):
+                continue
+
+        tools.append({
+            "name": name,
+            "description": schema["description"],
+            "inputSchema": schema["inputSchema"],
+            "tier": schema.get("tier"),
+            "tags": schema.get("tags", []),
+        })
+
+    return {
+        "jsonrpc": "2.0",
+        "id": request.get("id"),
+        "result": {"tools": tools},
+    }
+
+
+def _handle_initialize(request: dict) -> dict:
+    """Handle an initialize MCP request."""
+    return {
+        "jsonrpc": "2.0",
+        "id": request.get("id"),
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+                "tools": {"listChanged": False},
+            },
+            "serverInfo": {
+                "name": "nl-calc-exact",
+                "version": "1.0.0",
+            },
+        },
+    }
+
+
+def handle_request(request: Any) -> dict | None:
+    """Route MCP request to appropriate handler."""
+    if not isinstance(request, dict):
+        return _invalid_request(None, "Invalid Request: expected JSON object")
+
+    method = request.get("method", "")
+
+    if method == "tools/list":
+        return _handle_list_tools(request)
+    elif method == "tools/call":
+        return _handle_call_tool(request)
+    elif method == "initialize":
+        return _handle_initialize(request)
+    elif method == "notifications/initialized":
+        return None
+    else:
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32601,
+                "message": f"Method not found: {method}",
+            },
+        }
+
+
+def mcp_main() -> int:
+    """Main entry point for MCP server.
+
+    Reads JSON-RPC requests from stdin and writes responses to stdout.
+    """
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+
+        if len(line.encode('utf-8')) > MAX_REQUEST_BYTES:
+            response = {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32700,
+                    "message": f"Request exceeds maximum size of {MAX_REQUEST_BYTES} bytes",
+                },
+            }
+            print(json.dumps(response), flush=True)
+            continue
+
+        if line.startswith('['):
+            response = {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32600,
+                    "message": "Batch requests are not supported",
+                },
+            }
+            print(json.dumps(response), flush=True)
+            continue
+
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            response = {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32700,
+                    "message": "Parse error: invalid JSON",
+                },
+            }
+            print(json.dumps(response), flush=True)
+            continue
+
+        try:
+            response = handle_request(request)
+        except Exception as e:
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id") if isinstance(request, dict) else None,
+                "error": {
+                    "code": -32603,
+                    "message": f"Internal error: {str(e)}",
+                },
+            }
+
+        if response is not None:
+            print(json.dumps(response), flush=True)
+
+    return 0
+
+
+# Build-time alias for MCP entry point
+# MCP main already renamed to mcp_main
+
+# === Entry point ===
+
+# NOTE: All modules are inlined into this file.
+# Functions are available in global scope - no import needed.
+
+def _main():
+    import argparse
+    import sys
+    parser = argparse.ArgumentParser(description="eggcalc - Natural language calculator + MCP server")
+    parser.add_argument("--mcp", action="store_true", help="Run as MCP server")
+    parser.add_argument("expression", nargs="*", help="Math expression to evaluate")
+    parser.add_argument("-e", "--expression", dest="single_expr", metavar="<expr>", help="Evaluate a single expression (useful for piping)")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Suppress expression in output")
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--usage", action="store_true", help="Show full usage information and examples")
+    # Parse known args - let normalize_main handle the rest (-v, -i, -s, -h, etc.)
+    args, extra = parser.parse_known_args()
+
+    if args.mcp:
+        return mcp_main()
+    elif args.usage:
+        print_help()
+        return 0
+    elif args.expression or args.single_expr:
+        sys.argv = ["eggcalc"]
+        if args.single_expr:
+            sys.argv.extend(["-e", args.single_expr])
+        else:
+            sys.argv.extend(args.expression)
+        if args.json:
+            sys.argv.append("--json")
+        if args.quiet:
+            sys.argv.append("-q")
+        if extra:
+            sys.argv.extend(extra)
+        return normalize_main()
+    else:
+        # No expression given - forward all args to normalize_main (handles -v, -i, -s, -h, etc.)
+        if extra:
+            sys.argv = ["eggcalc"] + extra
+            return normalize_main()
+        parser.print_help()
+        return 0
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

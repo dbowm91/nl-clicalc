@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from egg_calc.exact.inspect_prompt import (
+from eggcalc.exact.inspect_prompt import (
     ALL_CHECKS,
     prompt_input_inspect,
 )
@@ -374,14 +374,14 @@ class TestMcpIntegration:
     """Test MCP tool wrapper (imported from tools.py)."""
 
     def test_mcp_wrapper_basic(self):
-        from egg_calc.mcp.tools import prompt_input_inspect_mcp
+        from eggcalc.mcp.tools import prompt_input_inspect_mcp
         result = prompt_input_inspect_mcp("Hello, world!")
         assert result["ok"] is True
         assert result["tool"] == "prompt_input_inspect"
         assert "result" in result
 
     def test_mcp_wrapper_with_findings(self):
-        from egg_calc.mcp.tools import prompt_input_inspect_mcp
+        from eggcalc.mcp.tools import prompt_input_inspect_mcp
         text = "test\u200b hidden <!-- comment -->"
         result = prompt_input_inspect_mcp(text)
         assert result["ok"] is True
@@ -389,19 +389,19 @@ class TestMcpIntegration:
         assert len(result["findings"]) > 0
 
     def test_mcp_wrapper_input_too_large(self):
-        from egg_calc.mcp.tools import prompt_input_inspect_mcp
+        from eggcalc.mcp.tools import prompt_input_inspect_mcp
         result = prompt_input_inspect_mcp("x" * 200_000)
         assert result["ok"] is False
         assert result["error_type"] == "input_too_large"
 
     def test_mcp_wrapper_invalid_check(self):
-        from egg_calc.mcp.tools import prompt_input_inspect_mcp
+        from eggcalc.mcp.tools import prompt_input_inspect_mcp
         result = prompt_input_inspect_mcp("test", checks=["bad_check"])
         assert result["ok"] is False
         assert result["error_type"] == "invalid_arguments"
 
     def test_mcp_wrapper_machine_code(self):
-        from egg_calc.mcp.tools import prompt_input_inspect_mcp
+        from eggcalc.mcp.tools import prompt_input_inspect_mcp
         text = "test\u200b hidden"
         result = prompt_input_inspect_mcp(text)
         assert result.get("machine_code") is not None

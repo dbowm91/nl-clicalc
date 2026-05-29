@@ -47,7 +47,7 @@ docs = [
 ]
 
 [project.scripts]
-calc = "egg_calc.normalize:main"
+calc = "eggcalc.normalize:main"
 
 [project.urls]
 Homepage = "https://github.com/eggcalc/eggcalc"
@@ -55,7 +55,7 @@ Repository = "https://github.com/eggcalc/eggcalc"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["egg_calc*"]
+include = ["eggcalc*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -25,23 +25,23 @@ evaluate("30m + 100ft")
 ## Correct Usage
 ```python
 # For pure math - use evaluate()
-from nl_calc import evaluate
+from eggcalc import evaluate
 result = evaluate("5 + 3")  # Works
 
 # For NL or units - use run() or CLI
-from nl_calc import run, NORMALIZE, PATTERNS
+from eggcalc import run, NORMALIZE, PATTERNS
 result = run("five plus three", NORMALIZE, PATTERNS)
 
 # From CLI
 import subprocess
-result = subprocess.run(["python", "-m", "nl_calc", "5+3"], capture_output=True)
+result = subprocess.run(["python", "-m", "eggcalc", "5+3"], capture_output=True)
 ```
 
 ## Testing Helper Patterns
 
 ### Extracting Values from UnitValue
 ```python
-from nl_calc import evaluate, UnitValue
+from eggcalc import evaluate, UnitValue
 
 def get_value(result):
     """Extract numeric value from result, handling UnitValue."""
@@ -57,7 +57,7 @@ def val(expr):
 
 ### Verifying Unit Conversions
 ```python
-from nl_calc.units import get_conversion_factor, UnitValue
+from eggcalc.units import get_conversion_factor, UnitValue
 
 # Direct conversion factor check
 factor = get_conversion_factor("km", "m")
@@ -73,7 +73,7 @@ result = uv1 + uv2
 ### Testing Error Cases
 ```python
 import pytest
-from nl_calc import evaluate
+from eggcalc import evaluate
 
 def test_invalid_expression():
     with pytest.raises(EvaluationError):
@@ -103,18 +103,34 @@ python -m pytest tests/ -v
 ```
 tests/
 ├── conftest.py              # Shared fixtures
-├── README.md                # Test documentation
 ├── test_clicalc.py          # Core functional tests
-├── test_security_fuzz.py   # Security/fuzz tests
-├── test_tokenization.py    # Tokenization edge cases
+├── test_security_fuzz.py    # Security/fuzz tests
+├── test_tokenization.py     # Tokenization edge cases
 ├── test_math_identities.py  # Mathematical laws verification
 ├── test_mcp_server.py       # MCP server integration tests
+├── test_mcp_tools_new.py    # MCP integration tests for new tools
 ├── test_exact.py            # Exact module tests
-└── test_cli_text.py        # CLI text tools tests
+├── test_patch_tools.py      # Patch apply/summary tools tests
+├── test_cli_text.py         # CLI text tools tests
+├── test_text_replace_check.py # Text replacement check tests
+├── test_line_range.py       # Line range extract/compare tests
+├── test_path_compare.py     # Path comparison tests
+├── test_path_scope.py       # Path scope check tests
+├── test_shell_tools.py      # Shell split/quote/compare tests
+├── test_markdown_tools.py   # Markdown structure tests
+├── test_config_validation.py # dotenv/INI validation tests
+├── test_unicode_policy.py   # Unicode policy/canonicalization tests
+├── test_tool_inventory.py   # Tool registry consistency tests
+├── test_golden_fixtures.py  # Golden fixture tests
+├── test_cargo_inspect.py    # Cargo.toml inspection tests
+├── test_prompt_inspect.py   # Prompt injection detection tests
+├── test_identifier_table.py # Identifier table inspection tests
+├── test_version_constraint.py # Version constraint tests
+└── fixtures/                # Test fixtures directory
 ```
 
 ## Current Test Count
-- 631 tests pass (as of 2026-05-29)
+- 1192 tests pass (as of 2026-05-29)
 - All must continue to pass
 
 ## Common Issues When Testing

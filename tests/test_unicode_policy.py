@@ -1,6 +1,6 @@
 """Tests for Unicode policy checks and canonicalization profiles."""
 
-from egg_calc.exact.unicode_policy import (
+from eggcalc.exact.unicode_policy import (
     _VALID_POLICIES,
     _VALID_PROFILES,
     canonicalize_text,

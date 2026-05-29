@@ -5,7 +5,7 @@ eggcalc is optimized for web applications with thread-safety, caching, and async
 ## Basic Setup
 
 ```python
-from egg_calc import PyCalcApp, EvaluationError
+from eggcalc import PyCalcApp, EvaluationError
 
 app = PyCalcApp(cache_size=1000)
 
@@ -22,7 +22,7 @@ def calculate(expression: str):
 ```python
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from egg_calc import PyCalcApp, EvaluationError, TimeoutError
+from eggcalc import PyCalcApp, EvaluationError, TimeoutError
 
 app = FastAPI()
 calc = PyCalcApp(cache_size=1000)
@@ -53,7 +53,7 @@ async def calculate(req: CalculateRequest):
 
 ```python
 from flask import Flask, request, jsonify
-from egg_calc import PyCalcApp, EvaluationError
+from eggcalc import PyCalcApp, EvaluationError
 
 app = Flask(__name__)
 calc = PyCalcApp(cache_size=1000)
@@ -77,7 +77,7 @@ def calculate():
 from django.http import JsonResponse
 from django.views import View
 import json
-from egg_calc import PyCalcApp, EvaluationError
+from eggcalc import PyCalcApp, EvaluationError
 
 calc = PyCalcApp(cache_size=1000)
 
@@ -102,7 +102,7 @@ class CalculateView(View):
 - Safe for concurrent requests
 
 ```python
-from egg_calc import PyCalcApp
+from eggcalc import PyCalcApp
 
 # Each instance has isolated state
 app1 = PyCalcApp()
@@ -120,7 +120,7 @@ print(app2.calculate("x"))  # 20
 Enable caching for repeated expressions:
 
 ```python
-from egg_calc import PyCalcApp
+from eggcalc import PyCalcApp
 
 # LRU cache with 1000 entries
 app = PyCalcApp(cache_size=1000)
@@ -143,7 +143,7 @@ app.clear_cache()
 For untrusted input, use timeout:
 
 ```python
-from egg_calc import evaluate_with_timeout, TimeoutError
+from eggcalc import evaluate_with_timeout, TimeoutError
 
 def safe_calculate(expr: str, timeout: float = 1.0):
     try:
@@ -158,7 +158,7 @@ def safe_calculate(expr: str, timeout: float = 1.0):
 from functools import wraps
 from time import time
 from collections import defaultdict
-from egg_calc import PyCalcApp, EvaluationError
+from eggcalc import PyCalcApp, EvaluationError
 
 calc = PyCalcApp()
 request_times = defaultdict(list)
@@ -201,7 +201,7 @@ def calculate(ip: str, expression: str):
 ## Error Handling
 
 ```python
-from egg_calc import (
+from eggcalc import (
     PyCalcApp,
     EvaluationError,
     TimeoutError,

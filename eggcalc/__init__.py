@@ -5,17 +5,17 @@ A calculator that accepts natural language expressions and converts them
 to mathematical expressions that can be evaluated.
 
 Usage:
-    python -m egg_calc "five plus two"
-    python -m egg_calc "30m + 100ft"
-    python -m egg_calc --help
-    python -m egg_calc -i  # Interactive REPL mode
+    python -m eggcalc "five plus two"
+    python -m eggcalc "30m + 100ft"
+    python -m eggcalc --help
+    python -m eggcalc -i  # Interactive REPL mode
 
 Library usage:
-    from egg_calc import evaluate, EvaluationError, UnitValue
+    from eggcalc import evaluate, EvaluationError, UnitValue
     result = evaluate("5 + 3")
 
     # For webapps with caching:
-    from egg_calc import PyCalcApp
+    from eggcalc import PyCalcApp
     app = PyCalcApp(cache_size=1024)
     result = app.calculate("five plus two")
 

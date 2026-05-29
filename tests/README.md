@@ -7,7 +7,7 @@
 python -m pytest tests/
 
 # Run with coverage
-python -m pytest tests/ --cov=nl_calc --cov-report=term-missing
+python -m pytest tests/ --cov=eggcalc --cov-report=term-missing
 
 # Run specific test file
 python -m pytest tests/test_tokenization.py -v
@@ -102,7 +102,7 @@ class TestMultiDigitSubtraction:
 ```python
 def test_fahrenheit_to_celsius_exact_freezing(self):
     """Test 32F to C equals exactly 0.0C."""
-    from nl_calc.units import convert_temperature
+    from eggcalc.units import convert_temperature
     result = convert_temperature(32.0, "F", "C")
     assert abs(result - 0.0) < 1e-9
 ```
@@ -111,7 +111,7 @@ def test_fahrenheit_to_celsius_exact_freezing(self):
 ```python
 def test_kilonewton_to_newton(self):
     """Test kN to N conversion factor is 1000.0."""
-    from nl_calc import get_conversion_factor
+    from eggcalc import get_conversion_factor
     result = get_conversion_factor("kN", "N")
     assert result == 1000.0
 ```
@@ -120,7 +120,7 @@ def test_kilonewton_to_newton(self):
 ```python
 def test_digits_return_other(self):
     """Test that ASCII digits return 'Other'."""
-    from nl_calc.exact import unicode_script
+    from eggcalc.exact import unicode_script
     assert unicode_script("0") == "Other"
 ```
 
@@ -147,13 +147,13 @@ Use `run()` for these cases.
 ### Temperature Conversion
 Temperature conversions require `convert_temperature()` for proper offset handling:
 ```python
-from nl_calc.units import convert_temperature
+from eggcalc.units import convert_temperature
 result = convert_temperature(32.0, "F", "C")  # Returns 0.0
 ```
 
 ### Prefixed Units
 Some prefixed units (like "kg") have compound meanings. Use `get_conversion_factor()` for prefix conversions:
 ```python
-from nl_calc import get_conversion_factor
+from eggcalc import get_conversion_factor
 factor = get_conversion_factor("kN", "N")  # Returns 1000.0
 ```

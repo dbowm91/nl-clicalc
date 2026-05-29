@@ -2,7 +2,7 @@
 
 Unicode script detection and confusable character identification.
 
-## File: `nl_calc/exact/unicode_tools.py`
+## File: `eggcalc/exact/unicode_tools.py`
 
 ## Overview
 
@@ -203,7 +203,7 @@ def check_domain_safety(domain: str) -> bool:
 ## Usage Example
 
 ```python
-from nl_calc.exact import (
+from eggcalc.exact import (
     unicode_script, unicode_scripts,
     detect_mixed_scripts, detect_confusables
 )

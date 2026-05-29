@@ -48,7 +48,7 @@ All notable changes to eggcalc are documented here.
 - Python API with caching
 - Async support for web applications
 - Thread-safe PyCalcApp class
-- Custom configuration via clicalc_config.py
+- Custom configuration via eggcalc_config.py
 
 ### Security
 

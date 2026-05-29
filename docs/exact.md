@@ -1,6 +1,6 @@
 # Exact Text Module
 
-The `nl_calc.exact` module provides **low-level Unicode text primitives and higher-level synthesis functions** for precise text inspection, comparison, and measurement. It's designed for security-conscious applications that need to handle untrusted text input.
+The `eggcalc.exact` module provides **low-level Unicode text primitives and higher-level synthesis functions** for precise text inspection, comparison, and measurement. It's designed for security-conscious applications that need to handle untrusted text input.
 
 ## Purpose
 
@@ -60,7 +60,7 @@ The foundation layer provides fundamental Unicode text operations.
 ### Basic Measurements
 
 ```python
-from nl_calc.exact import measure_basic, utf8_bytes, codepoints
+from eggcalc.exact import measure_basic, utf8_bytes, codepoints
 
 text = "Hello, 世界! 🌍"
 
@@ -91,7 +91,7 @@ metrics = measure_basic(text)
 ### String Comparison
 
 ```python
-from nl_calc.exact import raw_equal, normalized_equal, casefold_text
+from eggcalc.exact import raw_equal, normalized_equal, casefold_text
 
 # Exact byte-for-byte comparison
 raw_equal("café", "café")        # True
@@ -111,7 +111,7 @@ casefold_text("Σίσυφος")  # "σίσυφος" (Greek sigma final form)
 Zero-width characters, BOM markers, bidi controls, and other invisible text can indicate attacks:
 
 ```python
-from nl_calc.exact import find_invisibles, visible_repr
+from eggcalc.exact import find_invisibles, visible_repr
 
 # Zero-width space (commonly used in exploits)
 text = "user\u200Bname"  # "user​name" (invisible ZWSP between user and name)
@@ -140,7 +140,7 @@ Uses the Unicode UTS #39 confusables table (~6500 entries) to detect lookalike c
 **Critical for security:** Attackers can register domains like "pаypal.com" (Cyrillic 'а' looks like Latin 'a') to deceive users.
 
 ```python
-from nl_calc.exact.unicode_tools import detect_confusables
+from eggcalc.exact.unicode_tools import detect_confusables
 
 # Cyrillic 'а' confusable with Latin 'a'
 result = detect_confusables("pаypal")
@@ -177,7 +177,7 @@ detect_confusables("10")  # May detect '0' confusable with 'O'
 Identify which Unicode script each character belongs to:
 
 ```python
-from nl_calc.exact.unicode_tools import unicode_script, detect_mixed_scripts
+from eggcalc.exact.unicode_tools import unicode_script, detect_mixed_scripts
 
 # Single character script detection
 unicode_script('A')   # 'Latin'
@@ -208,7 +208,7 @@ result = detect_mixed_scripts("HelloМир")  # Latin + Cyrillic
 ### Line Metrics
 
 ```python
-from nl_calc.exact.measure import line_metrics
+from eggcalc.exact.measure import line_metrics
 
 text = "Line 1\nLine 2\r\nLine 3\rLine 4\n"
 
@@ -227,7 +227,7 @@ lm = line_metrics(text)
 ### Word Metrics
 
 ```python
-from nl_calc.exact.measure import word_metrics
+from eggcalc.exact.measure import word_metrics
 
 wm = word_metrics("Hello world! This is a test. One two three.")
 # WordMetrics(
@@ -242,7 +242,7 @@ wm = word_metrics("Hello world! This is a test. One two three.")
 ### Character Category Metrics
 
 ```python
-from nl_calc.exact.measure import char_category_metrics
+from eggcalc.exact.measure import char_category_metrics
 
 cm = char_category_metrics("Hello 123! @#$%")
 # CharCategoryMetrics(
@@ -261,7 +261,7 @@ cm = char_category_metrics("Hello 123! @#$%")
 ### Finding First Difference
 
 ```python
-from nl_calc.exact.diff import first_diff
+from eggcalc.exact.diff import first_diff
 
 result = first_diff("hello", "hallo")
 # FirstDiff(
@@ -277,7 +277,7 @@ result = first_diff("hello", "hallo")
 ### Common Prefix/Suffix
 
 ```python
-from nl_calc.exact.diff import common_prefix_suffix
+from eggcalc.exact.diff import common_prefix_suffix
 
 result = common_prefix_suffix("hello world", "hello there")
 # CommonPrefixSuffix(
@@ -295,7 +295,7 @@ result = common_prefix_suffix("prefix_middle_suffix", "xxx_middle_yyy")
 ### Levenshtein Distance
 
 ```python
-from nl_calc.exact.diff import levenshtein_distance
+from eggcalc.exact.diff import levenshtein_distance
 
 levenshtein_distance("kitten", "sitting")  # 3 (kitten → sitten → sittin → sitting)
 levenshtein_distance("hello", "hello")    # 0 (identical)
@@ -304,7 +304,7 @@ levenshtein_distance("hello", "hello")    # 0 (identical)
 ### Diff Spans
 
 ```python
-from nl_calc.exact.diff import diff_spans
+from eggcalc.exact.diff import diff_spans
 
 spans = diff_spans("abc", "axbc")
 # [DiffSpan(kind='equal', a_span=(0,1), b_span=(0,1), a_text='a', b_text='a'),
@@ -319,7 +319,7 @@ spans = diff_spans("abc", "axbc")
 Check if brackets are balanced with detailed error reporting:
 
 ```python
-from nl_calc.exact.validate import check_brackets
+from eggcalc.exact.validate import check_brackets
 
 # Balanced - returns balanced=True
 result = check_brackets("(a + b) * [c - d]")
@@ -343,7 +343,7 @@ result = check_brackets("{{{(a + b) / [c * {d}]}}}")
 ### JSON Validation
 
 ```python
-from nl_calc.exact.validate import validate_json
+from eggcalc.exact.validate import validate_json
 
 # Valid JSON
 result = validate_json('{"name": "test", "count": 42}')
@@ -373,7 +373,7 @@ result = validate_json('{"name": "test",}')
 ### Regex Testing
 
 ```python
-from nl_calc.exact.validate import regex_test
+from eggcalc.exact.validate import regex_test
 
 # Test pattern against samples
 result = regex_test(
@@ -402,7 +402,7 @@ The synthesis layer combines primitives into complete operations.
 ### measure_text - Complete Text Measurement
 
 ```python
-from nl_calc.exact.synthesis import measure_text
+from eggcalc.exact.synthesis import measure_text
 
 result = measure_text("Hello, 世界!\nThis is line 2.\n")
 
@@ -420,7 +420,7 @@ result = measure_text("Hello, 世界!\nThis is line 2.\n")
 Compare strings under different normalization modes with detailed evidence:
 
 ```python
-from nl_calc.exact.synthesis import text_equal
+from eggcalc.exact.synthesis import text_equal
 
 # NFC vs NFD comparison (é can be represented two ways)
 result = text_equal("café", "cafe\u0301", normalization="NFC")
@@ -452,7 +452,7 @@ result = text_equal("hello", "world")
 ### explain_diff - Detailed Diff with Security Findings
 
 ```python
-from nl_calc.exact.synthesis import explain_diff
+from eggcalc.exact.synthesis import explain_diff
 
 result = explain_diff("pаypal", "paypal")
 # ExplainDiffResult(
@@ -483,7 +483,7 @@ result = explain_diff("pаypal", "paypal")
 Comprehensive text inspection for hidden characters, confusables, and Unicode risks:
 
 ```python
-from nl_calc.exact.synthesis import inspect_text
+from eggcalc.exact.synthesis import inspect_text
 
 result = inspect_text("user\u200Bname")  # Contains zero-width space
 # InspectTextResult(
@@ -512,7 +512,7 @@ result = inspect_text("user\u200Bname")  # Contains zero-width space
 ### count_chars - Character Counting
 
 ```python
-from nl_calc.exact.synthesis import count_chars
+from eggcalc.exact.synthesis import count_chars
 
 # Count specific character
 result = count_chars("hello world", "l")
@@ -534,7 +534,7 @@ result = count_chars("hello world")
 Compare two lists with various options:
 
 ```python
-from nl_calc.exact.synthesis import list_compare
+from eggcalc.exact.synthesis import list_compare
 
 result = list_compare(
     ["apple", "banana", "Cherry"],
@@ -563,7 +563,7 @@ result = list_compare(
 ### Security: Validate User Input Against Spoofing
 
 ```python
-from nl_calc.exact.synthesis import inspect_text
+from eggcalc.exact.synthesis import inspect_text
 
 def validate_safe_text(text: str) -> tuple[bool, list[str]]:
     """Check text for Unicode spoofing risks."""
@@ -590,7 +590,7 @@ print(warnings)
 ### Data Integrity: Compare Text with Unicode Edge Cases
 
 ```python
-from nl_calc.exact import text_equal
+from eggcalc.exact import text_equal
 
 def strings_are_equivalent(a: str, b: str) -> bool:
     """Check if two strings are equivalent under NFC normalization."""
@@ -605,7 +605,7 @@ strings_are_equivalent("Å", "\u212B")         # True (both NFC normalize to "Å
 ### Text Processing: Detect Encoding and Normalization Issues
 
 ```python
-from nl_calc.exact import measure_text
+from eggcalc.exact import measure_text
 
 def check_text_health(text: str) -> dict:
     """Comprehensive text health check."""

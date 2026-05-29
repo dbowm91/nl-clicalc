@@ -363,14 +363,14 @@ def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
 ### CLI Mode (Calculator)
 
 ```bash
-python nl_calc.py "five plus three"
+python eggcalc.py "five plus three"
 # Output: 8
 ```
 
 ### MCP Mode (Server)
 
 ```bash
-python nl_calc.py --mcp
+python eggcalc.py --mcp
 ```
 
 Then send JSON-RPC requests via stdio:
@@ -438,5 +438,5 @@ Main entry point:
 For build compatibility, this is also available as `mcp_main()`:
 
 ```python
-from nl_calc.mcp.server import main, mcp_main  # Both refer to same function
+from eggcalc.mcp.server import main, mcp_main  # Both refer to same function
 ```

@@ -38,7 +38,7 @@ def build_single_file():
     build_script = os.path.join(os.path.dirname(__file__), "build_single.py")
     if os.path.exists(build_script):
         subprocess.run([sys.executable, build_script], check=True)
-        return os.path.join(os.path.dirname(__file__), "egg_calc.py")
+        return os.path.join(os.path.dirname(__file__), "eggcalc.py")
     else:
         print("Error: build_single.py not found")
         sys.exit(1)
@@ -242,7 +242,7 @@ def uninstall_calc(install_dir: str) -> bool:
 def show_menu(install_dir: str):
     """Display interactive menu and handle user choice."""
     menu_lines = [
-        "nl-calc Installer",
+        "eggcalc Installer",
         f"Status: {'Installed' if is_installed(install_dir) else 'Not installed'}",
         "",
         "1. Install calc",

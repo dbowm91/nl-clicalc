@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 DEFAULT_URL = "https://www.unicode.org/Public/security/latest/confusables.txt"
-OUTPUT_FILE = Path(__file__).parent.parent / "nl_calc" / "exact" / "confusables.py"
+OUTPUT_FILE = Path(__file__).parent.parent / "eggcalc" / "exact" / "confusables.py"
 COMMENTS_AND_HEADER_LINES = 35  # Approximate header lines to skip
 CACHE_DIR = Path(__file__).parent.parent / "data"
 CACHE_FILE = CACHE_DIR / "confusables.txt"
@@ -213,7 +213,7 @@ def main() -> None:
     # Verify by importing
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from nl_calc.exact import confusables as conf_module
+    from eggcalc.exact import confusables as conf_module
 
     loaded = conf_module.CONFUSABLES
     print(f"Verified import: {len(loaded)} entries loaded")

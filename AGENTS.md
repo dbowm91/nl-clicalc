@@ -8,7 +8,7 @@
 ### Build Process
 The codebase is designed to be assembled into a **single self-contained Python script** for portability:
 
-1. **`build_single.py`** - Combines modules into `nl_calc.py`:
+1. **`build_single.py`** - Combines modules into `eggcalc.py`:
    - `units.py` - Unit definitions and conversion factors
    - `evaluator.py` - AST-based expression evaluation
    - `normalize.py` - Natural language processing
@@ -50,14 +50,14 @@ evaluate("1km in m")                         # ✗ Fails (invalid Python)
 
 | Module | Purpose |
 |--------|---------|
-| `nl_calc/normalize.py` | NL tokenization, number word conversion, expression normalization |
-| `nl_calc/evaluator.py` | AST parsing and evaluation, mathematical operations |
-| `nl_calc/units.py` | Unit definitions, conversion factors, temperature conversions |
-| `nl_calc/__main__.py` | CLI interface |
+| `eggcalc/normalize.py` | NL tokenization, number word conversion, expression normalization |
+| `eggcalc/evaluator.py` | AST parsing and evaluation, mathematical operations |
+| `eggcalc/units.py` | Unit definitions, conversion factors, temperature conversions |
+| `eggcalc/__main__.py` | CLI entry point (delegates to `normalize.py:main()`) |
 
 ### Supporting Modules (exact/)
 
-Located in `nl_calc/exact/` - Provides low-level Unicode text primitives for detecting hidden characters, confusables, and text metrics:
+Located in `eggcalc/exact/` - Provides low-level Unicode text primitives for detecting hidden characters, confusables, and text metrics:
 
 | Module | Purpose |
 |--------|---------|
@@ -65,7 +65,7 @@ Located in `nl_calc/exact/` - Provides low-level Unicode text primitives for det
 | `unicode_tools.py` | Script detection, confusable character detection |
 | `unicode_policy.py` | Named Unicode safety policies and canonicalization profiles |
 | `confusables.py` | Confusable character identification (homoglyphs) - large file (~180KB) |
-| `validate.py` | JSON/bracket/regex validation |
+| `validate.py` | JSON/bracket/regex/TOML validation |
 | `diff.py` | String diffing algorithms |
 | `measure.py` | Text metrics (words, lines, categories) |
 | `synthesis.py` | Higher-level text analysis tools |
@@ -79,10 +79,13 @@ Located in `nl_calc/exact/` - Provides low-level Unicode text primitives for det
 | `transform.py` | Text transformations, escaping, hashing, fingerprinting |
 | `position.py` | Text position conversion (byte offsets, line/column, UTF-16) |
 | `glob.py` | Glob pattern matching |
+| `inspect_prompt.py` | Prompt injection detection (hidden chars, instruction phrases, ANSI escapes) |
+| `cargo.py` | Cargo.toml inspection (package metadata, dependencies) |
+| `version.py` | Semver/cargo version constraint parsing and checking |
 
 ### Supporting Modules (mcp/)
 
-Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool access:
+Located in `eggcalc/mcp/` - Model Context Protocol server for AI agent tool access:
 
 | Module | Purpose |
 |--------|---------|
@@ -117,7 +120,7 @@ Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool acce
 - New tests must use the correct API:
   - For NL/unit functionality → use `run()` or test through CLI
   - For pure math expressions → use `evaluate()`
-- 1016 tests currently pass (as of last run)
+- 1192 tests currently pass (as of last run)
 
 ### Code Style
 - Follow existing patterns in the codebase
@@ -149,6 +152,10 @@ tests/
 ├── test_unicode_policy.py   # Unicode policy/canonicalization tests
 ├── test_tool_inventory.py   # Tool registry consistency tests
 ├── test_golden_fixtures.py  # Golden fixture tests
+├── test_cargo_inspect.py    # Cargo.toml inspection tests
+├── test_prompt_inspect.py   # Prompt injection detection tests
+├── test_identifier_table.py # Identifier table inspection tests
+├── test_version_constraint.py # Version constraint tests
 └── fixtures/                # Test fixtures directory
 ```
 
@@ -199,10 +206,10 @@ def val(expr):
 
 ## File Locations
 
-- **CLI entry**: `nl_calc/__main__.py`
-- **Normalize functions**: `nl_calc/normalize.py` (1525 lines)
-- **Evaluator functions**: `nl_calc/evaluator.py`
-- **Unit definitions**: `nl_calc/units.py` (lines 145-600)
+- **CLI entry**: `eggcalc/__main__.py`
+- **Normalize functions**: `eggcalc/normalize.py` (1807 lines)
+- **Evaluator functions**: `eggcalc/evaluator.py` (1515 lines)
+- **Unit definitions**: `eggcalc/units.py` (lines 157-589, 1284 lines total)
 - **Tests**: `tests/`
 - **Build script**: `build_single.py`
 - **Install script**: `install.py`
@@ -213,7 +220,7 @@ def val(expr):
 
 ### Checking what `evaluate()` returns
 ```python
-from nl_calc import evaluate, UnitValue
+from eggcalc import evaluate, UnitValue
 result = evaluate("5 + 3")
 print(f"Type: {type(result)}, Value: {result}")
 if isinstance(result, UnitValue):
@@ -222,14 +229,14 @@ if isinstance(result, UnitValue):
 
 ### Checking normalization
 ```python
-from nl_calc.normalize import normalize, NORMALIZE, PATTERNS
+from eggcalc.normalize import normalize, NORMALIZE, PATTERNS
 normalized = normalize("five plus three", NORMALIZE, PATTERNS)
 print(f"Normalized: {normalized}")  # Should show "5+3"
 ```
 
 ### Checking unit conversion
 ```python
-from nl_calc.units import get_conversion_factor
+from eggcalc.units import get_conversion_factor
 factor = get_conversion_factor("km", "m")
 print(f"km to m factor: {factor}")  # Should be 1000.0
 ```
@@ -243,7 +250,7 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - **Newline detection `mixed` value** - The `mixed` newline style can be returned but was not properly detected in original implementation
 - **`_get_script_heuristic()` benefits from caching** - Now has `@functools.lru_cache` decorator
 - **Cf (format) characters intentionally excluded** - `control_chars` in `measure.py` excludes `Cf` category; format characters are silently ignored per UTS #55
-- **confusables.py is a data file** - The file `nl_calc/exact/confusables.py` is auto-generated data only (~176KB, 6580 lines). TypedDict classes are in their logical modules, NOT in confusables.py
+- **confusables.py is a data file** - The file `eggcalc/exact/confusables.py` is auto-generated data only (~176KB, 6580 lines). TypedDict classes are in their logical modules, NOT in confusables.py
 - **`confusables_count()` helper** - Fast function to count confusables without building full list (unicode_tools.py)
 - **`reverse_confusables()` helper** - Given a character, returns all characters that confusable-map TO it using a cached inverted index (unicode_tools.py)
 - **`unicode_scripts()` batch function** - Returns script list for all chars in string (unicode_tools.py)

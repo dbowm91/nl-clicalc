@@ -113,7 +113,7 @@ echo "100ft in meters" | calc -e
 **For user input (natural language):**
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 result = evaluate_raw("five plus three")  # 8
 result = evaluate_raw("30m + 100ft")      # 60.48 m
@@ -122,7 +122,7 @@ result = evaluate_raw("30m + 100ft")      # 60.48 m
 **For controlled input (pre-normalized):**
 
 ```python
-from nl_calc import evaluate  # Note: different import path
+from eggcalc import evaluate  # Note: different import path
 
 result = evaluate("5+3")  # 8 - must have no spaces
 ```
@@ -130,7 +130,7 @@ result = evaluate("5+3")  # 8 - must have no spaces
 **For untrusted input (with timeout):**
 
 ```python
-from egg_calc import evaluate_with_timeout, TimeoutError
+from eggcalc import evaluate_with_timeout, TimeoutError
 
 try:
     result = evaluate_with_timeout("5 + 3", timeout=1.0)
@@ -141,7 +141,7 @@ except TimeoutError:
 ### Working with Results
 
 ```python
-from egg_calc import evaluate_raw, UnitValue
+from eggcalc import evaluate_raw, UnitValue
 
 result = evaluate_raw("30m + 100ft")
 
@@ -153,7 +153,7 @@ if isinstance(result, UnitValue):
 ### Webapps with PyCalcApp
 
 ```python
-from egg_calc import PyCalcApp
+from eggcalc import PyCalcApp
 
 app = PyCalcApp(cache_size=1000)
 
@@ -168,7 +168,7 @@ result = await app.calculate_async("sqrt(144)")
 ### Error Handling
 
 ```python
-from egg_calc import evaluate_raw, EvaluationError, TimeoutError
+from eggcalc import evaluate_raw, EvaluationError, TimeoutError
 
 try:
     result = evaluate_raw("five plus three")
@@ -186,7 +186,7 @@ except TimeoutError:
 For web applications or any scenario with untrusted input, use `evaluate_with_timeout()`:
 
 ```python
-from egg_calc import evaluate_with_timeout, TimeoutError
+from eggcalc import evaluate_with_timeout, TimeoutError
 
 # Always use timeout with untrusted input
 result = evaluate_with_timeout(user_expression, timeout=5.0)

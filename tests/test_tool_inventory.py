@@ -8,8 +8,8 @@ actual registry.
 import json
 import pathlib
 
-from egg_calc.mcp.schemas import TOOL_SCHEMAS
-from egg_calc.mcp.server import TOOL_HANDLERS
+from eggcalc.mcp.schemas import TOOL_SCHEMAS
+from eggcalc.mcp.server import TOOL_HANDLERS
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 EXPECTED_REGISTRY = json.loads((FIXTURES / "mcp_tool_registry_expected.json").read_text())

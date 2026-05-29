@@ -27,7 +27,7 @@ exact/
 Re-exports all public functions from submodules:
 
 ```python
-from nl_calc.exact import (
+from eggcalc.exact import (
     # Primitives
     utf8_bytes, codepoints, normalize_unicode, casefold_text,
     raw_equal, normalized_equal, measure_basic, count_graphemes,

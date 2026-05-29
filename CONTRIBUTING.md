@@ -41,7 +41,7 @@ Thank you for your interest in contributing to eggcalc! This document provides g
 pytest tests/
 
 # Run with coverage
-pytest tests/ --cov=nl_calc --cov-report=term-missing
+pytest tests/ --cov=eggcalc --cov-report=term-missing
 
 # Run specific test file
 pytest tests/test_clicalc.py -v
@@ -59,13 +59,13 @@ Run them before committing:
 
 ```bash
 # Format code
-black nl_calc tests
+black eggcalc tests
 
 # Lint code
-ruff check nl_calc tests --fix
+ruff check eggcalc tests --fix
 
 # Type check
-mypy nl_calc --ignore-missing-imports
+mypy eggcalc --ignore-missing-imports
 ```
 
 ## Pull Request Process
@@ -73,8 +73,8 @@ mypy nl_calc --ignore-missing-imports
 1. Create a feature branch from `main`
 2. Make your changes
 3. Ensure tests pass: `pytest tests/`
-4. Run linting: `ruff check nl_calc tests`
-5. Run formatting: `black nl_calc tests`
+4. Run linting: `ruff check eggcalc tests`
+5. Run formatting: `black eggcalc tests`
 6. Submit a pull request
 
 ### PR Checklist
@@ -89,7 +89,7 @@ mypy nl_calc --ignore-missing-imports
 
 ```
 eggcalc/
-├── nl_calc/           # Main package
+├── eggcalc/           # Main package
 │   ├── __init__.py    # Package exports
 │   ├── __main__.py    # CLI entry point
 │   ├── evaluator.py   # AST-based evaluator

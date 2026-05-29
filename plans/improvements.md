@@ -80,9 +80,9 @@ Make the repository self-consistent before adding new tools. The README, MCP doc
 
    Likely files to inspect:
 
-   - `nl_calc/mcp/tools.py`
-   - `nl_calc/mcp/server.py`
-   - `nl_calc/exact.py` or equivalent exact/text modules
+   - `eggcalc/mcp/tools.py`
+   - `eggcalc/mcp/server.py`
+   - `eggcalc/exact.py` or equivalent exact/text modules
    - `README.md`
    - `docs/mcp.md`
    - `docs/exact.md`

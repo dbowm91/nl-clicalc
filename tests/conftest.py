@@ -2,8 +2,8 @@
 
 import pytest
 
-from egg_calc import UnitValue, evaluate, evaluate_raw
-from egg_calc.normalize import NORMALIZE, PATTERNS
+from eggcalc import UnitValue, evaluate, evaluate_raw
+from eggcalc.normalize import NORMALIZE, PATTERNS
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def eval_result():
 @pytest.fixture
 def evaluate_raw():
     """Direct access to evaluate_raw function."""
-    from egg_calc import evaluate_raw
+    from eggcalc import evaluate_raw
     return evaluate_raw
 
 

@@ -76,5 +76,5 @@ def tool_name(expression: str) -> dict:
 python3 -m pytest tests/test_mcp_server.py -v
 
 # Test server manually via stdio
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' | python3 -m nl_calc --mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' | python3 -m eggcalc --mcp
 ```

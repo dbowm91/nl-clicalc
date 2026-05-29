@@ -75,7 +75,7 @@ If you discover a security vulnerability in clicalc, please report it responsibl
 When using clicalc in a web application:
 
 ```python
-from egg_calc import evaluate_with_timeout, TimeoutError, EvaluationError
+from eggcalc import evaluate_with_timeout, TimeoutError, EvaluationError
 
 try:
     result = evaluate_with_timeout(user_input, timeout=1.0)
@@ -89,7 +89,7 @@ except EvaluationError:
 
 ### Configuration File Security
 
-- `clicalc_config.py` is imported from the working directory
+- `eggcalc_config.py` is imported from the working directory
 - In production, ensure this file is not user-writable
 - Consider removing config loading in high-security environments
 
@@ -98,7 +98,7 @@ except EvaluationError:
 When registering custom functions:
 
 ```python
-from egg_calc import register_function
+from eggcalc import register_function
 
 # Only register during initialization
 # Never register functions based on user input

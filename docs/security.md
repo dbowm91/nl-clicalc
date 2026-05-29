@@ -7,7 +7,7 @@ eggcalc is designed with security as a priority. This page covers security featu
 **For any expression from an untrusted source (web requests, user input, etc.), always use `evaluate_with_timeout()`:**
 
 ```python
-from egg_calc import evaluate_with_timeout, TimeoutError
+from eggcalc import evaluate_with_timeout, TimeoutError
 
 # ALWAYS use timeout with untrusted input
 try:
@@ -108,7 +108,7 @@ x[0]                       # Blocked
 ### Example: Secure Endpoint
 
 ```python
-from egg_calc import PyCalcApp, EvaluationError, TimeoutError
+from eggcalc import PyCalcApp, EvaluationError, TimeoutError
 
 app = PyCalcApp()
 
@@ -129,7 +129,7 @@ def handle_user_input(expression: str):
 Only register functions during initialization:
 
 ```python
-from egg_calc import register_function
+from eggcalc import register_function
 
 # Safe: Register during startup
 def my_safe_function(x):
@@ -145,7 +145,7 @@ register_function("safe_double", my_safe_function)
 
 ### Config File Warning
 
-`clicalc_config.py` is imported from the working directory:
+`eggcalc_config.py` is imported from the working directory:
 
 ```python
 # In production, this file should:
@@ -160,7 +160,7 @@ In high-security environments, avoid config loading:
 
 ```python
 # Don't call load_user_config()
-from egg_calc import PyCalcApp
+from eggcalc import PyCalcApp
 
 app = PyCalcApp()
 # Manually configure instead
@@ -172,7 +172,7 @@ app.register_constant("safe_const", 42)
 ### 1. Always Use Timeouts
 
 ```python
-from egg_calc import evaluate_with_timeout
+from eggcalc import evaluate_with_timeout
 
 result = evaluate_with_timeout(user_input, timeout=1.0)
 ```
@@ -191,7 +191,7 @@ def validate_input(expr: str) -> str:
 ### 3. Use Instance Isolation
 
 ```python
-from egg_calc import PyCalcApp
+from eggcalc import PyCalcApp
 
 # Each user/tenant gets isolated instance
 app = PyCalcApp()
@@ -225,14 +225,14 @@ def safe_evaluate(expr: str):
 
 ## Unicode Text Security
 
-For applications that process user-provided text, the `nl_calc.exact` module provides tools to detect Unicode-based spoofing attacks:
+For applications that process user-provided text, the `eggcalc.exact` module provides tools to detect Unicode-based spoofing attacks:
 
 - **Confusables detection**: Identify characters from different scripts that look identical
 - **Invisible character detection**: Find zero-width spaces, BOM, bidi controls
 - **Mixed script detection**: Flag text with characters from multiple scripts
 
 ```python
-from nl_calc.exact.synthesis import inspect_text
+from eggcalc.exact.synthesis import inspect_text
 
 def validate_user_text(text: str) -> tuple[bool, list[str]]:
     """Check text for Unicode spoofing risks before storing."""

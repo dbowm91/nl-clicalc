@@ -33,7 +33,7 @@ class TestTextEqualFixtures:
         return rel_path, data
 
     def test_text_equal(self, fixture_data):
-        from egg_calc.exact import text_equal
+        from eggcalc.exact import text_equal
 
         rel_path, data = fixture_data
         for case in data["cases"]:
@@ -72,7 +72,7 @@ class TestMeasureTextFixtures:
         return rel_path, data
 
     def test_measure_text(self, fixture_data):
-        from egg_calc.exact import measure_text
+        from eggcalc.exact import measure_text
 
         rel_path, data = fixture_data
         for case in data["cases"]:
@@ -110,7 +110,7 @@ class TestInspectTextFixtures:
         return rel_path, data
 
     def test_inspect_text(self, fixture_data):
-        from egg_calc.exact import inspect_text
+        from eggcalc.exact import inspect_text
 
         rel_path, data = fixture_data
         for case in data["cases"]:
@@ -170,7 +170,7 @@ class TestTextReplaceCheckFixtures:
         return rel_path, data
 
     def test_text_replace_check(self, fixture_data):
-        from egg_calc.exact import text_replace_check
+        from eggcalc.exact import text_replace_check
 
         rel_path, data = fixture_data
         for case in data["cases"]:
@@ -240,7 +240,7 @@ class TestLineRangeExtractFixtures:
         return rel_path, data
 
     def test_line_range_extract(self, fixture_data):
-        from egg_calc.exact import line_range_extract
+        from eggcalc.exact import line_range_extract
 
         rel_path, data = fixture_data
         for case in data["cases"]:
@@ -291,7 +291,7 @@ class TestLineRangeCompareFixtures:
         return rel_path, data
 
     def test_line_range_compare(self, fixture_data):
-        from egg_calc.exact import line_range_compare
+        from eggcalc.exact import line_range_compare
 
         rel_path, data = fixture_data
         for case in data["cases"]:
@@ -348,7 +348,7 @@ class TestPathAnalyzeFixtures:
         return rel_path, data
 
     def test_path_analyze(self, fixture_data):
-        from egg_calc.exact import path_analyze
+        from eggcalc.exact import path_analyze
 
         rel_path, data = fixture_data
         for case in data["cases"]:
@@ -394,7 +394,7 @@ class TestPathNormalizeFixtures:
         return rel_path, data
 
     def test_path_normalize(self, fixture_data):
-        from egg_calc.exact import path_normalize
+        from eggcalc.exact import path_normalize
 
         rel_path, data = fixture_data
         for case in data["cases"]:

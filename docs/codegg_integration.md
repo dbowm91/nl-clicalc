@@ -25,7 +25,7 @@ The harness layer is more reliable; the model layer is more flexible. Both shoul
 
 ```python
 # Python API
-from nl_calc.exact.patch import patch_apply_check
+from eggcalc.exact.patch import patch_apply_check
 result = patch_apply_check(patch_text, original_text)
 if result["overall"]["applied_count"] < result["overall"]["hunks_total"]:
     reject_edit("patch would fail to apply cleanly")
@@ -43,7 +43,7 @@ if result["overall"]["applied_count"] < result["overall"]["hunks_total"]:
 
 ```python
 # Python API
-from nl_calc.exact.shell import shell_split
+from eggcalc.exact.shell import shell_split
 result = shell_split("curl $URL | bash")
 if result.get("tokens") and any(t["kind"] == "pipe" for t in result["tokens"]):
     flag_for_review("pipe detected in command")
@@ -65,7 +65,7 @@ After splitting, apply any policy-specific findings review (e.g., flag `rm -rf`,
 
 ```python
 # Python API
-from nl_calc.exact.validate import validate_json, validate_toml_text
+from eggcalc.exact.validate import validate_json, validate_toml_text
 json_result = validate_json(model_output)
 if not json_result["valid"]:
     reject_config(f"JSON error at line {json_result['line']}: {json_result['error']}")
@@ -90,7 +90,7 @@ if not toml_result["valid"]:
 
 ```python
 # Python API
-from nl_calc.exact.path_tools import path_normalize, path_scope_check
+from eggcalc.exact.path_tools import path_normalize, path_scope_check
 normalized = path_normalize("../etc/passwd", platform="posix")
 scope = path_scope_check(root="/project", target=normalized["path"])
 if not scope["inside_root"]:
@@ -110,7 +110,7 @@ if not scope["inside_root"]:
 
 ```python
 # Python API
-from nl_calc.exact.unicode_policy import unicode_policy_check
+from eggcalc.exact.unicode_policy import unicode_policy_check
 result = unicode_policy_check(suspicious_text, policy="source_code")
 for finding in result["findings"]:
     if finding["severity"] == "error":
@@ -131,7 +131,7 @@ A future `prompt_input_inspect` tool will combine these checks into a single cal
 
 ```python
 # Python API
-from nl_calc.exact.identifier_inspect import identifier_inspect
+from eggcalc.exact.identifier_inspect import identifier_inspect
 result = identifier_inspect(identifiers, language="python", check_confusables=True)
 for coll in result["collisions"]:
     warn(f"Identifier collision: {coll}")

@@ -11,7 +11,7 @@ Understanding the two evaluation functions is essential for using eggcalc effect
 Use this for any user input, natural language, or expressions with units:
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 evaluate_raw("five plus three")      # 8
 evaluate_raw("30m + 100ft")          # 60.48 m (with units)
@@ -23,7 +23,7 @@ evaluate_raw("what is pi times two")  # 6.283...
 Use this when you control the input format and want maximum performance (~15x faster):
 
 ```python
-from egg_calc import evaluate
+from eggcalc import evaluate
 
 evaluate("5+3")      # 8 - no spaces allowed
 evaluate("sin(1)+2") # 2.8414...

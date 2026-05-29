@@ -2,8 +2,8 @@
 
 import pytest
 
-from egg_calc import EvaluationError, UnitValue, evaluate
-from egg_calc.normalize import NORMALIZE, PATTERNS, check_if_number, run
+from eggcalc import EvaluationError, UnitValue, evaluate
+from eggcalc.normalize import NORMALIZE, PATTERNS, check_if_number, run
 
 
 class TestEvaluator:
@@ -160,7 +160,7 @@ class TestCLI:
 
     def test_help_flag(self):
         """Test that help flag works."""
-        from egg_calc.normalize import print_help
+        from eggcalc.normalize import print_help
         # Just verify it doesn't error
         print_help()
 
@@ -168,8 +168,8 @@ class TestCLI:
         """Test empty expression shows help."""
         import sys
 
-        from egg_calc.normalize import main
-        sys.argv = ["egg_calc"]
+        from eggcalc.normalize import main
+        sys.argv = ["eggcalc"]
         main()
 
 
@@ -270,21 +270,21 @@ class TestPyCalcApp:
 
     def test_basic_calculate(self):
         """Test basic calculation."""
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
         app = PyCalcApp()
         result = app.calculate("5 + 3")
         assert self._get_value(result) == 8
 
     def test_natural_language(self):
         """Test natural language input."""
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
         app = PyCalcApp()
         result = app.calculate("five plus three")
         assert self._get_value(result) == 8
 
     def test_caching(self):
         """Test that caching works."""
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
         app = PyCalcApp(cache_size=10)
 
         # First call
@@ -298,7 +298,7 @@ class TestPyCalcApp:
 
     def test_cache_clear(self):
         """Test cache clearing."""
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
         app = PyCalcApp()
         app.calculate("5 + 3")
         assert app.cache_size == 1
@@ -307,14 +307,14 @@ class TestPyCalcApp:
 
     def test_cache_disabled(self):
         """Test with caching disabled."""
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
         app = PyCalcApp(enable_cache=False)
         app.calculate("5 + 3")
         assert app.cache_size == 0
 
     def test_register_constant(self):
         """Test registering custom constant."""
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
         app = PyCalcApp()
         app.register_constant("myconst", 42)
         result = app.calculate("myconst")
@@ -322,7 +322,7 @@ class TestPyCalcApp:
 
     def test_register_function(self):
         """Test registering custom function."""
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
         app = PyCalcApp()
         app.register_function("double", lambda x: x * 2)
         result = app.calculate("double(5)")
@@ -330,7 +330,7 @@ class TestPyCalcApp:
 
     def test_instance_isolation_constants(self):
         """Test that instances have isolated constants."""
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
         app1 = PyCalcApp()
         app2 = PyCalcApp()
 
@@ -345,7 +345,7 @@ class TestPyCalcApp:
 
     def test_instance_isolation_functions(self):
         """Test that instances have isolated functions."""
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
         app1 = PyCalcApp()
         app2 = PyCalcApp()
 
@@ -360,7 +360,7 @@ class TestPyCalcApp:
 
     def test_unit_calculations(self):
         """Test unit calculations in PyCalcApp."""
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
         app = PyCalcApp()
         result = app.calculate("30m + 100ft")
         assert hasattr(result, 'unit') or 'm' in str(result)
@@ -379,7 +379,7 @@ class TestAsyncFunctions:
         """Test async evaluation."""
         import asyncio
 
-        from egg_calc import evaluate_async
+        from eggcalc import evaluate_async
 
         async def run_test():
             result = await evaluate_async("5 + 3")
@@ -388,11 +388,11 @@ class TestAsyncFunctions:
         result = asyncio.run(run_test())
         assert self._get_value(result) == 8
 
-    def test_nl_calc_app_async(self):
+    def test_eggcalc_app_async(self):
         """Test PyCalcApp async calculation."""
         import asyncio
 
-        from egg_calc import PyCalcApp
+        from eggcalc import PyCalcApp
 
         app = PyCalcApp()
 
@@ -415,7 +415,7 @@ class TestCaching:
 
     def test_evaluate_cached(self):
         """Test evaluate_cached function."""
-        from egg_calc import evaluate_cached
+        from eggcalc import evaluate_cached
 
         result = evaluate_cached("5 + 3")
         assert self._get_value(result) == 8
@@ -426,7 +426,7 @@ class TestCaching:
 
     def test_evaluate_cached_natural_language(self):
         """Test evaluate_cached with natural language."""
-        from egg_calc import evaluate_cached
+        from eggcalc import evaluate_cached
 
         result = evaluate_cached("five plus three")
         assert self._get_value(result) == 8
@@ -443,21 +443,21 @@ class TestTimeout:
 
     def test_evaluate_with_timeout_success(self):
         """Test evaluate_with_timeout with fast expression."""
-        from egg_calc import evaluate_with_timeout
+        from eggcalc import evaluate_with_timeout
 
         result = evaluate_with_timeout("5 + 3", timeout=1.0)
         assert self._get_value(result) == 8
 
     def test_evaluate_with_timeout_natural_language(self):
         """Test evaluate_with_timeout with natural language."""
-        from egg_calc import evaluate_with_timeout
+        from eggcalc import evaluate_with_timeout
 
         result = evaluate_with_timeout("five plus three", timeout=1.0)
         assert self._get_value(result) == 8
 
     def test_timeout_error_raised(self):
         """Test that TimeoutError can be raised."""
-        from egg_calc import TimeoutError
+        from eggcalc import TimeoutError
 
         # Just test that the exception class exists and is importable
         assert issubclass(TimeoutError, Exception)
@@ -468,7 +468,7 @@ class TestComplexNumbers:
 
     def test_imaginary_unit(self):
         """Test imaginary unit i."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         result = evaluate_raw("i * i")
         if hasattr(result, 'value'):
@@ -478,7 +478,7 @@ class TestComplexNumbers:
 
     def test_complex_literal(self):
         """Test complex literals."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         result = evaluate_raw("3 + 4i")
         if hasattr(result, 'value'):
@@ -488,7 +488,7 @@ class TestComplexNumbers:
 
     def test_sqrt_negative(self):
         """Test sqrt of negative number."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         result = evaluate_raw("sqrt(-1)")
         if hasattr(result, 'value'):
@@ -497,7 +497,7 @@ class TestComplexNumbers:
 
     def test_abs_complex(self):
         """Test abs of complex number."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         result = evaluate_raw("abs(3+4i)")
         if hasattr(result, 'value'):
@@ -506,7 +506,7 @@ class TestComplexNumbers:
 
     def test_conj(self):
         """Test complex conjugate."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         result = evaluate_raw("conj(3+4i)")
         if hasattr(result, 'value'):
@@ -526,40 +526,40 @@ class TestBitwise:
 
     def test_bitand(self):
         """Test bitwise AND."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert self._get_value(evaluate_raw("5 AND 3")) == 1
         assert self._get_value(evaluate_raw("5 & 3")) == 1
 
     def test_bitor(self):
         """Test bitwise OR."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert self._get_value(evaluate_raw("5 OR 3")) == 7
         assert self._get_value(evaluate_raw("5 | 3")) == 7
 
     def test_bitxor_word(self):
         """Test bitwise XOR using word."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert self._get_value(evaluate_raw("5 XOR 3")) == 6
 
     def test_bitnot(self):
         """Test bitwise NOT."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert self._get_value(evaluate_raw("~5")) == -6
 
     def test_shifts(self):
         """Test bit shifts."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert self._get_value(evaluate_raw("5 << 2")) == 20
         assert self._get_value(evaluate_raw("5 >> 1")) == 2
 
     def test_base_prefixes(self):
         """Test base prefixes."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert evaluate_raw("0xFF") == 255
         assert evaluate_raw("0b1010") == 10
@@ -571,21 +571,21 @@ class TestCombinatorics:
 
     def test_perm(self):
         """Test permutations."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert evaluate_raw("perm(5, 3)") == 60
         assert evaluate_raw("nPr(5, 3)") == 60
 
     def test_comb(self):
         """Test combinations."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert evaluate_raw("comb(5, 3)") == 10
         assert evaluate_raw("nCr(5, 3)") == 10
 
     def test_lcm(self):
         """Test LCM."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert evaluate_raw("lcm(12, 18)") == 36
         assert evaluate_raw("lcm(12, 18, 24)") == 72
@@ -596,21 +596,21 @@ class TestPrimes:
 
     def test_isprime(self):
         """Test prime check."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert evaluate_raw("isprime(17)") == True
         assert evaluate_raw("isprime(18)") == False
 
     def test_primefactors(self):
         """Test prime factorization."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         result = evaluate_raw("primefactors(84)")
         assert "2" in result and "3" in result and "7" in result
 
     def test_nextprime(self):
         """Test next prime."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert evaluate_raw("nextprime(17)") == 19
 
@@ -620,20 +620,20 @@ class TestStatistics:
 
     def test_median(self):
         """Test median."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert evaluate_raw("median(1, 2, 3, 4, 5)") == 3
         assert evaluate_raw("median(1, 2, 3, 4)") == 2.5
 
     def test_mode(self):
         """Test mode."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert evaluate_raw("mode(1, 2, 2, 3)") == 2
 
     def test_variance(self):
         """Test variance."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         result = evaluate_raw("variance(1, 2, 3, 4, 5)")
         assert abs(result - 2.0) < 1e-10
@@ -644,14 +644,14 @@ class TestPercentage:
 
     def test_percent_literal(self):
         """Test percentage literal."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert abs(evaluate_raw("50%") - 0.5) < 1e-10
         assert abs(evaluate_raw("25%") - 0.25) < 1e-10
 
     def test_percentof(self):
         """Test percentof function."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         assert evaluate_raw("percentof(20, 100)") == 20.0
 
@@ -661,7 +661,7 @@ class TestRandom:
 
     def test_random_range(self):
         """Test random is in range."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         evaluate_raw("seed(42)")
         result = evaluate_raw("random()")
@@ -669,7 +669,7 @@ class TestRandom:
 
     def test_randint_range(self):
         """Test randint is in range."""
-        from egg_calc import evaluate_raw
+        from eggcalc import evaluate_raw
 
         evaluate_raw("seed(42)")
         result = evaluate_raw("randint(1, 100)")
@@ -681,7 +681,7 @@ class TestMemory:
 
     def test_store_recall(self):
         """Test store and recall."""
-        from egg_calc import evaluate_raw, memory_clear
+        from eggcalc import evaluate_raw, memory_clear
 
         memory_clear()
         result = evaluate_raw("store(42)")
@@ -702,7 +702,7 @@ class TestVariables:
 
     def test_setvar_getvar(self):
         """Test setvar and getvar."""
-        from egg_calc import clearvars, evaluate_raw
+        from eggcalc import clearvars, evaluate_raw
 
         clearvars()
         result = evaluate_raw('setvar("x", 10)')
@@ -717,37 +717,37 @@ class TestPrefixedUnitConversions:
 
     def test_kilonewton_to_newton(self):
         """Test kN to N conversion factor is 1000.0."""
-        from egg_calc import get_conversion_factor
+        from eggcalc import get_conversion_factor
         result = get_conversion_factor("kN", "N")
         assert result == 1000.0
 
     def test_millivolt_to_volt(self):
         """Test mV to V conversion factor is 0.001."""
-        from egg_calc import get_conversion_factor
+        from eggcalc import get_conversion_factor
         result = get_conversion_factor("mV", "V")
         assert abs(result - 0.001) < 1e-10
 
     def test_milliamp_to_amp(self):
         """Test mA to A conversion factor is 0.001."""
-        from egg_calc import get_conversion_factor
+        from eggcalc import get_conversion_factor
         result = get_conversion_factor("mA", "A")
         assert abs(result - 0.001) < 1e-10
 
     def test_kilowatt_to_watt(self):
         """Test kW to W conversion factor is 1000.0."""
-        from egg_calc import get_conversion_factor
+        from eggcalc import get_conversion_factor
         result = get_conversion_factor("kW", "W")
         assert result == 1000.0
 
     def test_megabyte_to_byte(self):
         """Test MB to B conversion factor is 1048576.0."""
-        from egg_calc import get_conversion_factor
+        from eggcalc import get_conversion_factor
         result = get_conversion_factor("MB", "B")
         assert result == 1048576.0
 
     def test_kilometer_to_meter(self):
         """Test km to m conversion factor is 1000.0."""
-        from egg_calc import get_conversion_factor
+        from eggcalc import get_conversion_factor
         result = get_conversion_factor("km", "m")
         assert result == 1000.0
 
@@ -757,25 +757,25 @@ class TestTemperatureConversions:
 
     def test_fahrenheit_to_celsius_exact_freezing(self):
         """Test 32F to C equals exactly 0.0C."""
-        from egg_calc.units import convert_temperature
+        from eggcalc.units import convert_temperature
         result = convert_temperature(32.0, "F", "C")
         assert abs(result - 0.0) < 1e-9
 
     def test_fahrenheit_to_celsius_boiling(self):
         """Test 212F to C equals approximately 100.0C."""
-        from egg_calc.units import convert_temperature
+        from eggcalc.units import convert_temperature
         result = convert_temperature(212.0, "F", "C")
         assert abs(result - 100.0) < 1e-9
 
     def test_celsius_to_fahrenheit_freezing(self):
         """Test 0C to F equals exactly 32F."""
-        from egg_calc.units import convert_temperature
+        from eggcalc.units import convert_temperature
         result = convert_temperature(0.0, "C", "F")
         assert abs(result - 32.0) < 1e-9
 
     def test_celsius_to_fahrenheit_boiling(self):
         """Test 100C to F equals approximately 212F."""
-        from egg_calc.units import convert_temperature
+        from eggcalc.units import convert_temperature
         result = convert_temperature(100.0, "C", "F")
         assert abs(result - 212.0) < 1e-9
 
@@ -785,7 +785,7 @@ class TestUnicodeScriptOther:
 
     def test_digits_return_other(self):
         """Test that ASCII digits return 'Other'."""
-        from egg_calc.exact import unicode_script
+        from eggcalc.exact import unicode_script
         assert unicode_script("0") == "Other"
         assert unicode_script("1") == "Other"
         assert unicode_script("5") == "Other"
@@ -793,7 +793,7 @@ class TestUnicodeScriptOther:
 
     def test_punctuation_return_other(self):
         """Test that ASCII punctuation returns 'Other'."""
-        from egg_calc.exact import unicode_script
+        from eggcalc.exact import unicode_script
         assert unicode_script(".") == "Other"
         assert unicode_script(",") == "Other"
         assert unicode_script("!") == "Other"
@@ -806,12 +806,12 @@ class TestUnicodeScriptOther:
 
     def test_space_returns_other(self):
         """Test that space returns 'Other'."""
-        from egg_calc.exact import unicode_script
+        from eggcalc.exact import unicode_script
         assert unicode_script(" ") == "Other"
 
     def test_math_symbols_return_other(self):
         """Test that common math symbols return 'Other'."""
-        from egg_calc.exact import unicode_script
+        from eggcalc.exact import unicode_script
         assert unicode_script("+") == "Other"
         assert unicode_script("=") == "Other"
         assert unicode_script("*") == "Other"

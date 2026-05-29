@@ -17,7 +17,7 @@ Guide agents through systematic architecture document review against implementat
 cat architecture/<module>.md
 
 # Read corresponding implementation
-cat nl_calc/<module>.py
+cat eggcalc/<module>.py
 
 # List all architecture docs
 ls architecture/

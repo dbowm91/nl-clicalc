@@ -39,7 +39,7 @@ A natural language math expression calculator that parses expressions in English
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        CLI / API                                │
-│                   (nl_calc/__main__.py)                         │
+│                   (eggcalc/__main__.py)                         │
 └────────────────────────────────────┬────────────────────────────┘
                                      │
 ┌────────────────────────────────────▼────────────────────────────┐
@@ -80,7 +80,7 @@ A natural language math expression calculator that parses expressions in English
 
 ### [normalize.py](normalize.md) — Natural Language Processing
 
-**File:** `nl_calc/normalize.py`
+**File:** `eggcalc/normalize.py`
 
 Converts natural language expressions to Python syntax.
 
@@ -101,7 +101,7 @@ Converts natural language expressions to Python syntax.
 
 ### [evaluator.py](evaluator.md) — AST-Based Expression Evaluation
 
-**File:** `nl_calc/evaluator.py`
+**File:** `eggcalc/evaluator.py`
 
 Safely evaluates mathematical expressions using Python's AST module (NOT `eval()`).
 
@@ -124,7 +124,7 @@ Safely evaluates mathematical expressions using Python's AST module (NOT `eval()
 
 ### [units.py](units.md) — Unit Definitions and Conversions
 
-**File:** `nl_calc/units.py`
+**File:** `eggcalc/units.py`
 
 Provides comprehensive unit conversion support.
 
@@ -149,9 +149,9 @@ Provides comprehensive unit conversion support.
 
 ### [CLI Entry Point](cli.md)
 
-**File:** `nl_calc/__main__.py`
+**File:** `eggcalc/__main__.py`
 
-Entry point for `python -m nl_calc`. Sets up `sys.path` and delegates to `normalize.main()`, which handles CLI parsing, interactive REPL, and MCP server mode.
+Entry point for `python -m eggcalc`. Sets up `sys.path` and delegates to `normalize.main()`, which handles CLI parsing, interactive REPL, and MCP server mode.
 
 **CLI documentation:** [cli.md](cli.md)
 
@@ -162,7 +162,7 @@ Entry point for `python -m nl_calc`. Sets up `sys.path` and delegates to `normal
 Low-level deterministic Unicode text analysis tools. These modules are **independent** and **testable** without semantic interpretation.
 
 ```
-nl_calc/exact/
+eggcalc/exact/
 ├── __init__.py       # Public API re-exports
 ├── primitives.py     # UTF-8, codepoints, normalization, invisibles
 ├── unicode_tools.py  # Script detection, confusables
@@ -179,7 +179,7 @@ nl_calc/exact/
 
 ### [primitives.py](primitives.md)
 
-**File:** `nl_calc/exact/primitives.py`
+**File:** `eggcalc/exact/primitives.py`
 
 Core text primitives built on Python's `unicodedata` module.
 
@@ -203,7 +203,7 @@ Core text primitives built on Python's `unicodedata` module.
 
 ### [unicode_tools.py](unicode_tools.md)
 
-**File:** `nl_calc/exact/unicode_tools.py`
+**File:** `eggcalc/exact/unicode_tools.py`
 
 Unicode script detection and confusable character identification.
 
@@ -223,7 +223,7 @@ Unicode script detection and confusable character identification.
 
 ### [measure.py](measure.md)
 
-**File:** `nl_calc/exact/measure.py`
+**File:** `eggcalc/exact/measure.py`
 
 Text metrics by line, word, and character category.
 
@@ -239,7 +239,7 @@ Text metrics by line, word, and character category.
 
 ### [diff.py](diff.md)
 
-**File:** `nl_calc/exact/diff.py`
+**File:** `eggcalc/exact/diff.py`
 
 String comparison algorithms.
 
@@ -257,7 +257,7 @@ String comparison algorithms.
 
 ### [validate.py](validate.md)
 
-**File:** `nl_calc/exact/validate.py`
+**File:** `eggcalc/exact/validate.py`
 
 Format validation for JSON, brackets, and regex.
 
@@ -273,7 +273,7 @@ Format validation for JSON, brackets, and regex.
 
 ### [synthesis.py](synthesis.md)
 
-**File:** `nl_calc/exact/synthesis.py`
+**File:** `eggcalc/exact/synthesis.py`
 
 Higher-level text analysis combining primitives.
 
@@ -292,7 +292,7 @@ Higher-level text analysis combining primitives.
 
 ### [confusables.py](confusables.md)
 
-**File:** `nl_calc/exact/confusables.py`
+**File:** `eggcalc/exact/confusables.py`
 
 Auto-generated Unicode confusables table (~180KB, ~6580 lines) from UTS #39.
 
@@ -307,7 +307,7 @@ Maps confusable characters for homoglyph attack detection.
 MCP server for AI agent tool access. Provides stdio-based interface to exact/ tools.
 
 ```
-nl_calc/mcp/
+eggcalc/mcp/
 ├── __init__.py   # Package exports
 ├── schemas.py    # Tool input/output schemas
 ├── tools.py      # Tool implementations
@@ -320,7 +320,7 @@ nl_calc/mcp/
 
 ### schemas.py
 
-**File:** `nl_calc/mcp/schemas.py`
+**File:** `eggcalc/mcp/schemas.py`
 
 JSON schemas for MCP tools and error envelope definitions.
 
@@ -342,7 +342,7 @@ JSON schemas for MCP tools and error envelope definitions.
 
 ### tools.py
 
-**File:** `nl_calc/mcp/tools.py`
+**File:** `eggcalc/mcp/tools.py`
 
 Tool implementations wrapping exact/ functions with error handling, sanitization, and response envelopes.
 
@@ -366,7 +366,7 @@ Tool implementations wrapping exact/ functions with error handling, sanitization
 
 ### server.py
 
-**File:** `nl_calc/mcp/server.py`
+**File:** `eggcalc/mcp/server.py`
 
 stdio-based JSON-RPC 2.0 server implementation.
 
@@ -385,7 +385,7 @@ stdio-based JSON-RPC 2.0 server implementation.
 
 ### [build_single.py](../build_single.py)
 
-Combines all modules into a single `nl_calc.py` file for portability.
+Combines all modules into a single `eggcalc.py` file for portability.
 
 **Module groups:**
 - `MODULES_CALC`: units, evaluator, normalize
@@ -396,7 +396,7 @@ Combines all modules into a single `nl_calc.py` file for portability.
 
 ### [install.py](../install.py)
 
-Builds and installs `nl_calc.py` to `~/.local/bin/calc`.
+Builds and installs `eggcalc.py` to `~/.local/bin/calc`.
 
 ```bash
 python install.py --install     # Install
@@ -482,7 +482,7 @@ normalize.py
 evaluator.py
     └── units (UnitValue, UNIT_ALIASES, convert_temperature)
 
-units.py (no dependencies on other nl_calc modules)
+units.py (no dependencies on other eggcalc modules)
 
 exact/
     ├── primitives.py (no dependencies)
@@ -529,15 +529,15 @@ Detailed review documents for focused code review:
 ### CLI Usage
 
 ```bash
-python -m nl_calc "five plus three"
-python -m nl_calc "30m + 100ft"
-python -m nl_calc -i  # Interactive REPL
+python -m eggcalc "five plus three"
+python -m eggcalc "30m + 100ft"
+python -m eggcalc -i  # Interactive REPL
 ```
 
 ### Library Usage
 
 ```python
-from nl_calc import evaluate, run, UnitValue
+from eggcalc import evaluate, run, UnitValue
 
 # Direct math (valid Python syntax)
 evaluate("5 + 3")  # → 8
@@ -552,5 +552,5 @@ run("30m + 100ft", NORMALIZE, PATTERNS)  # → UnitValue(60.48, "m")
 ### MCP Server
 
 ```bash
-python nl_calc.py --mcp
+python eggcalc.py --mcp
 ```

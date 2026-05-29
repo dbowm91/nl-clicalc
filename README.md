@@ -45,7 +45,7 @@ pip install -e .
 Or run directly:
 
 ```bash
-python -m egg_calc "five plus two"
+python -m eggcalc "five plus two"
 ```
 
 ## Usage
@@ -130,14 +130,14 @@ eggcalc can run as an MCP server, exposing deterministic text, JSON, validation,
 calc --mcp
 ```
 
-**39 tools** across 10 categories (math, text, json, validation, regex, list, path, identifier, version, toml). All results are deterministic - same input always produces the same output.
+**59 tools** across 15 categories (math, text, json, validation, regex, list, path, identifier, shell, markdown, config, version, toml, cargo, unicode). All results are deterministic - same input always produces the same output.
 
 For the full tool catalog with arguments, return values, and tiers, see [docs/mcp.md](docs/mcp.md).
 
 ### As a Python Module
 
 ```python
-from egg_calc import evaluate_raw, evaluate
+from eggcalc import evaluate_raw, evaluate
 
 # Basic math (use evaluate_raw for expressions with spaces/natural language)
 result = evaluate_raw("5 + 3")
@@ -159,7 +159,7 @@ print(result)  # 8
 ### Webapp Usage (Optimized for Long-Running Applications)
 
 ```python
-from egg_calc import PyCalcApp
+from eggcalc import PyCalcApp
 
 # Create app instance with caching (recommended for webapps)
 app = PyCalcApp(cache_size=1000)
@@ -184,7 +184,7 @@ app.clear_cache()
 ### Full API Reference
 
 ```python
-from egg_calc import (
+from eggcalc import (
     # Core evaluation
     evaluate,              # Pre-normalized expressions (no spaces)
     evaluate_raw,         # Full pipeline with natural language support
@@ -194,7 +194,7 @@ from egg_calc import (
     # Configuration
     register_constant,    # Add custom constants (thread-safe)
     register_function,   # Add custom functions (thread-safe)
-    load_user_config,    # Load config from egg_calc_config.py
+    load_user_config,    # Load config from eggcalc_config.py (or eggcalc_config.py)
     
     # Webapp wrapper
     PyCalcApp,            # Thread-safe wrapper with caching
@@ -252,7 +252,7 @@ Evaluate a pre-normalized expression (no spaces, no natural language).
 Use this for maximum performance when you control the input format.
 
 ```python
-from egg_calc import evaluate
+from eggcalc import evaluate
 result = evaluate("5+3")  # 8 (note: no spaces)
 ```
 
@@ -261,7 +261,7 @@ Evaluate a raw expression with spaces and/or natural language.
 This is the main function for user input.
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 result = evaluate_raw("5 + 3")        # 8
 result = evaluate_raw("five plus 3")  # 8
 ```
@@ -270,7 +270,7 @@ result = evaluate_raw("five plus 3")  # 8
 Like `evaluate_raw()` but with LRU caching. Best for repeated identical expressions.
 
 ```python
-from egg_calc import evaluate_cached
+from eggcalc import evaluate_cached
 result = evaluate_cached("5 + 3")  # Cached after first call
 ```
 
@@ -278,7 +278,7 @@ result = evaluate_cached("5 + 3")  # Cached after first call
 Async version of `evaluate_raw()`. For async web frameworks.
 
 ```python
-from egg_calc import evaluate_async
+from eggcalc import evaluate_async
 result = await evaluate_async("5 + 3")
 ```
 
@@ -286,7 +286,7 @@ result = await evaluate_async("5 + 3")
 Evaluate with timeout protection. **Recommended for untrusted input.**
 
 ```python
-from egg_calc import evaluate_with_timeout, TimeoutError
+from eggcalc import evaluate_with_timeout, TimeoutError
 
 try:
     result = evaluate_with_timeout("2 ** 1000000", timeout=1.0)
@@ -299,7 +299,7 @@ except TimeoutError:
 Thread-safe wrapper optimized for webapps with caching and instance isolation.
 
 ```python
-from egg_calc import PyCalcApp
+from eggcalc import PyCalcApp
 
 app = PyCalcApp(cache_size=1000)  # LRU cache with 1000 entries
 
@@ -324,7 +324,7 @@ print(app.cache_size)
 Register a custom constant globally. Thread-safe.
 
 ```python
-from egg_calc import register_constant
+from eggcalc import register_constant
 register_constant("earth_radius", 6371)
 result = evaluate_raw("earth_radius")  # 6371
 ```
@@ -333,7 +333,7 @@ result = evaluate_raw("earth_radius")  # 6371
 Register a custom function globally. Thread-safe. **Only call during initialization.**
 
 ```python
-from egg_calc import register_function
+from eggcalc import register_function
 register_function("square", lambda x: x ** 2)
 result = evaluate_raw("square(5)")  # 25
 ```
@@ -344,7 +344,7 @@ result = evaluate_raw("square(5)")  # 25
 Raised when an expression is invalid or contains unsupported operations.
 
 ```python
-from egg_calc import evaluate_raw, EvaluationError
+from eggcalc import evaluate_raw, EvaluationError
 
 try:
     result = evaluate_raw("import os")
@@ -356,7 +356,7 @@ except EvaluationError as e:
 Raised when evaluation exceeds the timeout in `evaluate_with_timeout()`.
 
 ```python
-from egg_calc import evaluate_with_timeout, TimeoutError
+from eggcalc import evaluate_with_timeout, TimeoutError
 
 try:
     result = evaluate_with_timeout("slow_expression", timeout=1.0)
@@ -370,7 +370,7 @@ except TimeoutError:
 Represents a numeric value with optional units.
 
 ```python
-from egg_calc import UnitValue
+from eggcalc import UnitValue
 
 uv = UnitValue(5, "m")
 print(uv)        # "5 m"
@@ -384,7 +384,7 @@ print(uv.unit)   # "m"
 Normalize a unit to its canonical form.
 
 ```python
-from egg_calc import normalize_unit
+from eggcalc import normalize_unit
 normalize_unit("meters")  # "m"
 normalize_unit("ft")      # "ft"
 ```
@@ -393,7 +393,7 @@ normalize_unit("ft")      # "ft"
 Get conversion factor between two units.
 
 ```python
-from egg_calc import get_conversion_factor
+from eggcalc import get_conversion_factor
 get_conversion_factor("ft", "m")  # 0.3048
 ```
 
@@ -401,7 +401,7 @@ get_conversion_factor("ft", "m")  # 0.3048
 Get list of all supported units.
 
 ```python
-from egg_calc import get_all_units
+from eggcalc import get_all_units
 units = get_all_units()  # ['A', 'B', 'BTU', 'C', 'F', 'GB', ...]
 ```
 
@@ -409,7 +409,7 @@ units = get_all_units()  # ['A', 'B', 'BTU', 'C', 'F', 'GB', ...]
 Check if text represents a unit.
 
 ```python
-from egg_calc import is_unit
+from eggcalc import is_unit
 is_unit("m")   # True
 is_unit("xyz") # False
 ```
@@ -489,7 +489,7 @@ Watts (W), kilowatts (kW), megawatts (MW), gigawatts (GW), horsepower (hp)
 Support for complex number arithmetic using `i` or `j` notation:
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 # Complex literals
 evaluate_raw("3 + 4i")      # (3+4j)
@@ -512,7 +512,7 @@ evaluate_raw("e^(i*pi)")    # (-1+0j)
 Full support for bitwise operations:
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 # Bitwise operators
 evaluate_raw("5 AND 3")     # 1 (0b101 & 0b011)
@@ -538,7 +538,7 @@ evaluate_raw("oct(511)")    # '0o777'
 Permutations and combinations:
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 # Permutations P(n,r) = n!/(n-r)!
 evaluate_raw("perm(5, 3)")  # 60
@@ -559,7 +559,7 @@ evaluate_raw("gcd(12, 18)")     # 6
 Prime number utilities:
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 # Check if prime
 evaluate_raw("isprime(17)")       # True
@@ -578,7 +578,7 @@ evaluate_raw("prevprime(20)")     # 19
 Extended statistical operations:
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 # Basic statistics
 evaluate_raw("mean(1, 2, 3, 4, 5)")        # 3.0
@@ -599,7 +599,7 @@ evaluate_raw("max(3, 1, 4, 1, 5)")         # 5
 Random number generation with seeding:
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 # Seed for reproducibility
 evaluate_raw("seed(42)")
@@ -619,7 +619,7 @@ evaluate_raw("gauss(100, 15)")   # Normal (μ=100, σ=15)
 Percentage calculations:
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 # Percentage literals
 evaluate_raw("50%")              # 0.5
@@ -635,7 +635,7 @@ evaluate_raw("aspercent(25, 100)")   # 25.0 (25 as % of 100)
 Calculator-style memory operations:
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 # Store and recall
 evaluate_raw("store(42)")        # Store 42 in memory
@@ -655,7 +655,7 @@ evaluate_raw("MC")               # Clears memory
 User-defined variables:
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 # Set and use variables
 evaluate_raw('setvar("x", 10)')  # 10
@@ -673,7 +673,7 @@ evaluate_raw("clearvars()")      # Deletes all variables
 ### Utility Functions
 
 ```python
-from egg_calc import evaluate_raw
+from eggcalc import evaluate_raw
 
 # Rounding and signs
 evaluate_raw("round(3.14159, 2)")    # 3.14
@@ -690,10 +690,10 @@ evaluate_raw("hypot(3, 4)")          # 5.0
 
 ## Custom Configuration
 
-Create a `clicalc_config.py` file to add custom constants, functions, and units:
+Create a `eggcalc_config.py` file to add custom constants, functions, and units:
 
 ```python
-# clicalc_config.py
+# eggcalc_config.py
 
 # Custom constants
 CUSTOM_CONSTANTS = {
@@ -753,10 +753,15 @@ eggcalc/
 │   ├── __main__.py      # CLI entry point
 │   ├── units.py         # Unit definitions and conversions
 │   ├── evaluator.py     # AST-based expression evaluator
-│   └── normalize.py     # Main parsing and normalization
+│   ├── normalize.py     # Main parsing and normalization
+│   ├── exact/           # Deterministic text analysis tools
+│   └── mcp/             # MCP server for AI agent access
 ├── tests/
-│   ├── test_egg_calc.py  # Test suite
-│   └── test_security_fuzz.py  # Security fuzz tests
+│   ├── test_clicalc.py  # Core functional tests
+│   ├── test_security_fuzz.py  # Security fuzz tests
+│   ├── test_exact.py    # Exact module tests
+│   ├── test_mcp_server.py # MCP server tests
+│   └── ...              # Additional test files
 ├── pyproject.toml       # Package configuration
 └── README.md            # This file
 ```
@@ -785,7 +790,7 @@ Built-in protections against DoS attacks:
 These can be imported and modified:
 
 ```python
-from egg_calc import MAX_INPUT_LENGTH, MAX_NESTING_DEPTH, MAX_EXPONENT
+from eggcalc import MAX_INPUT_LENGTH, MAX_NESTING_DEPTH, MAX_EXPONENT
 
 # Increase limits (use with caution for security)
 MAX_EXPONENT = 100000
@@ -802,14 +807,14 @@ MAX_EXPONENT = 100000
 - `register_constant()` - Safe to use, values are validated
 
 **Config file warning:**
-- `clicalc_config.py` is imported from the working directory
+- `eggcalc_config.py` is imported from the working directory
 - For production, ensure this file is not user-writable
 - Consider removing config loading in high-security environments
 
 ### Example: Secure Webapp Usage
 
 ```python
-from egg_calc import PyCalcApp, EvaluationError
+from eggcalc import PyCalcApp, EvaluationError
 
 app = PyCalcApp(cache_size=1000)
 

@@ -1,6 +1,6 @@
 """Tests for text_replace_check tool."""
 
-from egg_calc.exact.synthesis import text_replace_check
+from eggcalc.exact.synthesis import text_replace_check
 
 
 class TestTextReplaceCheckBasic:

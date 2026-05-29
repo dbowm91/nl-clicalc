@@ -10,6 +10,7 @@ eggcalc includes mathematical and physical constants.
 | `e` | 2.71828... | Euler's number |
 | `tau` | 6.28318... | 2π |
 | `i` | 1j | Imaginary unit |
+| `j` | 1j | Imaginary unit (alias for `i`) |
 | `inf` | infinity | Positive infinity |
 | `nan` | NaN | Not a number |
 
@@ -35,8 +36,8 @@ calc "e^(i*pi)"       # -1+0j
 | `epsilon0` | ε₀ | 8.854e-12 | F/m |
 | `mu0` | μ₀ | 1.257e-6 | H/m |
 | `G` | G | 6.674e-11 | m³/(kg·s²) |
-| `g` | g | 9.807 | m/s² |
-| `R` | R | 8.314 | J/(mol·K) |
+| `g` | g | 9.80665 | m/s² |
+| `r` | R | 8.314462618 | J/(mol·K) |
 | `faraday` | F | 96485 | C/mol |
 | `stefan` | σ | 5.670e-8 | W/(m²·K⁴) |
 | `rydberg` | R∞ | 1.097e7 | m⁻¹ |
@@ -51,17 +52,19 @@ calc "e^(i*pi)"       # -1+0j
 
 | Constant | Aliases |
 |----------|---------|
-| `avogadro` | avogadros, avogadro number |
-| `boltzmann` | boltzmann constant |
-| `planck` | planck constant |
+| `avogadro` | na, avogadros, avogadro number |
+| `boltzmann` | k, boltzmann constant |
+| `planck` | h, planck constant, planckconstant |
 | `c` | speed of light, speed of light in vacuum, c zero |
 | `echarge` | elementary charge, e charge |
-| `amu` | atomic mass, atomic mass unit |
+| `amu` | u, atomic mass, atomic mass unit, atomicmassunit |
 | `epsilon0` | vacuum permittivity, permittivity of free space |
 | `mu0` | vacuum permeability, permeability of free space, magnetic constant |
 | `G` | gravitational constant, newton constant, big g |
 | `g` | gravity, standard gravity, earth gravity |
-| `R` | gas constant, ideal gas constant, molar gas constant |
+| `r` | gas constant, ideal gas constant, molar gas constant, gasconstant, idealgasconstant |
+| `faraday` | f, faraday constant, faradayconstant |
+| `hbar` | reducedplanck |
 | `me` | electron mass |
 | `mp` | proton mass |
 | `mn` | neutron mass |
@@ -111,10 +114,10 @@ calc "five times avogadro"
 
 ## Custom Constants
 
-Define custom constants in `clicalc_config.py`:
+Define custom constants in `eggcalc_config.py`:
 
 ```python
-# clicalc_config.py
+# eggcalc_config.py
 CUSTOM_CONSTANTS = {
     "earth_radius": 6371,      # km
     "solar_mass": 1.989e30,    # kg
@@ -135,7 +138,7 @@ calc "2 * pi * earth_radius"
 ## Python API
 
 ```python
-from egg_calc import evaluate_raw, register_constant
+from eggcalc import evaluate_raw, register_constant
 
 # Use constants
 result = evaluate_raw("pi * 2")

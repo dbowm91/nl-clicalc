@@ -11,7 +11,7 @@ Tests for:
 
 import pytest
 
-from egg_calc.exact import (
+from eggcalc.exact import (
     casefold_text,
     char_category_metrics,
     check_brackets,
@@ -188,21 +188,21 @@ class TestPrimitives:
         assert "world" in result
 
     def test_is_extended_pictographic_cjk_not_emoji(self):
-        from egg_calc.exact.primitives import _is_extended_pictographic
+        from eggcalc.exact.primitives import _is_extended_pictographic
         assert not _is_extended_pictographic('\u4e00')  # CJK character '一'
         assert not _is_extended_pictographic('\u4e2d')  # CJK character '中'
         assert not _is_extended_pictographic('\u0410')  # Cyrillic 'А'
         assert not _is_extended_pictographic('\u0627')  # Arabic 'ا'
 
     def test_is_extend_char_zwsp(self):
-        from egg_calc.exact.primitives import _is_extend_char
+        from eggcalc.exact.primitives import _is_extend_char
         assert _is_extend_char('\u200b')  # ZWSP
         assert _is_extend_char('\u200c')  # ZWNJ
         assert not _is_extend_char('\u200d')  # ZWJ (not included)
         assert not _is_extend_char('\u200e')  # LRM (not included)
 
     def test_is_extend_char_combining(self):
-        from egg_calc.exact.primitives import _is_extend_char
+        from eggcalc.exact.primitives import _is_extend_char
         assert _is_extend_char('\u0301')  # combining acute accent (Mn)
         assert _is_extend_char('\u0302')  # combining circumflex (Mn)
         assert _is_extend_char('\ufe00')  # variation selector 1

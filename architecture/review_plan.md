@@ -17,21 +17,21 @@ The following architecture documents (15 total) will be reviewed, excluding `rev
 
 | Module | Document | Code Location |
 |--------|----------|---------------|
-| API | `api.md` | `nl_calc/__init__.py`, `nl_calc/evaluator.py` |
-| CLI | `cli.md` | `nl_calc/__main__.py` |
-| Confusables | `confusables.md` | `nl_calc/exact/confusables.py` |
-| Diff | `diff.md` | `nl_calc/exact/diff.py` |
-| Evaluator | `evaluator.md` | `nl_calc/evaluator.py` |
-| Exact | `exact.md` | `nl_calc/exact/` (overview) |
-| MCP | `mcp.md` | `nl_calc/mcp/` |
-| Measure | `measure.md` | `nl_calc/exact/measure.py` |
-| Normalize | `normalize.md` | `nl_calc/normalize.py` |
+| API | `api.md` | `eggcalc/__init__.py`, `eggcalc/evaluator.py` |
+| CLI | `cli.md` | `eggcalc/__main__.py` |
+| Confusables | `confusables.md` | `eggcalc/exact/confusables.py` |
+| Diff | `diff.md` | `eggcalc/exact/diff.py` |
+| Evaluator | `evaluator.md` | `eggcalc/evaluator.py` |
+| Exact | `exact.md` | `eggcalc/exact/` (overview) |
+| MCP | `mcp.md` | `eggcalc/mcp/` |
+| Measure | `measure.md` | `eggcalc/exact/measure.py` |
+| Normalize | `normalize.md` | `eggcalc/normalize.py` |
 | Overview | `overview.md` | Entire codebase |
-| Primitives | `primitives.md` | `nl_calc/exact/primitives.py` |
-| Synthesis | `synthesis.md` | `nl_calc/exact/synthesis.py` |
-| Unicode Tools | `unicode_tools.md` | `nl_calc/exact/unicode_tools.py` |
-| Units | `units.md` | `nl_calc/units.py` |
-| Validate | `validate.md` | `nl_calc/exact/validate.py` |
+| Primitives | `primitives.md` | `eggcalc/exact/primitives.py` |
+| Synthesis | `synthesis.md` | `eggcalc/exact/synthesis.py` |
+| Unicode Tools | `unicode_tools.md` | `eggcalc/exact/unicode_tools.py` |
+| Units | `units.md` | `eggcalc/units.py` |
+| Validate | `validate.md` | `eggcalc/exact/validate.py` |
 
 ## Subagent Tasks
 

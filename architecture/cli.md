@@ -5,7 +5,7 @@
 `__main__.py` is a bootstrap module that imports `main()` from `normalize.py` and delegates all CLI parsing and execution to it:
 
 ```bash
-python -m nl_calc "five plus two"
+python -m eggcalc "five plus two"
 ```
 
 ## Main Function

@@ -12,7 +12,7 @@ All trigonometric functions handle both real and complex arguments:
 | `cos(x)` | Cosine (complex-aware) |
 | `tan(x)` | Tangent (complex-aware) |
 | `asin(x)` | Arcsine (complex-aware) |
-| `acos(x)` | Arcsine (complex-aware) |
+| `acos(x)` | Arccosine (complex-aware) |
 | `atan(x)` | Arctangent (complex-aware) |
 | `atan2(y, x)` | Arctangent of y/x |
 
@@ -45,6 +45,7 @@ calc "log(-1)"        # 3.14159...j (πi)
 | Function | Description |
 |----------|-------------|
 | `log(x)` | Natural logarithm |
+| `ln(x)` | Natural logarithm (alias for `log`) |
 | `log10(x)` | Base-10 logarithm |
 | `log2(x)` | Base-2 logarithm |
 | `log1p(x)` | log(1+x) |
@@ -95,6 +96,7 @@ calc "round(3.14159, 2)"  # 3.14
 | Function | Description |
 |----------|-------------|
 | `factorial(n)` | n! |
+| `fact(n)` | n! (alias for `factorial`) |
 | `gcd(a, b, ...)` | Greatest common divisor |
 | `lcm(a, b, ...)` | Least common multiple |
 | `perm(n, r)` | Permutations P(n,r) |
@@ -139,6 +141,8 @@ calc "conj(3+4i)"     # 3-4j
 | `variance(x, ...)` | Population variance |
 | `var(x, ...)` | Population variance (alias) |
 | `variance_sample(x, ...)` | Sample variance (n-1) |
+| `vars(x, ...)` | Sample variance (alias for `variance_sample`) |
+| `var_sample(x, ...)` | Sample variance (alias for `variance_sample`) |
 | `sum(x, ...)` | Sum |
 | `min(x, ...)` | Minimum |
 | `max(x, ...)` | Maximum |
@@ -156,8 +160,11 @@ calc "std(1, 2, 3, 4, 5)"       # 1.414...
 | `isprime(n)` | Check if prime |
 | `is_prime(n)` | Check if prime (alias) |
 | `primefactors(n)` | Prime factorization |
+| `prime_factors(n)` | Prime factorization (alias for `primefactors`) |
 | `nextprime(n)` | Next prime after n |
+| `next_prime(n)` | Next prime after n (alias for `nextprime`) |
 | `prevprime(n)` | Previous prime before n |
+| `prev_prime(n)` | Previous prime before n (alias for `prevprime`) |
 
 ```bash
 calc "isprime(17)"    # True
@@ -242,7 +249,9 @@ calc "x + 5"          # 15
 | `clamp(x, lo, hi)` | Clamp value in range [lo, hi] |
 | `hypot(x, y, ...)` | Hypotenuse sqrt(x^2 + y^2 + ...) |
 | `percentof(p, total)` | p% of total (p/100 * total) |
+| `percent_of(p, total)` | p% of total (alias for `percentof`) |
 | `aspercent(x, total)` | x as percentage of total (x/total * 100) |
+| `as_percent(x, total)` | x as percentage of total (alias for `aspercent`) |
 | `temp(value, from_unit, to_unit)` | Temperature conversion |
 | `degrees(x)` | Radians to degrees |
 | `radians(x)` | Degrees to radians |

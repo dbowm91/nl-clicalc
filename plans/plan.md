@@ -58,7 +58,7 @@ See git history for the detailed implementation.
 
 3. **For documentation fixes:** Always verify against the actual code before updating docs.
 
-4. **Build compatibility:** All code changes must work when assembled by build_single.py into nl_calc.py
+4. **Build compatibility:** All code changes must work when assembled by build_single.py into eggcalc.py
 
 5. **Test count:** As of 2026-05-29, 631 tests pass.
 

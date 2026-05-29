@@ -1,8 +1,8 @@
 # MCP Tool Inventory
 
-Canonical reference for all MCP tools exposed by `nl_calc.mcp.server.TOOL_HANDLERS`.
+Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLERS`.
 
-**Total: 56 tools**
+**Total: 59 tools**
 
 ## Inventory Table
 
@@ -32,40 +32,41 @@ Canonical reference for all MCP tools exposed by `nl_calc.mcp.server.TOOL_HANDLE
 | 22 | `math_eval` | math | 0 | yes | yes | yes | yes | Evaluate math expressions with NL/unit support |
 | 23 | `patch_apply_check` | patch | 2 | yes | no | yes | yes | Validate and simulate unified diff application |
 | 24 | `patch_summary` | patch | 2 | yes | no | yes | yes | Summarize unified diff without applying |
-| 25 | `path_analyze` | path | 2 | yes | no | yes | yes | Lexical path analysis (no filesystem) |
-| 26 | `path_compare` | path | 2 | yes | no | yes | yes | Compare paths under normalization rules |
-| 27 | `path_normalize` | path | 0 | yes | no | yes | yes | Normalize path with platform semantics |
-| 28 | `path_scope_check` | path | 2 | yes | no | yes | yes | Lexical scope check (no symlink resolution) |
-| 29 | `regex_finditer` | regex | 1 | yes | no | no | yes | Find all regex matches with positions |
-| 30 | `regex_safety_check` | regex | 1 | yes | no | no | yes | Check regex for catastrophic backtracking |
-| 31 | `shell_quote_join` | shell | 2 | yes | no | yes | yes | Safely quote argv tokens into shell string |
-| 32 | `shell_split` | shell | 2 | yes | no | yes | yes | Parse shell command into argv with risk detection |
-| 33 | `text_count` | text | 0 | yes | yes | yes | yes | Character counting and frequency table |
-| 34 | `text_diff_explain` | text | 1 | yes | yes | yes | no | Explain string differences with codepoints |
-| 35 | `text_equal` | text | 0 | yes | yes | yes | yes | String comparison with normalization modes |
-| 36 | `text_fingerprint` | text | 0 | yes | no | yes | yes | Deterministic SHA-256 fingerprint |
-| 37 | `text_hash` | text | 2 | yes | no | yes | yes | Cryptographic hash computation |
-| 38 | `text_inspect` | text | 1 | yes | yes | yes | no | Hidden characters, confusables, mixed scripts |
-| 39 | `text_measure` | text | 0 | yes | yes | yes | yes | Comprehensive text metrics |
-| 40 | `text_position` | text | 2 | yes | no | yes | yes | Position conversion (byte/cp/line/UTF-16) |
-| 41 | `text_replace_check` | text | 1 | yes | no | yes | yes | Pre-edit replacement safety check |
-| 42 | `text_truncate` | text | 3 | yes | no | yes | yes | Grapheme-aware truncation |
-| 43 | `text_transform` | text | 2 | yes | no | yes | yes | Unicode normalization, casefold, trim, etc. |
-| 44 | `text_window` | text | 1 | yes | no | yes | yes | Context window around a text position |
-| 45 | `toml_shape` | toml | 2 | yes | no | yes | no | TOML structure analysis |
-| 46 | `unit_convert` | math | 2 | yes | no | no | no | Unit conversion with factors |
-| 47 | `unit_info` | math | 2 | yes | no | no | no | Unit metadata (canonical, category) |
-| 48 | `unescape_text` | text | 1 | yes | no | yes | yes | Unescape text from various formats |
-| 49 | `validate_brackets` | validation | 1 | yes | yes | yes | yes | Bracket balance checking |
-| 50 | `validate_json` | validation | 0 | yes | yes | yes | yes | JSON parsing validation |
-| 51 | `validate_regex` | regex | 1 | yes | yes | yes | yes | Regex pattern testing against samples |
-| 52 | `validate_schema_light` | validation | 3 | yes | no | yes | yes | Light JSON schema validation |
-| 53 | `validate_toml` | validation | 1 | yes | no | yes | yes | TOML parsing validation |
-| 54 | `version_compare` | version | 2 | yes | no | yes | no | Version string comparison (semver/pep440/loose) |
-| 55 | `unicode_policy_check` | unicode | 2 | yes | no | yes | yes | Apply named Unicode safety policy to text |
-| 56 | `canonicalize_text` | unicode | 2 | yes | no | yes | yes | Apply named text canonicalization profile |
-| 57 | `version_constraint_check` | version | 3 | yes | no | yes | yes | Check if version satisfies constraint (semver/cargo) |
-| 58 | `cargo_toml_inspect` | cargo | 3 | yes | yes | yes | yes | Inspect Cargo.toml text (package, workspace, deps) |
+| 25 | `prompt_input_inspect` | text | 2 | yes | no | yes | yes | Detect prompt injection (hidden chars, instruction phrases, ANSI escapes) |
+| 26 | `path_analyze` | path | 2 | yes | no | yes | yes | Lexical path analysis (no filesystem) |
+| 27 | `path_compare` | path | 2 | yes | no | yes | yes | Compare paths under normalization rules |
+| 28 | `path_normalize` | path | 0 | yes | no | yes | yes | Normalize path with platform semantics |
+| 29 | `path_scope_check` | path | 2 | yes | no | yes | yes | Lexical scope check (no symlink resolution) |
+| 30 | `regex_finditer` | regex | 1 | yes | no | no | yes | Find all regex matches with positions |
+| 31 | `regex_safety_check` | regex | 1 | yes | no | no | yes | Check regex for catastrophic backtracking |
+| 32 | `shell_quote_join` | shell | 2 | yes | no | yes | yes | Safely quote argv tokens into shell string |
+| 33 | `shell_split` | shell | 2 | yes | no | yes | yes | Parse shell command into argv with risk detection |
+| 34 | `text_count` | text | 0 | yes | yes | yes | yes | Character counting and frequency table |
+| 35 | `text_diff_explain` | text | 1 | yes | yes | yes | no | Explain string differences with codepoints |
+| 36 | `text_equal` | text | 0 | yes | yes | yes | yes | String comparison with normalization modes |
+| 37 | `text_fingerprint` | text | 0 | yes | no | yes | yes | Deterministic SHA-256 fingerprint |
+| 38 | `text_hash` | text | 2 | yes | no | yes | yes | Cryptographic hash computation |
+| 39 | `text_inspect` | text | 1 | yes | yes | yes | no | Hidden characters, confusables, mixed scripts |
+| 40 | `text_measure` | text | 0 | yes | yes | yes | yes | Comprehensive text metrics |
+| 41 | `text_position` | text | 2 | yes | no | yes | yes | Position conversion (byte/cp/line/UTF-16) |
+| 42 | `text_replace_check` | text | 1 | yes | no | yes | yes | Pre-edit replacement safety check |
+| 43 | `text_truncate` | text | 3 | yes | no | yes | yes | Grapheme-aware truncation |
+| 44 | `text_transform` | text | 2 | yes | no | yes | yes | Unicode normalization, casefold, trim, etc. |
+| 45 | `text_window` | text | 1 | yes | no | yes | yes | Context window around a text position |
+| 46 | `toml_shape` | toml | 2 | yes | no | yes | no | TOML structure analysis |
+| 47 | `unit_convert` | math | 2 | yes | no | no | no | Unit conversion with factors |
+| 48 | `unit_info` | math | 2 | yes | no | no | no | Unit metadata (canonical, category) |
+| 49 | `unescape_text` | text | 1 | yes | no | yes | yes | Unescape text from various formats |
+| 50 | `validate_brackets` | validation | 1 | yes | yes | yes | yes | Bracket balance checking |
+| 51 | `validate_json` | validation | 0 | yes | yes | yes | yes | JSON parsing validation |
+| 52 | `validate_regex` | regex | 1 | yes | yes | yes | yes | Regex pattern testing against samples |
+| 53 | `validate_schema_light` | validation | 3 | yes | no | yes | yes | Light JSON schema validation |
+| 54 | `validate_toml` | validation | 1 | yes | no | yes | yes | TOML parsing validation |
+| 55 | `version_compare` | version | 2 | yes | no | yes | no | Version string comparison (semver/pep440/loose) |
+| 56 | `unicode_policy_check` | unicode | 2 | yes | no | yes | yes | Apply named Unicode safety policy to text |
+| 57 | `canonicalize_text` | unicode | 2 | yes | no | yes | yes | Apply named text canonicalization profile |
+| 58 | `version_constraint_check` | version | 3 | yes | no | yes | yes | Check if version satisfies constraint (semver/cargo) |
+| 59 | `cargo_toml_inspect` | cargo | 3 | yes | yes | yes | yes | Inspect Cargo.toml text (package, workspace, deps) |
 
 ## Legend
 
@@ -78,11 +79,11 @@ Canonical reference for all MCP tools exposed by `nl_calc.mcp.server.TOOL_HANDLE
 
 | Field | Count |
 |-------|-------|
-| Total tools | 58 |
+| Total tools | 59 |
 | Documented in README | 10 |
-| Documented in docs/mcp.md | 51 |
-| Missing from docs/mcp.md | 3 (`constant_lookup`, `json_shape`, `unit_convert`) |
-| Have tests | 51 |
+| Documented in docs/mcp.md | 59 |
+| Missing from docs/mcp.md | 0 |
+| Have tests | 52 |
 | Missing tests | 3 (`constant_lookup`, `list_dedupe`, `list_sort`) |
 
 ## Category Breakdown
@@ -92,7 +93,7 @@ Canonical reference for all MCP tools exposed by `nl_calc.mcp.server.TOOL_HANDLE
 | config | `dotenv_validate`, `ini_validate` |
 | math | `math_eval`, `unit_convert`, `unit_info`, `constant_lookup` |
 | patch | `patch_apply_check`, `patch_summary` |
-| text | `text_measure`, `text_equal`, `text_diff_explain`, `text_inspect`, `text_count`, `text_truncate`, `text_transform`, `text_position`, `text_hash`, `text_window`, `text_fingerprint`, `escape_text`, `unescape_text`, `text_replace_check`, `line_range_extract`, `line_range_compare` |
+| text | `text_measure`, `text_equal`, `text_diff_explain`, `text_inspect`, `text_count`, `text_truncate`, `text_transform`, `text_position`, `text_hash`, `text_window`, `text_fingerprint`, `escape_text`, `unescape_text`, `text_replace_check`, `line_range_extract`, `line_range_compare`, `prompt_input_inspect` |
 | json | `json_compare`, `json_extract`, `json_shape`, `json_canonicalize`, `json_query` |
 | validation | `validate_brackets`, `validate_json`, `validate_regex`, `validate_toml`, `validate_schema_light` |
 | regex | `regex_finditer`, `regex_safety_check` |

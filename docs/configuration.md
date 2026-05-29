@@ -2,12 +2,12 @@
 
 ## Configuration File
 
-Create `clicalc_config.py` in your working directory to customize eggcalc.
+Create `eggcalc_config.py` in your working directory to customize eggcalc.
 
 ### Custom Constants
 
 ```python
-# clicalc_config.py
+# eggcalc_config.py
 
 CUSTOM_CONSTANTS = {
     "earth_radius": 6371,      # km
@@ -30,7 +30,7 @@ calc "2 * pi * earth_radius"
 ### Custom Functions
 
 ```python
-# clicalc_config.py
+# eggcalc_config.py
 
 def celsius_to_fahrenheit(c):
     return c * 9/5 + 32
@@ -57,7 +57,7 @@ calc "bmi(70, 1.75)"
 ### Custom Units
 
 ```python
-# clicalc_config.py
+# eggcalc_config.py
 
 CUSTOM_UNITS = {
     "m": {
@@ -74,7 +74,7 @@ CUSTOM_ALIASES = {
 ### Custom Number Words
 
 ```python
-# clicalc_config.py
+# eggcalc_config.py
 
 CUSTOM_NUMBER_WORDS = {
     "1000000000000000": ["quadrillion"],
@@ -85,7 +85,7 @@ CUSTOM_NUMBER_WORDS = {
 ### Custom Operators
 
 ```python
-# clicalc_config.py
+# eggcalc_config.py
 
 CUSTOM_OPERATOR_WORDS = {
     "+": ["plus", "add", "and"],
@@ -98,7 +98,7 @@ CUSTOM_OPERATOR_WORDS = {
 ### Temperature Conversions
 
 ```python
-# clicalc_config.py
+# eggcalc_config.py
 
 CUSTOM_TEMP_CONVERSIONS = {
     ("C", "R"): (1.0, 491.67),  # Celsius to Rankine
@@ -123,7 +123,7 @@ calc "long expression..."
 ### Register at Runtime
 
 ```python
-from egg_calc import (
+from eggcalc import (
     register_constant,
     register_function,
     PyCalcApp,
@@ -146,7 +146,7 @@ app.register_function("mysquare", my_func)
 ### Modify Security Limits
 
 ```python
-from egg_calc import (
+from eggcalc import (
     MAX_INPUT_LENGTH,
     MAX_NESTING_DEPTH,
     MAX_EXPONENT,
@@ -154,14 +154,14 @@ from egg_calc import (
 )
 
 # Increase limits (use with caution)
-import egg_calc.evaluator as ev
+import eggcalc.evaluator as ev
 ev.MAX_EXPONENT = 100000
 ```
 
 ## Complete Example
 
 ```python
-# clicalc_config.py
+# eggcalc_config.py
 
 # Custom constants
 CUSTOM_CONSTANTS = {
@@ -198,7 +198,7 @@ CUSTOM_ALIASES = {
 
 ## Security Considerations
 
-- `clicalc_config.py` is imported from the working directory
+- `eggcalc_config.py` is imported from the working directory
 - In production, ensure this file is not user-writable
 - Consider disabling config loading in high-security environments
 - Only register trusted functions

@@ -20,5 +20,5 @@ else
     exit 1
 fi
 
-# Run clicalc
-exec "$PYTHON" "$SCRIPT_DIR/nl_calc.py" "$@"
+# Run eggcalc
+exec "$PYTHON" "$SCRIPT_DIR/eggcalc.py" "$@"

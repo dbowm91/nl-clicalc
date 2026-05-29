@@ -13,13 +13,13 @@ Tests for:
 
 import pytest
 
-from egg_calc.exact.cargo import (
+from eggcalc.exact.cargo import (
     CargoInspectResult,
     _detect_duplicates,
     _normalize_ident,
     cargo_toml_inspect,
 )
-from egg_calc.mcp.tools import cargo_toml_inspect_mcp
+from eggcalc.mcp.tools import cargo_toml_inspect_mcp
 
 
 BASIC_CARGO_TOML = """\

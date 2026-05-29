@@ -78,10 +78,10 @@ def register_function(name: str, func: Any) -> None:
 
 
 def load_user_config() -> None:
-    """Load user-defined configuration from egg_calc_config.py (thread-safe)."""
+    """Load user-defined configuration from eggcalc_config.py (thread-safe)."""
     try:
-        import egg_calc.normalize as normalize_mod
-        import egg_calc_config as config
+        import eggcalc.normalize as normalize_mod
+        import eggcalc_config as config
 
         for name, value in getattr(config, "CUSTOM_CONSTANTS", {}).items():
             _default_evaluator.CONSTANTS[name] = value
@@ -164,8 +164,8 @@ async def evaluate_async(expression: str) -> Any:
 def load_user_config_extended() -> None:
     """Load user-defined configuration including normalize (call after normalize is loaded)."""
     try:
-        import egg_calc.normalize as normalize_mod
-        import egg_calc_config as config
+        import eggcalc.normalize as normalize_mod
+        import eggcalc_config as config
 
         for word, num in getattr(config, "CUSTOM_NUMBER_WORDS", {}).items():
             normalize_mod.NUMBER_WORDS[num] = normalize_mod.NUMBER_WORDS.get(num, [])

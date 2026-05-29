@@ -13,7 +13,7 @@ The `units` module handles:
 ## Key Exports
 
 ```python
-from nl_calc.units import (
+from eggcalc.units import (
     UnitValue,              # Value with optional unit
     normalize_unit,         # Normalize unit string
     get_conversion_factor,  # Get conversion factor between units
@@ -268,7 +268,7 @@ Examples: `kN` (kilonewton), `mV` (millivolt), `mA` (milliampere)
 ## Module Dependencies
 
 ```
-units.py (no dependencies on other nl_calc modules)
+units.py (no dependencies on other eggcalc modules)
 ```
 
-Independent module with no imports from other nl_calc modules.
+Independent module with no imports from other eggcalc modules.

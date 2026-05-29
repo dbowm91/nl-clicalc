@@ -15,7 +15,7 @@ The `normalize` module is the **entry point** for natural language input. It han
 ## Key Exports
 
 ```python
-from nl_calc.normalize import (
+from eggcalc.normalize import (
     run,           # Full pipeline: normalize + evaluate
     normalize,     # Tokenize and normalize text
     normalize_expression,  # Convert NL to Python syntax
@@ -43,9 +43,9 @@ from .units import UnitValue
 | `EvaluationError` | `evaluator.py` | Exception raised on evaluation failures |
 | `UnitValue` | `units.py` | Wrapper for numeric values with a unit |
 
-This allows consumers to import directly from `nl_calc.normalize`:
+This allows consumers to import directly from `eggcalc.normalize`:
 ```python
-from nl_calc.normalize import evaluate, EvaluationError, UnitValue
+from eggcalc.normalize import evaluate, EvaluationError, UnitValue
 ```
 
 ## Data Structures

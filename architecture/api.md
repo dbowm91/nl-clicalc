@@ -2,7 +2,7 @@
 
 ## Package Entry Point
 
-`__init__.py` re-exports all public functionality from the nl_calc package.
+`__init__.py` re-exports all public functionality from the eggcalc package.
 
 ## Core Evaluation Functions
 
@@ -112,7 +112,7 @@ register_function("square", lambda x: x ** 2)
 
 ### `load_user_config() -> None`
 
-Load configuration from `nl_calc_config.py` in working directory.
+Load configuration from `eggcalc_config.py` in working directory.
 
 ## Memory Functions
 

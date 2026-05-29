@@ -2,7 +2,7 @@
 
 import json
 
-from egg_calc.mcp.server import TOOL_HANDLERS, handle_request
+from eggcalc.mcp.server import TOOL_HANDLERS, handle_request
 
 # --- Test fixtures ---
 

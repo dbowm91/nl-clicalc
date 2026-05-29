@@ -250,7 +250,7 @@ calc "5 * planck"      # 3.313e-33
 
 ## Text Tools
 
-eggcalc includes text inspection tools for detecting hidden characters, testing patterns, and analyzing text security risks. These tools are built on the `nl_calc.exact` module.
+eggcalc includes text inspection tools for detecting hidden characters, testing patterns, and analyzing text security risks. These tools are built on the `eggcalc.exact` module.
 
 **Why these tools exist:** Unicode text can contain invisible characters, confusables (characters from different scripts that look identical), and other security risks. These tools help detect such issues in user input.
 
