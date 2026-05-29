@@ -2,7 +2,7 @@
 
 A natural language math expression calculator that parses expressions in English (like "five plus three") and converts them to numeric results, with support for unit conversions.
 
-**All 629 tests pass.**
+**All 631 tests pass.**
 
 ---
 
