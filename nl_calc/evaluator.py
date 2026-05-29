@@ -24,6 +24,7 @@ from .units import (
     normalize_unit,
     convert_temperature,
     are_units_compatible,
+    get_unit_category,
 )
 
 __all__ = [
