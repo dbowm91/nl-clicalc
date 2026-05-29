@@ -33,60 +33,39 @@ The variation selector check (0xfe00-0xfe0f) comes BEFORE the combining mark che
 **build_single.py Convention:**
 - `normalize_main` alias is created by `build_single.py:236` during assembly, does not exist in source `normalize.py`
 
-### Known Limitations
-
-These are documented limitations that agents should be aware of:
-- `notifications/cancel` and `notifications/progress` not implemented in MCP server
-- `confusable_codepoint` field not in ConfusableInfo (only `confusable_with` character)
-- `_is_extended_pictographic` name-based fallback includes 'SIGN' keyword which over-matches non-pictographic symbols like © ® ™ (acceptable for text detection purposes)
-- Script detection uses heuristic range-based approach, not `unicodedata.script()`
-- Temperature-to-non-temperature conversion now raises clear ValueError
-- `_INVISIBLE_CHARS` contains 22 characters - documentation updated to list all
-- Double-minus concatenation bug: "5 minus -2" → "52" instead of 3 (normalize.py:762-763)
-- `unit_info()` MCP tool fails with NameError - calls non-existent `list_units()` function
-- Scalar + dimensional arithmetic does not raise ValueError (e.g., `UnitValue(3,"m") + 5` returns `8 m`)
-
-### New Bugs Identified (2026-05-29)
+### Known Bugs (from verified plan.md)
 
 These bugs are documented in `plans/plan.md` and await implementation:
-1. `units.py:66` - `__add__` scalar + dimensional: `UnitValue(3,"m") + 5` → `8 m` (should raise ValueError)
-2. `units.py:81-84` - `__rsub__` scalar + dimensional: `5 - UnitValue(3,"m")` → `2 m` (should raise ValueError)
-3. `normalize.py:762-763` - Double minus: `"5 minus -2"` → `"52"` (should be `5-(-2)` → `7`)
-4. `mcp/tools.py:324` - `unit_info()` calls non-existent `list_units()` from units.py
-5. `mcp/tools.py:839 and 1337` - Duplicate `_VALID_TRANSFORM_OPERATIONS` constant
 
-### Previously Reported Issues (Now Fixed)
+1. **normalize.py:762-763** - Double minus bug: `"5 minus -2"` becomes `"52"` instead of `5-(-2)` → `7`
+   - Root cause: `tokens[i-1]` uses negative indexing when i=0, wrapping to last element
+   - Fix: Add bounds check `i > 0` before accessing `tokens[i-1]`
 
-The following bugs were fixed in the plan implementation:
-1. ~~Dead code in `list_compare()` near_matches~~ - FIXED
-2. ~~Temperature-to-non-temperature conversion crash~~ - FIXED
-3. ~~Float regex pipe bug~~ - FIXED
+2. **mcp/tools.py:324** - `unit_info()` calls non-existent `list_units()` from units.py
+   - Fix: Use `get_all_units()` instead
 
-### Additional Verified NOT Bugs (2026-05-29)
+3. **normalize.py:367,369** - Int regex patterns have erroneous `|` characters
+   - `[-|+]?` allows `|` as sign (should be `[-+]?`)
+   - `[-|+|*]?` allows `|` and `*` (should be `[-+*]?`)
 
-These were investigated and confirmed not to be bugs:
-- `get_unit_category` IS correctly imported in evaluator.py (line 27) - not a bug
-- `__eq__` returning `NotImplemented` for different units is intentional for Python's comparison protocol
-- Int regex patterns `[-|+]?` at normalize.py:367,369 allow `|` and `*` but these don't appear in practice (low practical impact)
+4. **mcp/tools.py:839 and 1337** - Duplicate `_VALID_TRANSFORM_OPERATIONS` constant
+   - Remove the second definition at line 1337
 
-### Session Learnings (2026-05-29)
+5. **units.py:48-53** - `__eq__` returns `NotImplemented` for different units instead of `False`
+   - `UnitValue(5, "m") == UnitValue(5, "ft")` returns NotImplemented instead of False
 
-**Plan Consolidation:**
-- Consolidated 15 architecture review files into single `plans/plan.md`
-- 40+ actionable items organized into 5 waves for parallel implementation
-- Each wave can be worked on independently by different agents
+### Verified as Working (No Action Needed)
 
-**Parallelization Opportunities:**
-- Wave 1 (4 high priority bugs): 3 parallel agents possible
-- Wave 2 (5 medium bugs): 4 parallel agents possible
-- Wave 3 (8 low bugs): 4 parallel agents possible
-- Wave 4 (15 doc updates): 15 parallel agents possible
-- Wave 5 (8 improvements): 8 parallel agents possible
-
-**Verified During Review:**
-- `get_unit_category` IS correctly imported in evaluator.py:27 (NOT a bug as claimed in evaluator_review)
-- `list_units` is NOT exported from units.py - confirmed bug in mcp/tools.py:324
-- `__eq__` for UnitValue with different units returns NotImplemented (could be improved to return False)
+The following items were claimed as bugs but are actually working correctly:
+- `units.py:66` - `__add__` scalar+dimensional already raises ValueError correctly
+- `units.py:80-83` - `__rsub__` scalar+dimensional already raises ValueError correctly  
+- `units.py:66` - `__add__` and `__rsub__` correctly reject scalar + dimensional mixing
+- `normalize.py:1517` - `--verbose` flag logic is actually correct
+- `validate.py:413` - `toml_shape` uses Exception which catches all errors
+- `synthesis.py:1072` - `list_compare` operator precedence already has parentheses
+- `primitives.py:365` - ZWSP (0x200B) already included in extend character check
+- `get_unit_category` import in evaluator.py:27 - import IS present (not a bug)
+- `_is_extended_pictographic` name-based fallback includes 'SIGN' keyword which over-matches non-pictographic symbols like © ® ™ (acceptable for text detection purposes)
 
 ### Architecture Conventions
 
@@ -116,3 +95,9 @@ These were investigated and confirmed not to be bugs:
 - `MAX_SAMPLE_LENGTH = 10_000` enforced in `regex_test()`
 - Functions raise `ValueError` when input exceeds the limit
 - Consistent with MCP layer's `MAX_TEXT_LENGTH` constant
+
+### Plan Reference
+
+The current implementation plan is at `plans/plan.md` with 35 verified actionable items organized in 5 waves.
+
+(End of file)

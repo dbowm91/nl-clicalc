@@ -125,7 +125,7 @@ tests/
 ├── test_math_identities.py  # Mathematical laws verification
 ├── test_mcp_server.py       # MCP server integration tests
 ├── test_exact.py            # Exact module tests
-├── test_cli_text.py         # CLI text tools tests
+└── test_cli_text.py         # CLI text tools tests
 ```
 
 ### API Usage Reminder
@@ -258,15 +258,13 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `_classify_difference()` lines 337-338 - Branch IS reachable when NFC-equal strings have different byte representations after casefold (precomposed vs decomposed forms)
 - `_handle_negative_token()` - Bounds checking and regex guard prevent IndexError
 
-**Investigations completed:**
-- `visible_repr()` combining mark check order - CORRECT, VS check precedes combining marks for proper display
-- Redundant temperature condition - NOT PRESENT in current code
-
 **Current Bugs - See plans/plan.md:**
 The current implementation plan with all bugs is at `plans/plan.md`. Active bugs include:
-- units.py scalar+dimensional mixing bugs
-- normalize.py double-minus concatenation bug
-- mcp/tools.py list_units not exported
+- normalize.py double-minus concatenation bug (line 762-763)
+- mcp/tools.py list_units not exported (line 324)
+- normalize.py int regex patterns with erroneous `|` (lines 367, 369)
+- mcp/tools.py duplicate _VALID_TRANSFORM_OPERATIONS (lines 839, 1337)
+- units.py __eq__ returns NotImplemented for different units (lines 48-53)
 
 ## Constants in Code (noted)
 - `g` / `standardgravity` = 9.80665 at evaluator.py:875-876
@@ -275,3 +273,16 @@ The current implementation plan with all bugs is at `plans/plan.md`. Active bugs
 ## build_single.py Convention
 - `normalize_main` alias is created by `build_single.py:236` during assembly, does not exist in source `normalize.py`
 - Source only has `main()`, not `normalize_main()`
+
+## Plan Reference
+
+The implementation plan at `plans/plan.md` contains 35 verified actionable items organized in 5 waves:
+- Wave 1: 2 high priority bugs
+- Wave 2: 3 medium priority bugs  
+- Wave 3: 6 low priority bugs
+- Wave 4: 15 documentation updates
+- Wave 5: 8 improvements
+
+Each wave can be parallelized across multiple agents for efficiency.
+
+(End of file - 277 lines)

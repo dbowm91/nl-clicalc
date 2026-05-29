@@ -2,7 +2,7 @@
 
 ## Status: IN PROGRESS (2026-05-29)
 
-Consolidated from architecture review of all modules. Previous plan (2026-05-28) completed 56 items. New review identified 40+ actionable items across 5 waves.
+Consolidated from architecture review of all modules. This plan has been verified against the codebase to remove items that were already fixed or incorrectly described.
 
 ---
 
@@ -10,65 +10,21 @@ Consolidated from architecture review of all modules. Previous plan (2026-05-28)
 
 | Category | Count |
 |----------|-------|
-| High Priority Bugs | 4 |
-| Medium Priority Bugs | 5 |
-| Low Priority Bugs | 8 |
+| High Priority Bugs | 2 |
+| Medium Priority Bugs | 4 |
+| Low Priority Bugs | 6 |
 | Documentation Updates | 15 |
 | Improvements | 8 |
 
-**Total: 40+ actionable items**
+**Total: 35 actionable items**
 
 ---
 
-## Wave 1: High Priority Bugs (Parallelizable - 4 items)
+## Wave 1: High Priority Bugs
 
-### 1. units.py - `__add__` Scalar + Dimensional Bug
+### 1. normalize.py - Double Minus Concatenation Bug
 **Severity:** HIGH
-**Location:** `nl_calc/units.py:66`
-
-`UnitValue(3, "m") + 5` returns `UnitValue(8, "m")` - should raise `ValueError` for dimensionless + dimensional mixing.
-
-**Reproduction:**
-```python
-from nl_calc import run
-result = run("3m + 5", NORMALIZE, PATTERNS)  # Returns 8 m - WRONG
-```
-
-**Fix:** Add dimensional analysis check in `__add__` to raise ValueError when adding scalar to dimensional value:
-```python
-def __add__(self, other):
-    if isinstance(other, (int, float)):
-        if self.unit is not None:
-            raise ValueError(f"Cannot add scalar {other} to dimensional value {self}")
-        return UnitValue(self.value + other, None)
-    # ... existing UnitValue logic
-```
-
-### 2. units.py - `__rsub__` Scalar + Dimensional Bug
-**Severity:** HIGH
-**Location:** `nl_calc/units.py:81-84`
-
-`5 - UnitValue(3, "m")` returns `UnitValue(2, "m")` - physically incorrect, should raise `ValueError`.
-
-**Reproduction:**
-```python
-from nl_calc import run
-result = run("5 - 3m", NORMALIZE, PATTERNS)  # Returns 2 m - WRONG
-```
-
-**Fix:** Add dimensional analysis check in `__rsub__`:
-```python
-def __rsub__(self, other):
-    if isinstance(other, (int, float)):
-        if self.unit is not None:
-            raise ValueError(f"Cannot subtract dimensional value {self} from scalar {other}")
-        return UnitValue(other - self.value, None)
-    return NotImplemented
-```
-
-### 3. normalize.py - Double Minus Concatenation Bug
-**Severity:** HIGH
-**Location:** `nl_calc/normalize.py:762-763` in `split_at_operators`
+**Location:** `nl_calc/normalize.py:762` in `split_at_operators`
 
 "5 minus -2" becomes "52" instead of being properly tokenized as "5-(-2)".
 
@@ -86,16 +42,23 @@ def __rsub__(self, other):
 
 **Fix:** Add bounds checking before accessing `tokens[i-1]`:
 ```python
-# Before accessing tokens[i-1], check i > 0
+# At line 762, before accessing tokens[i-1]:
 if i > 0 and tokens[i-1] == '-':
-    # Handle double minus case
+    # Handle double minus case by inserting empty token
+    # or properly merging tokens
 ```
 
-### 4. mcp/tools.py - `unit_info()` Calls Non-existent Function
+**Implementation:**
+- Read `split_at_operators` function (lines 720-800)
+- The bug is at line 762: `tokens[i-1]` wraps to last element when i=0
+- Need to add `i > 0 and` check before the negative index access
+- After fixing bounds, ensure double-minus sequences are properly handled
+
+### 2. mcp/tools.py - `unit_info()` Calls Non-existent Function
 **Severity:** HIGH
 **Location:** `nl_calc/mcp/tools.py:324`
 
-`unit_info()` calls `list_units()` from `..units` but this function is not exported from units.py. Will fail with NameError at runtime.
+`unit_info()` imports `list_units` from `..units` but this function does not exist in units.py. Will fail with NameError at runtime.
 
 **Reproduction:**
 ```bash
@@ -104,300 +67,386 @@ python -m nl_calc mcp
 # NameError: name 'list_units' is not defined
 ```
 
-**Fix:** Either export `list_units` from units.py, or fix the function logic to use `get_all_units()` instead.
+**Fix:** Change the import and function call to use `get_all_units()` instead:
+```python
+# At line 324, change:
+from ..units import UNIT_ALIASES, UNIT_CATEGORIES, UNIT_BASE, list_units
+# to:
+from ..units import UNIT_ALIASES, UNIT_CATEGORIES, UNIT_BASE, get_all_units
+
+# In unit_info() function, change:
+list_units()
+# to:
+get_all_units()
+```
 
 ---
 
-## Wave 2: Medium Priority Bugs (Parallelizable - 5 items)
+## Wave 2: Medium Priority Bugs
 
-### 5. validate.py - `toml_shape()` Wrong Exception Type
+### 3. normalize.py - Int Regex Pattern Contains Erroneous Characters
 **Severity:** MEDIUM
-**Location:** `nl_calc/exact/validate.py:413`
+**Location:** `nl_calc/normalize.py:367, 369`
 
-Catches `json.JSONDecodeError` but `tomllib` uses different exception types; TOML parse errors won't be caught.
-
-**Fix:** Catch appropriate exception type(s) for tomllib (Python 3.11+):
-```python
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
-
-try:
-    data = tomllib.loads(text)
-except (tomllib.TOMLDecodeError, ValueError) as e:
-    raise ValueError(f"Invalid TOML: {e}")
-```
-
-### 6. normalize.py - `--verbose` Flag Logic Bug
-**Severity:** MEDIUM
-**Location:** `nl_calc/normalize.py:1517`
-
-When `-e` is used (`quiet_by_default=True`), `--verbose` cannot enable expression output.
+Int patterns use `[-|+]?` and `[-|+|*]?` allowing `|` and `*` as sign characters. Inside `[]`, these are treated as literals, not operators.
 
 **Current (buggy):**
 ```python
-show_expression = not args.quiet and not quiet_by_default and not args.single_expr
+"int": re.compile(r"^[-|+]?[0-9]\d*$"),           # Line 367 - allows | as sign
+"int_number_combine": re.compile(r"^[-|+|*]?[0-9]\d*$"),  # Line 369 - allows | and * as signs
 ```
 
 **Fix:**
 ```python
-show_expression = args.verbose or args.show or (not args.quiet and not quiet_by_default and not args.single_expr)
+"int": re.compile(r"^[-+]?[0-9]\d*$"),            # Remove | from character class
+"int_number_combine": re.compile(r"^[-+*]?[0-9]\d*$"),  # Remove | from character class
 ```
 
-### 7. mcp/tools.py - Duplicate `_VALID_TRANSFORM_OPERATIONS`
+**Implementation:**
+- Find lines 367 and 369 in normalize.py
+- Replace `[-|+]` with `[-+]`
+- Replace `[-|+|*]` with `[-+*]`
+- Add tests to verify pattern works correctly
+
+### 4. mcp/tools.py - Duplicate `_VALID_TRANSFORM_OPERATIONS`
 **Severity:** MEDIUM
 **Location:** `nl_calc/mcp/tools.py:839-853` and `tools.py:1337-1351`
 
 Same constant defined twice in same file. Second definition at lines 1337-1351 shadows the first.
 
-**Fix:** Remove the duplicate at lines 1337-1351.
+**Fix:** Remove the duplicate definition at lines 1337-1351.
 
-### 8. units.py - `__eq__` Returns NotImplemented
+**Implementation:**
+- Search for `_VALID_TRANSFORM_OPERATIONS` in tools.py
+- Keep the first definition (around line 839)
+- Delete the second definition (around line 1337)
+- Verify no other code depends on the specific line number
+
+### 5. units.py - `__eq__` Returns NotImplemented
 **Severity:** MEDIUM
 **Location:** `nl_calc/units.py:48-53`
 
-`UnitValue(5, "m") == UnitValue(5, "ft")` returns `NotImplemented` instead of `False`.
+`UnitValue(5, "m") == UnitValue(5, "ft")` returns `NotImplemented` instead of `False`. When units differ but values are equal, it should return `False` directly.
 
-**Reproduction:**
+**Current code:**
 ```python
-from nl_calc import evaluate
-result = evaluate("5m == 5ft")  # Returns NotImplemented (evaluates to False in Python)
-```
-
-**Fix:** Compare values when units differ, return False:
-```python
-def __eq__(self, other):
-    if isinstance(other, UnitValue):
-        if self.unit != other.unit:
-            return False
-        return self.value == other.value
-    return NotImplemented
-```
-
-### 9. normalize.py - Int Regex Pattern Contains Erroneous Characters
-**Severity:** MEDIUM
-**Location:** `nl_calc/normalize.py:367, 369`
-
-Int patterns use `[-|+]?` and `[-|+|*]?` allowing `|` and `*` as sign characters.
-
-**Current (buggy):**
-```python
-INTEGER_PATTERN_1 = r'[-|+]?\d+'  # Wrong - allows | as sign
-INTEGER_PATTERN_2 = r'[-|+|*]?\d+'  # Wrong - allows | and * as signs
+def __eq__(self, other: object) -> bool:
+    if not isinstance(other, UnitValue):
+        return NotImplemented
+    if self.unit != other.unit:
+        return NotImplemented  # BUG: should return False
+    return abs(self.value - other.value) < FLOAT_EPSILON
 ```
 
 **Fix:**
 ```python
-INTEGER_PATTERN_1 = r'[-+]?\d+'
-INTEGER_PATTERN_2 = r'[-+*]?\d+'
+def __eq__(self, other: object) -> bool:
+    if not isinstance(other, UnitValue):
+        return NotImplemented
+    if self.unit != other.unit:
+        return False  # Different units means not equal
+    return abs(self.value - other.value) < FLOAT_EPSILON
 ```
+
+**Implementation:**
+- Read lines 48-53 of units.py
+- Change line 52 from `return NotImplemented` to `return False`
+- Add test: `assert UnitValue(5, "m") != UnitValue(5, "ft")`
 
 ---
 
-## Wave 3: Low Priority Bugs (Parallelizable - 8 items)
+## Wave 3: Low Priority Bugs
 
-### 10. synthesis.py - `text_window` Undefined `n` Variable
+### 6. synthesis.py - `text_window` Undefined `n` Variable
 **Severity:** LOW
 **Location:** `nl_calc/exact/synthesis.py:1223, 1234`
 
-Variable `n` used but not defined; should be `len(text)`.
+Variable `n` is used in the codepoint-to-byte conversion loop but only defined inside the `grapheme_index` branch at line 1166. When `text_window()` is called with `kind="codepoint_index"`, `kind="byte_offset"`, or `kind="line_column"`, `n` is undefined.
 
-**Fix:** Change `n` to `len(text)` in lines 1223 and 1234.
-
-### 11. synthesis.py - `list_compare` Operator Precedence
-**Severity:** LOW
-**Location:** `nl_calc/exact/synthesis.py:1072`
-
-Missing parentheses around `or` condition; `treat_as_multiset=False` case could return incorrect results.
-
-**Current (buggy):**
+**Current code structure:**
 ```python
-same_unordered = treat_as_multiset and a_set == b_set or not treat_as_multiset and a_counter == b_counter
+# Line 1166: n defined only for grapheme_index
+if position.kind == "grapheme_index":
+    n = len(text)
+
+# Lines 1223, 1234: n used but undefined for other kinds
+for offset, char_index in enumerate(range(...)):
+    ...convert grapheme to codepoint...
+    if n == 0:  # Line 1223 - n undefined here for non-grapheme_index
+        break
 ```
 
-**Fix:**
-```python
-same_unordered = (treat_as_multiset and a_set == b_set) or (not treat_as_multiset and a_counter == b_counter)
-```
+**Fix:** Define `n = len(text)` before the conditional branch so it's available for all position kinds.
 
-### 12. synthesis.py - `count_chars` Field Inconsistency
+**Implementation:**
+- Read the `text_window` function (around lines 1106-1240)
+- Move `n = len(text)` outside the grapheme_index branch (before line 1166)
+- Test with different position kinds to verify fix
+
+### 7. synthesis.py - `count_chars` Field Inconsistency
 **Severity:** LOW
 **Location:** `nl_calc/exact/synthesis.py:932, 948`
 
-Field is set to `len(text_bytes)` (byte count) or grapheme count instead of actual codepoint count.
+Field `text_length_codepoints` is set to byte count or grapheme count instead of actual codepoint count.
 
-**Fix:** Use `len(text)` (codepoint count) instead of byte/grapheme count.
-
-### 13. primitives.py - ZWSP Not Treated as Extend
-**Severity:** LOW
-**Location:** `nl_calc/exact/primitives.py:351-369`
-
-ZWSP (U+200B) fails `_is_extend_char()` check; `count_graphemes("a\u200bb")` returns 3 instead of 2.
-
-**Reproduction:**
+**Current code:**
 ```python
-from nl_calc.exact import count_graphemes
-count_graphemes("a\u200bb")  # Returns 3, should be 2
+# Line 932 (byte mode):
+text_length_codepoints=len(text_bytes)  # Returns byte count, NOT codepoint count
+
+# Line 948 (grapheme mode):
+text_length_codepoints=_count_graphemes(text)  # Returns grapheme count
 ```
 
-**Fix:** Add ZWSP to `_is_extend_char()` check alongside ZWNJ:
-```python
-if cp == 0x200B:  # ZWSP
-    return True
-```
+**Fix:** Use `len(text)` (codepoint count) for `text_length_codepoints` in all modes. Consider renaming the field to `text_length_codepoints` to match actual content, or ensure it contains actual codepoint count.
 
-### 14. mcp/schemas.py - ErrorEnvelope Missing Runtime Fields
+**Implementation:**
+- Read lines 920-960 in synthesis.py
+- Change `text_length_codepoints=len(text_bytes)` to `text_length_codepoints=len(text)`
+- Consider if field should be renamed for accuracy
+
+### 8. mcp/schemas.py - ErrorEnvelope Missing Runtime Fields
 **Severity:** LOW
 **Location:** `nl_calc/mcp/schemas.py:13-18`, `tools.py:222-252`
 
-`_error_response()` and `_success_response()` add `tool`, `warnings`, and `limits_applied` fields not declared in `ErrorEnvelope` TypedDict.
+`ErrorEnvelope` TypedDict defines only 4 fields but `_error_response()` and `_success_response()` add `tool`, `warnings`, and `limits_applied` fields at runtime.
 
-**Fix:** Add missing fields to TypedDict definition, or remove runtime additions.
+**Fix:** Update `ErrorEnvelope` TypedDict to include all fields:
 
-### 15. api - `normalize_expression` Return Type Mismatch
+```python
+class ErrorEnvelope(TypedDict):
+    ok: bool
+    error_type: str
+    error: str
+    hints: list[str]
+    tool: str | None  # Add this
+    warnings: list[str]  # Add this
+    limits_applied: list[str]  # Add this
+```
+
+**Implementation:**
+- Read schemas.py lines 13-18 for ErrorEnvelope definition
+- Read tools.py lines 222-252 for how fields are added at runtime
+- Update TypedDict to include all fields
+- Or remove the extra fields from the response functions if they shouldn't be there
+
+### 9. api - `normalize_expression` Return Type Mismatch
 **Severity:** LOW
-**Location:** Documentation vs actual
+**Location:** Documentation vs actual `nl_calc/normalize.py:1105-1110`
 
-Doc says `-> str`, actual is `-> tuple[str, int]`.
+Documentation says `normalize_expression` returns `-> str` but actual signature returns `-> tuple[str, int]`.
 
-**Fix:** Update documentation to reflect actual return type.
+**Actual signature:**
+```python
+def normalize_expression(
+    expression: str,
+    operators: dict,
+    patterns: Mapping[str, Pattern[str]],
+    skip_validation: bool = False,
+) -> tuple[str, int]:  # Returns (normalized_expression, exit_code)
+```
 
-### 16. evaluator.py - Missing `ln` Alias
+**Fix:** Update documentation to reflect actual return type `tuple[str, int]`.
+
+**Implementation:**
+- Find architecture documentation that shows this function
+- Update return type from `-> str` to `-> tuple[str, int]`
+- Document what each tuple element represents
+
+### 10. evaluator.py - Missing `ln` Alias
 **Severity:** LOW
 
-Document claims `ln(x)` exists but only `log` is implemented.
+Documentation claims `ln(x)` exists but only `log` is in the evaluator's FUNCTIONS dict. `normalize.py` handles `ln -> log` mapping at line 144 for `run()`, but `evaluate("ln(5)")` fails.
 
-**Fix:** Either add `ln` as alias in `FUNCTION_MAPPINGS`, or update documentation.
+**Fix:** Add `"ln"` as direct alias in evaluator's FUNCTIONS dict:
 
-### 17. evaluator.py - Missing Documentation for `evaluate_async`/`evaluate_cached`
+```python
+# In evaluator.py, FUNCTIONS dict around line 923
+"log": _log,
+"ln": _log,  # Add this alias
+```
+
+**Implementation:**
+- Read evaluator.py FUNCTIONS dict (around line 906-1027)
+- Add `"ln": _log` entry
+- Verify both `run("ln(5)")` and `evaluate("ln(5)")` work
+
+### 11. evaluator.py - Missing Documentation for `evaluate_async`/`evaluate_cached`
 **Severity:** LOW
 
-LRU cached evaluation functions not documented.
+LRU cached evaluation functions exist but are not documented.
 
-**Fix:** Add documentation for `evaluate_async` and `evaluate_cached`.
+**Fix:** Add documentation for these functions in architecture/evaluator.md.
+
+**Implementation:**
+- Read evaluator.py lines 138 (evaluate_cached) and 153 (evaluate_async)
+- Add documentation to architecture/evaluator.md explaining:
+  - `evaluate_cached`: LRU cached version of evaluate
+  - `evaluate_async`: async wrapper with caching
 
 ---
 
-## Wave 4: Documentation Updates (Parallelizable - 15 items)
+## Wave 4: Documentation Updates
 
-### 18. architecture/exact.md - Module Structure
+### 12. architecture/exact.md - Module Structure
 **Priority:** MEDIUM
 
 Document shows 7 modules, actual has 12+ (path_tools, glob, transform, identifier, identifier_inspect, position are missing).
 
-### 19. architecture/mcp.md - MCP Tools Documentation
+**Fix:** Update module list to include all actual modules in nl_calc/exact/
+
+### 13. architecture/mcp.md - MCP Tools Documentation
 **Priority:** HIGH
 
 Document shows 11 tools, actual has 39. Update to reflect all 39+ tools.
 
-### 20. architecture/overview.md - Test Count
+**Fix:** Document all MCP tools defined in tools.py
+
+### 14. architecture/overview.md - Test Count
 **Priority:** LOW
 
 Document says "350 tests pass", actual is 629.
 
-### 21. architecture/exact.md - Public API Re-exports
+**Fix:** Update test count to 629
+
+### 15. architecture/exact.md - Public API Re-exports
 **Priority:** MEDIUM
 
 Missing exports: `path_analyze`, `glob_match`, `escape_text`, `text_hash`, `text_transform`, `json_extract`, `json_compare`, `json_shape`, `regex_finditer`, `regex_safety_check`, `validate_toml_text`, `version_compare`, `list_dedupe`, `list_sort`, `text_position`, `identifier_analyze`, `identifier_analyze`, `path_normalize`
 
-### 22. architecture/measure.md - `sentences_estimate` Example
+**Fix:** Review exact/__init__.py exports and update documentation
+
+### 16. architecture/measure.md - `sentences_estimate` Example
 **Priority:** LOW
 **Location:** `architecture/measure.md:47-50`
 
 Example shows `sentences_estimate=1` for "hello world hello" but actual result is `0`. Code is correct; docs are wrong.
 
-### 23. measure.py - Misleading Comment
+**Fix:** Update example to show correct result
+
+### 17. measure.py - Misleading Comment
 **Priority:** LOW
 **Location:** `nl_calc/exact/measure.py:169`
 
 Comment says "not ellipses or decimals" but implementation does match ellipses.
 
-### 24. architecture/synthesis.md - `text_window` Function
+**Fix:** Update comment to match actual behavior, or fix behavior if comment intent is correct
+
+### 18. architecture/synthesis.md - `text_window` Function
 **Priority:** MEDIUM
 
 Function at line 1106 not documented.
 
-### 25. architecture/synthesis.md - TypedDict Classes
+**Fix:** Add documentation for text_window function
+
+### 19. architecture/synthesis.md - TypedDict Classes
 **Priority:** LOW
 
 Missing: `TextWindowPosition`, `TextWindowResult`, `ListCompareOrderedResult`, `ListCompareSetResult`, `ListCompareMultisetResult`, `ListCompareNearMatch`
 
-### 26. architecture/unicode_tools.md - `check_domain_safety()` Example
+**Fix:** Document all TypedDict classes in synthesis module
+
+### 20. architecture/unicode_tools.md - `check_domain_safety()` Example
 **Priority:** MEDIUM
 **Location:** `architecture/unicode_tools.md:182-187`
 
 Example calls `len(mixed)` on dict (returns 3 keys, not script count). Bug is in documentation, not code.
 
-### 27. architecture/unicode_tools.md - `reverse_confusables()` Not Documented
+**Fix:** Fix example to show correct usage
+
+### 21. architecture/unicode_tools.md - `reverse_confusables()` Not Documented
 **Priority:** LOW
 
 Listed in index but not in Functions section.
 
-### 28. architecture/unicode_tools.md - Dependencies Section
+**Fix:** Add function documentation
+
+### 22. architecture/unicode_tools.md - Dependencies Section
 **Priority:** LOW
 
 Claims `primitives.py` is used (only standard library + confusables.py).
 
-### 29. architecture/validate.md - Documentation Severely Incomplete
+**Fix:** Update dependencies section
+
+### 23. architecture/validate.md - Documentation Severely Incomplete
 **Priority:** HIGH
 
 Only 3 of 25+ functions documented. Missing 22 functions, 14 TypedDicts, 6 constants.
 
-### 30. architecture/units.md - Angle Category Missing
+**Fix:** Document all functions, TypedDicts, and constants in validate.py
+
+### 24. architecture/units.md - Angle Category Missing
 **Priority:** LOW
 
 Unit Categories table missing Angle category (rad, deg).
 
-### 31. architecture/confusables.md - Data Format Documentation
+**Fix:** Add Angle category to unit categories table
+
+### 25. architecture/confusables.md - Data Format Documentation
 **Priority:** LOW
 
 Doc shows `dict[str, list[str]]`, actual is `dict[str, str]` with space-separated codepoints.
 
-### 32. architecture/diff.md - Documentation Examples Wrong
+**Fix:** Update data format documentation to match actual structure
+
+### 26. architecture/diff.md - Documentation Examples Wrong
 **Priority:** LOW
 
 - `diff_spans` example shows wrong index and wrong text
 - `common_prefix_suffix("hello", "yo")` doc shows `0,0` but actual is `0,1`
 
+**Fix:** Fix examples to match actual behavior
+
 ---
 
-## Wave 5: Improvements (Parallelizable - 8 items)
+## Wave 5: Improvements
 
-### 33. exact/ - Add TomlShapeResult, VersionCompareResult Exports
+### 27. exact/ - Add TomlShapeResult, VersionCompareResult Exports
 **Priority:** LOW
 **Location:** `nl_calc/exact/validate.py` / `__init__.py`
 
 `TomlShapeResult` and `VersionCompareResult` defined but not exported.
 
-### 34. mcp/ - Define MAX_REGEX_SAMPLES Constant
+**Fix:** Add to __init__.py exports
+
+### 28. mcp/ - Define MAX_REGEX_SAMPLES Constant
 **Priority:** LOW
 
 Referenced in docstring but not defined.
 
-### 35. mcp/ - Document Tier/Tag Filtering in Tools
+**Fix:** Define the constant in tools.py
+
+### 29. mcp/ - Document Tier/Tag Filtering in Tools
 **Priority:** LOW
 
-### 36. measure.py - Consistent None Handling
+**Fix:** Add documentation about tier and tag filtering mechanism
+
+### 30. measure.py - Consistent None Handling
 **Priority:** LOW
 
 `char_category_metrics(None)` raises TypeError while others return zero.
 
-### 37. primitives.py - Add ZWSP Extend Behavior Tests
+**Fix:** Make None handling consistent across all functions
+
+### 31. primitives.py - Add ZWSP Extend Behavior Tests
 **Priority:** LOW
 
-### 38. unicode_tools.py - Add MixedScriptsResult to Type Definitions
+**Fix:** Add tests to verify ZWSP is properly handled as extend character
+
+### 32. unicode_tools.py - Add MixedScriptsResult to Type Definitions
 **Priority:** LOW
 
-### 39. units.py - Document Scalar + UnitValue Behavior
+**Fix:** Add TypedDict for MixedScriptsResult if missing
+
+### 33. units.py - Document Scalar + UnitValue Behavior
 **Priority:** LOW
 
-Or decide to fix (see Wave 1 items 1-2).
+Document the behavior when adding scalars to UnitValues, or decide to fix.
 
-### 40. validate.py - DEBUG Flag Never Applied
+### 34. validate.py - DEBUG Flag Never Applied
 **Priority:** LOW
 
-Remove or implement.
+**Fix:** Either implement DEBUG functionality or remove the flag
 
 ---
 
@@ -418,45 +467,54 @@ Remove or implement.
 
 ## Verified as Working (No Action Needed)
 
-- confusables.py implementation is correct - no bugs found
-- All evaluator security architecture (AST parsing, whitelist approach) verified
-- `get_unit_category` is correctly imported in evaluator.py (line 27)
+The following items were claimed as bugs but verified to already be fixed or working correctly:
+- `units.py:66` __add__ scalar+dimensional - Already raises ValueError correctly
+- `units.py:81-83` __rsub__ scalar+dimensional - Already raises ValueError correctly
+- `normalize.py:1517` --verbose flag - Logic is actually correct
+- `validate.py:413` toml_shape exception - Uses Exception which works
+- `synthesis.py:1072` list_compare operator precedence - Parentheses already present
+- `primitives.py:351-369` ZWSP extend - ZWSP (0x200B) already included in check
+- `get_unit_category` import in evaluator.py - Import is present at line 27
 - All 629 tests pass
 - Memory, variable, constant functions all match documentation
 - CLI options correctly route to implementations
-- Text commands (`inspect`, `count`, `regex`) delegate correctly to `exact` module
+- Text commands delegate correctly to exact/ module
 
 ---
 
 ## Implementation Order & Parallelization
 
 ### Phase 1 (Wave 1): High Priority Bugs
-**Can parallelize:** All 4 items are independent
-- Agent 1: units.py __add__ + __rsub__ bugs (items 1-2)
-- Agent 2: normalize.py double-minus bug (item 3)
-- Agent 3: mcp/tools.py list_units issue (item 4)
+**Items: 1-2** (2 items, can parallelize 2 agents)
+- Agent 1: normalize.py double-minus bug (item 1)
+- Agent 2: mcp/tools.py list_units issue (item 2)
 
 ### Phase 2 (Wave 2): Medium Priority Bugs
-**Can parallelize:** All 5 items are independent
-- Agent 1: validate.py toml_shape exception (item 5)
-- Agent 2: normalize.py --verbose + int regex (items 6, 9)
-- Agent 3: mcp/tools.py duplicate constant (item 7)
-- Agent 4: units.py __eq__ issue (item 8)
+**Items: 3-5** (3 items, can parallelize 3 agents)
+- Agent 1: normalize.py int regex patterns (item 3)
+- Agent 2: mcp/tools.py duplicate constant (item 4)
+- Agent 3: units.py __eq__ issue (item 5)
 
 ### Phase 3 (Wave 3): Low Priority Bugs
-**Can parallelize:** Items are mostly independent
-- Agent 1: synthesis.py bugs (items 10, 11, 12)
-- Agent 2: primitives.py ZWSP (item 13)
-- Agent 3: mcp/schemas.py ErrorEnvelope (item 14)
-- Agent 4: evaluator docs + ln alias (items 16, 17)
+**Items: 6-11** (6 items, can parallelize 3-4 agents)
+- Agent 1: synthesis.py text_window n variable + count_chars field (items 6, 7)
+- Agent 2: mcp/schemas.py ErrorEnvelope + api normalize_expression (items 8, 9)
+- Agent 3: evaluator.py ln alias + docs for evaluate_async/cached (items 10, 11)
 
 ### Phase 4 (Wave 4): Documentation Updates
-**Can parallelize:** All items are independent documentation work
-- Each doc file can be updated by separate agent
+**Items: 12-26** (15 items, can parallelize 4-5 agents)
+- Agent 1: exact.md updates (items 12, 15)
+- Agent 2: mcp.md + validate.md (items 13, 23)
+- Agent 3: synthesis.md docs (items 18, 19)
+- Agent 4: unicode_tools.md docs (items 20, 21, 22)
+- Agent 5: remaining docs (items 14, 16, 17, 24, 25, 26)
 
 ### Phase 5 (Wave 5): Improvements
-**Can parallelize:** All items are independent
-- Each improvement can be implemented by separate agent
+**Items: 27-34** (8 items, can parallelize 3-4 agents)
+- Agent 1: exports and constants (items 27, 28, 34)
+- Agent 2: None handling consistency (item 30)
+- Agent 3: type definitions (items 31, 32)
+- Agent 4: documentation for scalar+UnitValue (item 33)
 
 ---
 
@@ -471,21 +529,32 @@ All 629 tests must pass.
 
 ---
 
-## Plan Source Files
+## Removed Items (Already Fixed or Incorrect)
 
-This plan was consolidated from the following architecture review files:
-- `plans/overview_review.md` - General architecture discrepancies
-- `plans/exact_review.md` - exact/ module review
-- `plans/mcp_review.md` - MCP server review
-- `plans/normalize_review.md` - normalize.py review
-- `plans/evaluator_review.md` - evaluator.py review (note: claimed bug re: get_unit_category import is INCORRECT - import is present at line 27)
-- `plans/units_review.md` - units.py review
-- `plans/measure_review.md` - measure.py review
-- `plans/synthesis_review.md` - synthesis.py review
-- `plans/diff_review.md` - diff.py review
-- `plans/unicode_tools_review.md` - unicode_tools.py review
-- `plans/primitives_review.md` - primitives.py review
-- `plans/confusables_review.md` - confusables.py review
-- `plans/cli_review.md` - CLI review
-- `plans/validate_review.md` - validate.py review
-- `plans/api_review.md` - API review
+The following items from the original plan have been removed because they were verified as already fixed or incorrectly described:
+
+| Original # | Description | Reason Removed |
+|-----------|-------------|----------------|
+| 1 | units.py __add__ scalar+dimensional | Already raises ValueError (code verified) |
+| 2 | units.py __rsub__ scalar+dimensional | Already raises ValueError (code verified) |
+| 5 | validate.py toml_shape exception | Uses Exception, not JSONDecodeError (works) |
+| 6 | normalize.py --verbose flag | Code is actually correct |
+| 11 | synthesis.py list_compare operator precedence | Parentheses already present (code verified) |
+| 13 | primitives.py ZWSP extend | ZWSP already included in check (code verified) |
+
+---
+
+## Notes for Future Agents
+
+1. **Before fixing bugs:** Always read the actual code first. The plan.md was verified but some bugs may have been fixed after verification.
+
+2. **For unit tests:** When adding tests for bug fixes, use:
+   - `run()` for NL inputs like "five plus three"
+   - `evaluate()` for pure math like "5 + 3"
+   - CLI for integration tests
+
+3. **For documentation fixes:** Always verify against the actual code before updating docs.
+
+4. **Build compatibility:** All code changes must work when assembled by build_single.py into nl_calc.py
+
+(End of file)
