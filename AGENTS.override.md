@@ -69,6 +69,25 @@ These were investigated and confirmed not to be bugs:
 - `__eq__` returning `NotImplemented` for different units is intentional for Python's comparison protocol
 - Int regex patterns `[-|+]?` at normalize.py:367,369 allow `|` and `*` but these don't appear in practice (low practical impact)
 
+### Session Learnings (2026-05-29)
+
+**Plan Consolidation:**
+- Consolidated 15 architecture review files into single `plans/plan.md`
+- 40+ actionable items organized into 5 waves for parallel implementation
+- Each wave can be worked on independently by different agents
+
+**Parallelization Opportunities:**
+- Wave 1 (4 high priority bugs): 3 parallel agents possible
+- Wave 2 (5 medium bugs): 4 parallel agents possible
+- Wave 3 (8 low bugs): 4 parallel agents possible
+- Wave 4 (15 doc updates): 15 parallel agents possible
+- Wave 5 (8 improvements): 8 parallel agents possible
+
+**Verified During Review:**
+- `get_unit_category` IS correctly imported in evaluator.py:27 (NOT a bug as claimed in evaluator_review)
+- `list_units` is NOT exported from units.py - confirmed bug in mcp/tools.py:324
+- `__eq__` for UnitValue with different units returns NotImplemented (could be improved to return False)
+
 ### Architecture Conventions
 
 **TypedDict vs NamedTuple:**

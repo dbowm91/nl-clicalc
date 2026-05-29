@@ -262,51 +262,16 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `visible_repr()` combining mark check order - CORRECT, VS check precedes combining marks for proper display
 - Redundant temperature condition - NOT PRESENT in current code
 
-**New Bugs Identified (2026-05-29) - See plans/plan.md:**
-- `units.py:66` - `__add__` scalar + dimensional bug (e.g., `UnitValue(3, "m") + 5` returns `8 m` incorrectly)
-- `units.py:81-84` - `__rsub__` scalar + dimensional bug (e.g., `5 - UnitValue(3, "m")` returns `2 m` incorrectly)
-- `normalize.py:762-763` - Double minus concatenation bug ("5 minus -2" → "52" instead of 3)
-- `mcp/tools.py:324` - `unit_info()` imports non-existent `list_units` → NameError at runtime
-- `mcp/tools.py:839 and 1337` - Duplicate `_VALID_TRANSFORM_OPERATIONS` definition
+**Current Bugs - See plans/plan.md:**
+The current implementation plan with all bugs is at `plans/plan.md`. Active bugs include:
+- units.py scalar+dimensional mixing bugs
+- normalize.py double-minus concatenation bug
+- mcp/tools.py list_units not exported
 
-## Implementation Plan
-
-The implementation plan has been **updated** (2026-05-29). Previous plan (2026-05-28) completed 56 items. A new review has identified 40 additional actionable items across 5 waves.
-
-**Current plan:** `plans/plan.md`
-
-**Wave summary:**
-- Wave 1: 4 high priority bugs (units.py scalar bugs, normalize.py double-minus, mcp/tools.py list_units)
-- Wave 2: 5 medium priority bugs
-- Wave 3: 8 low priority bugs
-- Wave 4: 15 documentation updates
-- Wave 5: 8 improvements
-
-**Deferred items** (design review needed for future):
-- Add `normalize_text` to `inspect_text()` - overlaps with existing workflow
-- Performance review for confusables_count - already optimal O(n)
-- Reorganize documentation - low priority, current structure functional
-- Return type consistency for UnitValue wrapping
-- Confusables regeneration metadata
-- TypedDict documentation completeness
-
-Run `python3 -m pytest tests/` to verify all 629 tests pass.
-
-## Verification Notes (from planning session)
-
-### Fixed Issues (verified working)
-- Temperature-to-non-temperature conversion now raises clear `ValueError`
-- Dead code removed from `list_compare()` near_matches
-- Float regex pattern fixed from `[-|+]?` to `[-+]?`
-
-### Previously Confirmed NOT Bugs
-- `accent_or_diacritic_difference` classification IS reachable in `text_equal()`
-- `_handle_negative_token` has bounds checking + regex guard, no IndexError
-
-### Constants in Code (noted)
+## Constants in Code (noted)
 - `g` / `standardgravity` = 9.80665 at evaluator.py:875-876
 - `wien` / `wienconstant` = 2.897771955e-3 at evaluator.py:900-901
 
-### build_single.py Convention
+## build_single.py Convention
 - `normalize_main` alias is created by `build_single.py:236` during assembly, does not exist in source `normalize.py`
 - Source only has `main()`, not `normalize_main()`
