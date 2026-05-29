@@ -247,49 +247,8 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - Temperature conversions use offset math, not multiplicative factors
 - `mps` (meters per second) is in `UNIT_CATEGORIES` as "speed"
 
-### Known Bugs (from architecture review)
+## Deferred Items
 
-**Wave 1 - Critical Bugs (FIXED):**
-1. `units.py:146-164` - Temperature-to-non-temperature conversion now raises clear ValueError (was warning+crash)
-2. `synthesis.py:704-714` - Removed unreachable `unicode_normalization_only` near_match code
-3. `normalize.py:368` - Fixed float regex `[-|+]?` to `[-+]?`
+The implementation plan at `plans/plan.md` has been pruned. All 35 original items are complete. Deferred items for design review remain in plan.md.
 
-**Verified as NOT bugs (do not list in plan):**
-- `_classify_difference()` lines 337-338 - Branch IS reachable when NFC-equal strings have different byte representations after casefold (precomposed vs decomposed forms)
-- `_handle_negative_token()` - Bounds checking and regex guard prevent IndexError
-
-**All bugs from plan.md - FIXED (2026-05-29):**
-- normalize.py double-minus concatenation bug
-- mcp/tools.py list_units import issue
-- normalize.py int regex patterns with erroneous `|`
-- mcp/tools.py duplicate _VALID_TRANSFORM_OPERATIONS
-- units.py __eq__ returns False for different units (already fixed)
-- text_window undefined n variable
-- count_chars field inconsistency
-- ErrorEnvelope missing fields
-- normalize_expression return type documented
-- ln alias missing in evaluator
-- evaluate_async/evaluate_cached now documented
-
-All 35 items in plans/plan.md completed. See plan for details.
-
-## Constants in Code (noted)
-- `g` / `standardgravity` = 9.80665 at evaluator.py:875-876
-- `wien` / `wienconstant` = 2.897771955e-3 at evaluator.py:900-901
-
-## build_single.py Convention
-- `normalize_main` alias is created by `build_single.py:236` during assembly, does not exist in source `normalize.py`
-- Source only has `main()`, not `normalize_main()`
-
-## Plan Reference
-
-The implementation plan at `plans/plan.md` contains 35 verified actionable items organized in 5 waves:
-- Wave 1: 2 high priority bugs
-- Wave 2: 3 medium priority bugs  
-- Wave 3: 6 low priority bugs
-- Wave 4: 15 documentation updates
-- Wave 5: 8 improvements
-
-Each wave can be parallelized across multiple agents for efficiency.
-
-(End of file - 277 lines)
+(End of file)
