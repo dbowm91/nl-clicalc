@@ -89,4 +89,27 @@ The following items were claimed as bugs but are actually working correctly:
 
 All 35 items in `plans/plan.md` have been verified as completed (2026-05-29). The plan file is being pruned to remove completed items.
 
+### Architecture Review Findings (review_plan.md - 2026-05-29)
+
+All 15 architecture modules reviewed via `architecture/review_plan.md`. Review outputs available in `plans/*_review.md`. Key findings:
+
+**CLI Output Format Issue** (`plans/cli_review.md`):
+- Documentation describes `expression -> result` output format
+- Code only outputs `result` (just the number/value)
+- No code changes made - documentation discrepancy only
+
+**validate.py `list_sort` Parameter** (`plans/validate_review.md`):
+- `stable` parameter has no effect - Python's `sorted()` is always stable
+- No code changes made - parameter is harmless but meaningless
+
+**API `normalize_expression` Return Type** (`plans/api_review.md`):
+- Documentation shows string return, actual is `tuple[str, int]`
+- Examples in docs should show tuple unpacking
+
+### All Tests Pass
+
+```
+1231 passed, 32 skipped, 1 warning in 35.88s
+```
+
 (End of file)

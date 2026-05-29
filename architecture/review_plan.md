@@ -1,8 +1,10 @@
 # Architecture Review Plan
 
-## Overview
+## Status: INCOMPLETE
 
 This plan orchestrates a systematic, in-depth review of all architecture documentation modules in the `architecture/` directory. The goal is to verify documentation accuracy against code, identify bugs, and surface improvement opportunities without prescribing direct code changes.
+
+> **Note:** Review outputs are available in `plans/*_review.md`. See stale item detection report below.
 
 ## Architecture Modules (15 total, excluding `review_plan.md`)
 
@@ -165,3 +167,96 @@ python3 -m pytest tests/ -v
 ```
 
 Ensure all tests pass. Review outputs inform future improvement planning but do not directly modify code.
+
+---
+
+## Stale Item Detection Report
+
+### Completed Review Files (15 modules)
+
+| Module | Review File | Status |
+|--------|-------------|--------|
+| API | `plans/api_review.md` | Complete |
+| CLI | `plans/cli_review.md` | Complete |
+| Confusables | `plans/confusables_review.md` | Complete |
+| Diff | `plans/diff_review.md` | Complete |
+| Evaluator | `plans/evaluator_review.md` | Complete |
+| Exact | `plans/exact_review.md` | Complete |
+| MCP | `plans/mcp_review.md` | Complete |
+| Measure | `plans/measure_review.md` | Complete |
+| Normalize | `plans/normalize_review.md` | Complete |
+| Overview | `plans/overview_review.md` | Complete |
+| Primitives | `plans/primitives_review.md` | Complete |
+| Synthesis | `plans/synthesis_review.md` | Complete |
+| Unicode Tools | `plans/unicode_tools_review.md` | Complete |
+| Units | `plans/units_review.md` | Complete |
+| Validate | `plans/validate_review.md` | Complete |
+
+### Architecture Files (16 .md files in `architecture/`)
+
+| File | Status | Notes |
+|------|--------|-------|
+| `api.md` | Valid | Reviewed - discrepancies noted in api_review.md |
+| `cli.md` | Valid | Reviewed - output format discrepancies in cli_review.md |
+| `confusables.md` | Valid | Reviewed |
+| `diff.md` | Valid | Reviewed |
+| `evaluator.md` | Valid | Reviewed |
+| `exact.md` | Valid | Reviewed |
+| `mcp.md` | Valid | Reviewed |
+| `measure.md` | Valid | Reviewed |
+| `normalize.md` | Valid | Reviewed |
+| `overview.md` | Valid | Reviewed |
+| `primitives.md` | Valid | Reviewed |
+| `synthesis.md` | Valid | Reviewed |
+| `unicode_tools.md` | Valid | Reviewed |
+| `units.md` | Valid | Reviewed |
+| `validate.md` | Valid | Reviewed |
+| `diff.md` | Valid | Reviewed |
+
+### Stale Files Found
+
+**None.** All architecture files correspond to actual code modules.
+
+### Stale Review Files
+
+**None.** All 15 review files correspond to current architecture files.
+
+### Test Verification Results
+
+```
+1231 passed, 32 skipped, 1 warning in 35.88s
+```
+
+All tests pass. No code changes were made as per the plan's scope.
+
+---
+
+## Key Findings Summary
+
+### High Priority Issues Identified
+
+1. **CLI Output Format Mismatch** (`plans/cli_review.md`)
+   - Documentation describes `expression -> result` format
+   - Code only outputs `result`
+   - No stale/removed modules detected
+
+2. **API `normalize_expression` Return Type** (`plans/api_review.md`)
+   - Document shows string return, actual is `tuple[str, int]`
+
+3. **`list_sort` stable parameter meaningless** (`plans/validate_review.md`)
+   - Python's `sorted()` is always stable
+   - Parameter has no effect
+
+### Deferred Items from Prior Plan (plans/plan.md)
+
+| Item | Description | Status |
+|------|-------------|--------|
+| D3 | `load_user_config_extended` not exported | By design - thread-safety concerns |
+
+### Notes for Future Review Cycles
+
+1. All 15 module reviews completed in single pass
+2. No orphaned architecture files detected
+3. No orphaned review files detected
+4. All tests pass (1231 passed)
+5. Reviews did not prescribe code changes - findings are for informational improvement planning
