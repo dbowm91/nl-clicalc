@@ -116,20 +116,67 @@ When `target` is `None`, returns a frequency dictionary mapping each character t
 
 ### List Comparison
 
-### `list_compare(a: list[str], b: list[str], ignore_order: bool = True, casefold: bool = False, normalization: str = "NFC") -> dict`
+### `list_compare(a: list[str], b: list[str], ignore_order: bool = True, casefold: bool = False, normalization: str = "NFC", treat_as_multiset: bool = True, include_near_matches: bool = False, near_match_threshold: int = 2) -> ListCompareResult`
 
 Compare two lists with optional transformations.
 
 ```python
-{
-    "same_ordered": bool,
-    "same_unordered": bool,
-    "only_in_a": list[str],
-    "only_in_b": list[str],
-    "duplicates_a": list[str],
-    "duplicates_b": list[str],
-    "near_matches": list[dict]  # Items that differ only by case or normalization
-}
+class ListCompareResult(TypedDict):
+    same_ordered: bool
+    same_unordered: bool
+    only_in_a: list[str]
+    only_in_b: list[str]
+    duplicates_a: list[str]
+    duplicates_b: list[str]
+    near_matches: list[ListCompareNearMatch]
+
+class ListCompareOrderedResult(TypedDict):
+    equal: bool
+    first_diff_index: int | None
+    equal_prefix_length: int
+    aligned: list[dict]
+
+class ListCompareSetResult(TypedDict):
+    equal: bool
+    only_in_a: list[str]
+    only_in_b: list[str]
+
+class ListCompareMultisetResult(TypedDict):
+    equal: bool
+    count_deltas: dict[str, int]
+    only_in_a: list[str]
+    only_in_b: list[str]
+
+class ListCompareNearMatch(TypedDict):
+    a: str
+    b: str
+    distance: int
+    classification: str
+```
+
+### Text Window
+
+### `text_window(text: str, position: dict, context_lines: int = 2, include_visible_repr: bool = True) -> TextWindowResult`
+
+Get a window around a position in text with context lines. Shows the line at the given position with surrounding context lines.
+
+```python
+class TextWindowPosition(TypedDict):
+    byte_offset: int
+    codepoint_index: int
+    grapheme_index: int
+    line: int
+    column: int
+
+class TextWindowResult(TypedDict):
+    position: TextWindowPosition
+    line_text: str
+    line_visible_repr: str
+    before: list[dict]
+    after: list[dict]
+    newline_style: str
+    at_codepoint: dict | None
+    warnings: list[str]
 ```
 
 ## Internal Helper Functions

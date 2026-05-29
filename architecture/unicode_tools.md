@@ -109,6 +109,19 @@ confusables_count("access")  # → 0 or more depending on confusables present
 confusables_count("а")       # → 1 if Cyrillic 'а' looks like Latin 'a'
 ```
 
+### `reverse_confusables(char: str) -> list[str]`
+
+Given a character, returns all characters from the confusables table that confusable-map TO this character (i.e., characters that look like the given character and could be confused with it).
+
+```python
+reverse_confusables("O")   # → ["0"] if digit 0 is confusable with letter O
+reverse_confusables("a")   # → ["а"] if Cyrillic 'а' is confusable with Latin 'a'
+```
+
+**Returns:** List of characters that are confusable with the input. Empty list if no confusables exist.
+
+**Raises:** `ValueError` if input is not a single character.
+
 ## Supported Scripts
 
 | Script | Example Characters | Codepoint Range |
@@ -161,9 +174,10 @@ The confusables table is derived from **Unicode Standard Annex #39** (https://ww
 
 ```
 unicode_tools.py
-    ├── primitives.py (utf8_bytes, casefold_text)
     └── confusables.py (CONFUSABLES data)
 ```
+
+Uses only standard library (`functools`, `unicodedata`, `typing`) plus the `confusables.py` data file.
 
 ## Security Applications
 
@@ -176,14 +190,14 @@ def detect_potential_homoglyph_attack(domain: str) -> bool:
     return len(confusables) > 0
 ```
 
-### Mixed Script Detection
+### `check_domain_safety(domain: str) -> bool`
 
 ```python
 def check_domain_safety(domain: str) -> bool:
     """Check for mixed scripts in domain (common attack vector)."""
     mixed = detect_mixed_scripts(domain)
     # Normal domains should be single-script
-    return len(mixed) <= 1
+    return not mixed["mixed_scripts"]
 ```
 
 ## Usage Example

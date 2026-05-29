@@ -6,14 +6,20 @@ Low-level deterministic Unicode text analysis tools. These modules are **indepen
 
 ```
 exact/
-├── __init__.py       # Public API re-exports
-├── primitives.py     # UTF-8, codepoints, normalization, invisibles
-├── unicode_tools.py  # Script detection, confusables
-├── measure.py        # Text metrics (words, lines, categories)
-├── diff.py           # String diffing algorithms
-├── validate.py       # JSON/bracket/regex validation
-├── synthesis.py     # Higher-level text analysis
-└── confusables.py   # Homoglyph identification (auto-generated)
+├── __init__.py            # Public API re-exports
+├── primitives.py          # UTF-8, codepoints, normalization, invisibles
+├── unicode_tools.py       # Script detection, confusables
+├── confusables.py         # Homoglyph identification (auto-generated data)
+├── measure.py             # Text metrics (words, lines, categories)
+├── diff.py                # String diffing algorithms
+├── validate.py            # JSON/bracket/regex validation
+├── synthesis.py           # Higher-level text analysis
+├── glob.py                # Glob pattern matching
+├── transform.py           # Text escaping, hashing, fingerprinting
+├── identifier.py          # Identifier analysis
+├── identifier_inspect.py  # Identifier inspection and collision detection
+├── path_tools.py          # Path analysis and normalization
+└── position.py            # Text position operations
 ```
 
 ## exact/__init__.py — Public API
@@ -36,14 +42,32 @@ from nl_calc.exact import (
     diff_spans, longest_common_subsequence,
 
     # Validate
-    check_brackets, validate_json, regex_test,
+    check_brackets, validate_json, validate_toml_text, validate_schema_light,
+    regex_test, regex_finditer, regex_safety_check,
+    json_extract, json_compare, json_shape, version_compare,
+    list_dedupe, list_sort,
 
     # Measure
     line_metrics, word_metrics, char_category_metrics,
 
+    # Position
+    text_position,
+
+    # Transform
+    escape_text, unescape_text, text_hash, text_transform, text_fingerprint,
+
     # Synthesis
     measure_text, text_equal, inspect_text, explain_diff,
     count_chars, list_compare,
+
+    # Glob
+    glob_match,
+
+    # Identifier
+    identifier_analyze, identifier_inspect,
+
+    # Path
+    path_analyze, path_normalize,
 )
 ```
 
@@ -275,7 +299,17 @@ common_prefix_suffix("abc123", "abc456")
 |----------|---------|-------------|
 | `check_brackets(s)` | CheckBracketsResult | Balanced bracket check |
 | `validate_json(s)` | ValidateJsonResult | JSON syntax validation |
+| `validate_toml_text(s)` | ValidateTomlResult | TOML syntax validation |
+| `validate_schema_light(s)` | ValidateSchemaLightResult | JSON schema lightweight validation |
 | `regex_test(pattern, samples)` | RegexTestResult | Test regex against samples |
+| `regex_finditer(pattern, text)` | RegexFindIterResult | Find all regex matches with positions |
+| `regex_safety_check(pattern)` | RegexSafetyResult | Check regex for catastrophic backtracking |
+| `json_extract(json_str, path)` | JsonExtractResult | Extract data from JSON using path |
+| `json_compare(a, b)` | JsonCompareResult | Compare two JSON documents |
+| `json_shape(s)` | JsonShapeResult | Analyze JSON structure |
+| `version_compare(v1, v2)` | int | Compare version strings (-1, 0, 1) |
+| `list_dedupe(lst)` | list | Remove duplicate items preserving order |
+| `list_sort(lst, key, reverse)` | list | Sort list with stable ordering |
 
 ### CheckBracketsResult
 

@@ -194,6 +194,19 @@ class TestPrimitives:
         assert not _is_extended_pictographic('\u0410')  # Cyrillic 'А'
         assert not _is_extended_pictographic('\u0627')  # Arabic 'ا'
 
+    def test_is_extend_char_zwsp(self):
+        from nl_calc.exact.primitives import _is_extend_char
+        assert _is_extend_char('\u200b')  # ZWSP
+        assert _is_extend_char('\u200c')  # ZWNJ
+        assert not _is_extend_char('\u200d')  # ZWJ (not included)
+        assert not _is_extend_char('\u200e')  # LRM (not included)
+
+    def test_is_extend_char_combining(self):
+        from nl_calc.exact.primitives import _is_extend_char
+        assert _is_extend_char('\u0301')  # combining acute accent (Mn)
+        assert _is_extend_char('\u0302')  # combining circumflex (Mn)
+        assert _is_extend_char('\ufe00')  # variation selector 1
+
 
 class TestUnicodeTools:
     """Tests for Unicode tools."""

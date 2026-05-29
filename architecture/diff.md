@@ -50,10 +50,8 @@ None
 Find common prefix and suffix lengths between two strings.
 
 ```python
->>> common_prefix_suffix("hello", "hell")
-{'common_prefix_len': 4, 'common_suffix_len': 0}
 >>> common_prefix_suffix("hello", "yo")
-{'common_prefix_len': 0, 'common_suffix_len': 0}
+{'common_prefix_len': 0, 'common_suffix_len': 1}
 >>> common_prefix_suffix("testing", "ing")
 {'common_prefix_len': 0, 'common_suffix_len': 3}
 ```
@@ -106,7 +104,7 @@ class CommonPrefixSuffix(TypedDict):
 
 ```python
 >>> list(diff_spans("hello", "hallo"))
-[DiffSpan(kind='replace', a_span=[2, 3], b_span=[2, 3], a_text='l', b_text='a')]
+[DiffSpan(kind='replace', a_span=[1, 2], b_span=[1, 2], a_text='e', b_text='a')]
 ```
 
 ## Data Structures

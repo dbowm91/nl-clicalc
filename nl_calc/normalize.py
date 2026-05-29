@@ -364,9 +364,9 @@ def _build_config() -> tuple[dict, dict]:
         "operators": re.compile(f"^({'|'.join([re.escape(s) for s in symbols])}){{1}}$"),
         # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
         "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in STRIPPED_PHRASES])})"),
-        "int": re.compile(r"^[-|+]?[0-9]\d*$"),
+        "int": re.compile(r"^[-+]?[0-9]\d*$"),
         "float": re.compile(r"^[-+]?[0-9]\d*\.\d+?$"),
-        "int_number_combine": re.compile(r"^[-|+|*]?[0-9]\d*$"),
+        "int_number_combine": re.compile(r"^[-+*]?[0-9]\d*$"),
         "valid_operations": re.compile(
             f"^({'|'.join([re.escape(s) for s in symbols] + [re.escape(f) for f in FUNCTION_MAPPINGS.values()] + [re.escape(c) for c in CONSTANT_WORDS.keys()])}){{1}}$"
         ),
@@ -702,6 +702,11 @@ def _should_split_number_minus(token: str) -> bool:
     return bool(re.match(r"^\d+-\d+$", token))
 
 
+def _should_split_double_minus(token: str) -> bool:
+    """Check if token matches pattern: digit-sequence -- digit-sequence."""
+    return bool(re.match(r"^\d+--\d+$", token))
+
+
 def _should_handle_inline_negative(
     tokens: list, index: int, patterns: Mapping[str, Pattern[str]]
 ) -> bool:
@@ -756,10 +761,16 @@ def split_at_operators(
                 tokens[i] = parts[0]
                 tokens.insert(i + 1, "-")
                 tokens.insert(i + 2, parts[1])
+            elif _should_split_double_minus(tokens[i]):
+                token = tokens[i]
+                parts = token.split("--", 1)
+                tokens[i] = parts[0]
+                tokens.insert(i + 1, "-")
+                tokens.insert(i + 2, f"-{parts[1]}")
             elif _should_split_number_sequence(tokens[i]):
                 parts = tokens[i].split()
                 tokens[i:i+1] = parts
-            elif tokens[i][:1] != "-" and tokens[i - 1] != ".":
+            elif i > 0 and tokens[i][:1] != "-" and tokens[i - 1] != ".":
                 tokens[i] = tokens[i].replace("-", "")
             elif patterns["negative"].match(tokens[i][:1]):
                 tokens[i] = f"-{tokens[i][1:].replace('-', '')}"

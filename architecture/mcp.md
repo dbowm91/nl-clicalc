@@ -51,21 +51,49 @@ class ErrorEnvelope(TypedDict):
 
 ### TOOL_SCHEMAS
 
-Registry of all available tools:
+Registry of all available tools (39 total):
 
 | Tool Name | Description |
 |-----------|-------------|
 | `math_eval` | Evaluate arithmetic, unit conversions, constants |
+| `unit_convert` | Convert numeric value from one unit to another |
+| `unit_info` | Get information about a unit (canonical form, category) |
+| `constant_lookup` | Look up physical constant values and symbols |
 | `text_measure` | Measure text properties (bytes, codepoints, words, lines) |
 | `text_equal` | Compare strings with multiple equality modes |
 | `text_diff_explain` | Explain string differences |
 | `text_inspect` | Inspect for hidden characters, confusables |
 | `text_count` | Count characters or frequency table |
 | `text_truncate` | Truncate to grapheme boundary |
+| `text_transform` | Apply text transformations (normalization, casefold, etc.) |
+| `text_position` | Convert between byte offsets, codepoint indices, line/column |
 | `validate_brackets` | Check balanced brackets |
 | `validate_json` | Validate JSON syntax |
 | `validate_regex` | Test regex against samples |
+| `validate_toml` | Validate TOML configuration files |
 | `list_compare` | Compare two lists |
+| `list_dedupe` | Remove duplicates from list preserving order |
+| `list_sort` | Sort list of strings |
+| `json_compare` | Compare two JSON documents semantically |
+| `json_extract` | Extract value using RFC 6901 JSON Pointer |
+| `json_shape` | Analyze JSON structure without returning values |
+| `json_canonicalize` | Canonicalize JSON with deterministic formatting |
+| `json_query` | Query JSON using RFC 6901 JSON Pointer |
+| `regex_finditer` | Find all regex matches with positions |
+| `regex_safety_check` | Check regex for catastrophic backtracking risks |
+| `validate_schema_light` | Validate JSON against simple schema |
+| `path_normalize` | Normalize path using posixpath/ntpath semantics |
+| `path_analyze` | Analyze path components, extensions, hidden status |
+| `text_window` | Get window around position with context lines |
+| `text_hash` | Compute cryptographic hashes of text |
+| `text_fingerprint` | Compute deterministic SHA-256 fingerprint |
+| `escape_text` | Escape text for various output formats |
+| `unescape_text` | Unescape text from various formats |
+| `identifier_analyze` | Classify and validate identifier naming conventions |
+| `identifier_inspect` | Inspect identifiers for validity and collisions |
+| `version_compare` | Compare two version strings (semver, loose) |
+| `toml_shape` | Analyze TOML document structure |
+| `glob_match` | Match glob pattern against path |
 
 ### math_eval Schema
 
@@ -159,16 +187,44 @@ def _sanitize_error(message: str) -> str:
 | Function | Wraps | Notes |
 |----------|-------|-------|
 | `math_eval(expression)` | `evaluate_raw()` | Math evaluation |
-| `text_measure(text)` | `measure_text()` | Text metrics |
-| `text_equal(a, b, normalization, casefold, trim)` | `text_equal()` | String comparison |
+| `unit_convert(value, from_unit, to_unit)` | `get_conversion_factor()` | Unit conversion |
+| `unit_info(unit)` | `UNIT_ALIASES, UNIT_CATEGORIES` | Unit information |
+| `constant_lookup(name)` | `constants dict` | Physical constant lookup |
+| `text_measure(text, detail)` | `measure_text()` | Text metrics |
+| `text_equal(a, b, normalization, ...)` | `text_equal()` | String comparison |
 | `text_diff_explain(a, b, max_diffs, ...)` | `explain_diff()` | Diff explanation |
 | `text_inspect(text, include_codepoints, ...)` | `inspect_text()` | Hidden char inspection |
-| `text_count(text, target, normalization)` | `count_chars()` | Char counting |
+| `text_count(text, target, normalization, count_mode)` | `count_chars()` | Char counting |
 | `text_truncate(text, max_graphemes)` | `truncate_to_grapheme()` | Truncation |
-| `validate_brackets(text)` | `check_brackets()` | Bracket validation |
+| `text_transform(text, operations, detail)` | `text_transform()` | Text transformations |
+| `text_position(text, byte_offset, ...)` | `text_position()` | Position conversion |
+| `validate_brackets(text, pairs)` | `check_brackets()` | Bracket validation |
 | `validate_json(text)` | `validate_json()` | JSON validation |
-| `validate_regex(pattern, samples)` | `regex_test()` | Regex testing |
-| `list_compare(a, b)` | `list_compare()` | List comparison |
+| `validate_regex(pattern, samples, ...)` | `regex_test()` | Regex testing |
+| `validate_toml(text, detail)` | `validate_toml_text()` | TOML validation |
+| `list_compare(a, b, mode, ...)` | `list_compare()` | List comparison |
+| `list_dedupe(items, normalization, casefold)` | `list_dedupe()` | List deduping |
+| `list_sort(items, normalization, casefold)` | `list_sort()` | List sorting |
+| `json_compare(a, b, ...)` | `json_compare()` | JSON comparison |
+| `json_extract(text, pointer, ...)` | `json_extract()` | JSON extraction |
+| `json_shape(text, max_depth, ...)` | `json_shape()` | JSON shape analysis |
+| `json_canonicalize(text, ...)` | `json_canonicalize()` | JSON canonicalization |
+| `json_query(text, pointer)` | `json_query()` | JSON query |
+| `regex_finditer(pattern, text, ...)` | `regex_finditer()` | Regex find all |
+| `regex_safety_check(pattern)` | `regex_safety_check()` | Regex safety check |
+| `validate_schema_light(text, schema)` | `validate_schema_light()` | Schema validation |
+| `path_normalize(path, platform, ...)` | `path_normalize()` | Path normalization |
+| `path_analyze(path, style, ...)` | `path_analyze()` | Path analysis |
+| `text_window(text, position, ...)` | `text_window()` | Text window |
+| `text_hash(text, algorithms, ...)` | `text_hash()` | Text hashing |
+| `text_fingerprint(text, ...)` | `text_fingerprint()` | Text fingerprinting |
+| `escape_text(text, mode)` | `escape_text()` | Text escaping |
+| `unescape_text(text, mode)` | `unescape_text()` | Text unescaping |
+| `identifier_analyze(text, languages)` | `identifier_analyze()` | Identifier analysis |
+| `identifier_inspect(identifiers, ...)` | `identifier_inspect()` | Identifier inspection |
+| `version_compare(a, b, scheme)` | `version_compare()` | Version comparison |
+| `toml_shape(text, max_tables)` | `toml_shape()` | TOML shape analysis |
+| `glob_match(pattern, path, ...)` | `glob_match()` | Glob matching |
 
 ### Input Limits
 
@@ -212,16 +268,44 @@ Note: `_handle_initialize` is a separate function in `server.py` called directly
 ```python
 TOOL_HANDLERS: dict[str, Any] = {
     "math_eval": math_eval,
+    "unit_convert": unit_convert,
+    "unit_info": unit_info,
+    "constant_lookup": constant_lookup,
     "text_measure": text_measure,
     "text_equal": text_equal,
     "text_diff_explain": text_diff_explain,
     "text_inspect": text_inspect,
     "text_count": text_count,
     "text_truncate": text_truncate,
+    "text_transform": text_transform,
+    "text_position": text_position,
     "validate_brackets": validate_brackets,
     "validate_json": validate_json,
     "validate_regex": validate_regex,
+    "validate_toml": validate_toml,
     "list_compare": list_compare,
+    "list_dedupe": list_dedupe,
+    "list_sort": list_sort,
+    "json_compare": json_compare,
+    "json_extract": json_extract,
+    "json_shape": json_shape,
+    "json_canonicalize": json_canonicalize,
+    "json_query": json_query,
+    "regex_finditer": regex_finditer,
+    "regex_safety_check": regex_safety_check,
+    "validate_schema_light": validate_schema_light,
+    "path_normalize": path_normalize,
+    "path_analyze": path_analyze,
+    "text_window": text_window,
+    "text_hash": text_hash,
+    "text_fingerprint": text_fingerprint,
+    "escape_text": escape_text,
+    "unescape_text": unescape_text,
+    "identifier_analyze": identifier_analyze,
+    "identifier_inspect": identifier_inspect,
+    "version_compare": version_compare,
+    "toml_shape": toml_shape,
+    "glob_match": glob_match,
 }
 ```
 

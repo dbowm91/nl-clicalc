@@ -16,6 +16,8 @@ class ErrorEnvelope(TypedDict):
     error_type: str
     error: str
     hints: list[str]
+    tool: str | None
+    warnings: list[str]
 
 
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {

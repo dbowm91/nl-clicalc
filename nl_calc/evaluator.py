@@ -921,6 +921,7 @@ class Evaluator(ast.NodeVisitor):
         "atanh": _atanh,
         # Logarithmic (complex-aware)
         "log": _log,
+        "ln": _log,
         "log10": _log10,
         "log2": _log2,
         "log1p": math.log1p,

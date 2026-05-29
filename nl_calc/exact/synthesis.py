@@ -929,7 +929,7 @@ def count_chars(
             normalization=normalization,
             count=len(positions),
             positions=positions,
-            text_length_codepoints=len(text_bytes),
+            text_length_codepoints=len(text),
         )
     elif count_mode == "grapheme":
         grapheme_text = list(text)
@@ -1142,6 +1142,7 @@ def text_window(
     line_base = position.get("line_base", 1)
     column_base = position.get("column_base", 1)
 
+    n = len(text)
     codepoint_index: int | None = None
 
     if kind == "byte_offset":

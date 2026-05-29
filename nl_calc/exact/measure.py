@@ -166,7 +166,7 @@ def word_metrics(s: str) -> WordMetrics:
     else:
         avg_word_length = 0.0
 
-    # Estimate sentences (count . ! ? that are not ellipses or decimals)
+    # Estimate sentences (count . ! ? that are ellipses or sentence terminators)
     # Simple heuristic: count sentence-ending punctuation
     sentence_pattern = r"[.!?]+(?:\s|$)|[.!?]+(?=[A-Z])"
     sentences = re.findall(sentence_pattern, s)
@@ -203,15 +203,23 @@ def char_category_metrics(s: str) -> CharCategoryMetrics:
     Categorizes each character by Unicode general category.
 
     Args:
-        s: Input string. Must not be None.
+        s: Input string. None is treated as empty string (returns zero metrics).
 
     Returns:
         Dictionary with counts for letters, digits, punctuation,
         symbols, spaces, control_chars, combining_marks.
-
-    Raises:
-        TypeError: If s is None.
     """
+    if not s:
+        return CharCategoryMetrics(
+            letters=0,
+            digits=0,
+            punctuation=0,
+            symbols=0,
+            spaces=0,
+            control_chars=0,
+            combining_marks=0,
+        )
+
     letters = 0
     digits = 0
     punctuation = 0

@@ -46,7 +46,7 @@ class WordMetrics(TypedDict):
 ```python
 >>> word_metrics("hello world hello")
 WordMetrics(words=3, unique_words_casefolded=2,
-            sentences_estimate=1, paragraphs=1,
+            sentences_estimate=0, paragraphs=1,
             average_word_length=5.0)
 ```
 

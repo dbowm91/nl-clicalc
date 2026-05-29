@@ -236,8 +236,25 @@ evaluate_raw("30m + 100ft")     # → UnitValue(60.48, "m")
 ### `evaluate_cached(expression: str) -> Any`
 LRU cached evaluation for repeated identical expressions. Best for webapps.
 
+The cache is an LRU (Least Recently Used) cache with 1024 entries. Clear cache on errors:
+
+```python
+evaluate_cached("5 + 3")           # → 8 (cached)
+evaluate_cached("five plus three") # → 8 (cached, NL normalized first)
+evaluate_cached.cache_clear()       # Clear the cache
+```
+
 ### `evaluate_async(expression: str) -> Any`
 Async evaluation for use with async web frameworks.
+
+Runs evaluation in a thread pool executor to avoid blocking the event loop:
+
+```python
+result = await evaluate_async("5 + 3")           # Awaitable result
+result = await evaluate_async("five plus three")  # NL also supported
+```
+
+Used by `PyCalcApp` for concurrent request handling.
 
 ### `evaluate_with_timeout(expression: str, timeout: float) -> Any`
 Evaluation with timeout in seconds. Raises `TimeoutError` on timeout.

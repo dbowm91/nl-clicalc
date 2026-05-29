@@ -76,6 +76,24 @@ UnitValue(value: float, unit: str | None = None)
 
 **Important:** Adding/subtracting incompatible units raises `ValueError`.
 
+### Scalar + UnitValue Operations
+
+Adding or subtracting scalars from UnitValues is **not allowed** and raises `ValueError`:
+
+```python
+UnitValue(3, "m") + 5     # → ValueError: Cannot add scalar to dimensional value: m
+5 + UnitValue(3, "m")      # → ValueError: Cannot add scalar to dimensional value: m
+UnitValue(3, None) + 5     # → ValueError: Cannot add scalar to dimensional value: None
+```
+
+This behavior is intentional — mixing dimensionless scalars with dimensional values (like meters) is physically meaningless. Use `convert_to()` to explicitly convert to a dimensionless value first if needed:
+
+```python
+# To add a scalar to a UnitValue, make the scalar dimensional first
+uv = UnitValue(3, "m")
+uv + UnitValue(5, "m")     # → UnitValue(8.0, "m") — both have same unit
+```
+
 ## Unit Categories
 
 Units are organized by category (length, mass, time, etc.):
@@ -92,11 +110,12 @@ Units are organized by category (length, mass, time, etc.):
 | Power | W | kW, MW, hp |
 | Speed | m/s | km/h, mph, kn |
 | Temperature | K | C, F, R |
-| Frequency | Hz | kHz, MHz, GHz, THz |
+| Frequency | Ry | Hz, kHz, MHz, GHz, THz |
 | Force | N | kN, dyne, lbf |
 | Voltage | V | mV, kV, μV |
 | Current | A | mA, μA |
 | Area | m2 | km2, cm2, mm2, ha, acre, ft2, sqft, in2, mi2, yd2 |
+| Angle | rad | deg, grad, arcmin, arcsec |
 | Data Rate | bps | Kbps, Mbps, Gbps |
 
 ## Unit Definition Structure (UNIT_BASE)

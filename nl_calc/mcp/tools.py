@@ -321,7 +321,7 @@ def unit_info(unit: str) -> dict:
         Success response with unit information.
     """
     try:
-        from ..units import UNIT_ALIASES, UNIT_CATEGORIES, UNIT_BASE, list_units
+        from ..units import UNIT_ALIASES, UNIT_CATEGORIES, UNIT_BASE
 
         if unit not in UNIT_ALIASES:
             return _error_response("invalid_arguments", f"Unknown unit: {unit}", tool="unit_info")
@@ -1332,23 +1332,6 @@ def text_truncate(text: str, max_graphemes: int) -> dict:
         }, tool="text_truncate")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="text_truncate")
-
-
-_VALID_TRANSFORM_OPERATIONS = {
-    "normalize_nfc",
-    "normalize_nfd",
-    "normalize_nfkc",
-    "normalize_nfkd",
-    "casefold",
-    "trim",
-    "trim_trailing_whitespace",
-    "normalize_newlines_lf",
-    "ensure_final_newline",
-    "strip_final_newline",
-    "remove_zero_width",
-    "remove_bidi_controls",
-    "visible_repr",
-}
 
 
 def text_transform(text: str, operations: list[str], detail: str = "normal") -> dict:

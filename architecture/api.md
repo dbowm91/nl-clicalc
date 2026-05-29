@@ -141,7 +141,7 @@ User-defined variables:
 
 ## Normalization Functions
 
-### `normalize_expression(expression: str) -> str`
+### `normalize_expression(expression: str) -> tuple[str, int]`
 
 Normalize a natural language or mathematical expression into a canonical form.
 
