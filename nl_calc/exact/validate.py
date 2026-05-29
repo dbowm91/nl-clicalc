@@ -410,14 +410,6 @@ def toml_shape(text: str, max_tables: int = 100) -> TomlShapeResult:
             truncated=truncated,
             summary=f"Valid TOML with {len(top_level)} top-level keys and {len(tables)} tables",
         )
-    except json.JSONDecodeError as e:
-        return TomlShapeResult(
-            valid=False,
-            top_level_keys=None,
-            tables=None,
-            truncated=False,
-            summary=f"Invalid TOML: {e.msg}",
-        )
     except Exception as e:
         return TomlShapeResult(
             valid=False,

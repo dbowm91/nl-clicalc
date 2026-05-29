@@ -49,7 +49,7 @@ class UnitValue:
         if not isinstance(other, UnitValue):
             return NotImplemented
         if self.unit != other.unit:
-            return NotImplemented
+            return False
         return abs(self.value - other.value) < FLOAT_EPSILON
 
     def __hash__(self) -> int:
@@ -63,8 +63,7 @@ class UnitValue:
                 return UnitValue(self.value + other.value, self.unit or other.unit)
             converted = other.convert_to(self.unit)
             return UnitValue(self.value + converted.value, self.unit)
-        return UnitValue(self.value + other, self.unit)
-
+        raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
     def __radd__(self, other: Any) -> UnitValue:
         return self.__add__(other)
 
@@ -76,12 +75,12 @@ class UnitValue:
                 return UnitValue(self.value - other.value, self.unit or other.unit)
             converted = other.convert_to(self.unit)
             return UnitValue(self.value - converted.value, self.unit)
-        return UnitValue(self.value - other, self.unit)
+        raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
 
     def __rsub__(self, other: Any) -> UnitValue:
         if isinstance(other, UnitValue):
             return other.__sub__(self)
-        return UnitValue(other - self.value, self.unit)
+        raise ValueError(f"Cannot subtract dimensional value from scalar")
 
     def __mul__(self, other: Any) -> UnitValue:
         if isinstance(other, UnitValue):

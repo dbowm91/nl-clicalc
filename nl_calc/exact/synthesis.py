@@ -1069,7 +1069,7 @@ def list_compare(
                     break
 
     same_ordered = ignore_order or (a_transformed == b_transformed)
-    same_unordered = treat_as_multiset and a_set == b_set or not treat_as_multiset and a_counter == b_counter
+    same_unordered = (treat_as_multiset and a_set == b_set) or (not treat_as_multiset and a_counter == b_counter)
 
     return ListCompareResult(
         same_ordered=same_ordered,

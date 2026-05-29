@@ -362,7 +362,7 @@ def _is_extend_char(char: str) -> bool:
     # Also: ZWNJ (U+200C), Variation Selectors (U+FE00-U+FE0F)
     if cat.startswith('M'):
         return True
-    if cp == 0x200C:  # ZWNJ only (not ZWJ)
+    if cp == 0x200C or cp == 0x200B:  # ZWNJ and ZWSP
         return True
     if 0xFE00 <= cp <= 0xFE0F:  # Variation selectors
         return True
