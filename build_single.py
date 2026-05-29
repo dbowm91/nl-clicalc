@@ -32,6 +32,17 @@ MODULES_EXACT = [
     "exact/unicode_tools",
     "exact/synthesis",
     "exact/confusables",
+    "exact/config",
+    "exact/shell",
+    "exact/path_tools",
+    "exact/markdown",
+    "exact/patch",
+    "exact/transform",
+    "exact/position",
+    "exact/identifier",
+    "exact/identifier_inspect",
+    "exact/glob",
+    "exact/unicode_policy",
 ]
 
 MODULES_MCP = [
@@ -174,9 +185,22 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
 
         # Check if we're entering a multi-line import (skip until closed)
         # Need to check for "import (" without ")" on same line = multi-line import start
+        # Strip all top-level multi-line imports; also strip local multi-line imports
+        # except those from inlined exact modules (primitives, synthesis, etc.)
         if (stripped.startswith("import ") or stripped.startswith("from ")) and "(" in stripped and ")" not in stripped:
-            in_multiline_import = True
-            continue
+            is_inlined_module = any(
+                stripped.startswith(f"from .{m.split('/')[-1]} import")
+                for m in MODULES_EXACT
+            )
+            if not (line and line[0] in " \t"):
+                in_multiline_import = True
+                continue
+            elif is_inlined_module:
+                # Local import from inlined exact module - keep it
+                pass
+            else:
+                in_multiline_import = True
+                continue
 
         # Handle multi-line imports - skip until closed
         if in_multiline_import:
@@ -184,8 +208,8 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
                 in_multiline_import = False
             continue
 
-        # Handle relative imports
-        if stripped.startswith("from ."):
+        # Handle relative imports (only top-level; local imports inside functions are kept)
+        if stripped.startswith("from .") and not (line and line[0] in " \t"):
             if is_relative_import_stripped(stripped):
                 continue
             if should_replace_import(stripped):
@@ -253,6 +277,17 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     code = code.replace("from .unicode_tools import", "from unicode_tools import")
     code = code.replace("from .synthesis import", "from synthesis import")
     code = code.replace("from .confusables import", "from confusables import")
+    code = code.replace("from .config import", "from config import")
+    code = code.replace("from .shell import", "from shell import")
+    code = code.replace("from .path_tools import", "from path_tools import")
+    code = code.replace("from .markdown import", "from markdown import")
+    code = code.replace("from .patch import", "from patch import")
+    code = code.replace("from .transform import", "from transform import")
+    code = code.replace("from .position import", "from position import")
+    code = code.replace("from .identifier import", "from identifier import")
+    code = code.replace("from .identifier_inspect import", "from identifier_inspect import")
+    code = code.replace("from .glob import", "from glob import")
+    code = code.replace("from .unicode_policy import", "from unicode_policy import")
 
     # MCP module internal references
     code = code.replace("from .schemas import", "from schemas import")
@@ -296,6 +331,50 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     code = code.replace(
         "from .synthesis import (",
         "# synthesis imports handled inline"
+    )
+    code = code.replace(
+        "from .config import (",
+        "# config imports handled inline"
+    )
+    code = code.replace(
+        "from .shell import (",
+        "# shell imports handled inline"
+    )
+    code = code.replace(
+        "from .path_tools import (",
+        "# path_tools imports handled inline"
+    )
+    code = code.replace(
+        "from .markdown import (",
+        "# markdown imports handled inline"
+    )
+    code = code.replace(
+        "from .patch import (",
+        "# patch imports handled inline"
+    )
+    code = code.replace(
+        "from .transform import (",
+        "# transform imports handled inline"
+    )
+    code = code.replace(
+        "from .position import (",
+        "# position imports handled inline"
+    )
+    code = code.replace(
+        "from .identifier import (",
+        "# identifier imports handled inline"
+    )
+    code = code.replace(
+        "from .identifier_inspect import (",
+        "# identifier_inspect imports handled inline"
+    )
+    code = code.replace(
+        "from .glob import (",
+        "# glob imports handled inline"
+    )
+    code = code.replace(
+        "from .unicode_policy import (",
+        "# unicode_policy imports handled inline"
     )
 
     # Rename aliased primitives imports in synthesis to their actual names
@@ -350,10 +429,46 @@ def build_single_file(output_path: str | None = None) -> str:
         all_module_code.append(code)
         all_imports.extend(imports)
 
-    # MCP server
+    # MCP server - rename functions that conflict with exact module names
+    MCP_CONFLICT_FUNCTIONS = [
+        "text_equal",
+        "text_replace_check",
+        "line_range_extract",
+        "line_range_compare",
+        "text_window",
+        "list_compare",
+        "shell_split",
+        "shell_quote_join",
+        "argv_compare",
+        "dotenv_validate",
+        "ini_validate",
+        "markdown_structure",
+        "code_fence_extract",
+        "patch_apply_check",
+        "patch_summary",
+        "path_analyze",
+        "path_normalize",
+        "path_compare",
+        "path_scope_check",
+        "escape_text",
+        "unescape_text",
+        "text_hash",
+        "text_transform",
+        "text_fingerprint",
+        "text_position",
+        "identifier_analyze",
+        "identifier_inspect",
+        "glob_match",
+        "unicode_policy_check",
+        "canonicalize_text",
+    ]
     all_module_code.append("\n# === MCP server ===\n")
     for mod in MODULES_MCP:
         code, imports = get_module_code(mod)
+        # Rename conflicting MCP wrapper functions so exact versions aren't overwritten
+        for fn_name in MCP_CONFLICT_FUNCTIONS:
+            code = code.replace(f"def {fn_name}(", f"def _mcp_{fn_name}(", 1)
+            code = code.replace(f'"{fn_name}": {fn_name},', f'"{fn_name}": _mcp_{fn_name},')
         all_module_code.append(f"\n# === {mod}.py ===\n")
         all_module_code.append(code)
         all_imports.extend(imports)
@@ -421,6 +536,85 @@ if __name__ == "__main__":
 """)
 
     final_content = "".join(content)
+
+    # Post-process: convert local `from <module> import` to global variable assignments.
+    # In the single file, modules don't exist as separate packages.
+    EXACT_MODULE_NAMES = {m.split("/")[-1] for m in MODULES_EXACT}
+    INLINED_NAMES = EXACT_MODULE_NAMES | {"evaluator", "units", "normalize"}
+
+    def _replace_local_imports(text: str) -> str:
+        """Replace local `from <module> import` with global variable assignments."""
+        lines = text.split("\n")
+        result = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+            # Detect indented "from .<module> import" or "from <module> import"
+            if (
+                line
+                and line[0] in " \t"
+                and stripped.startswith("from ")
+                and " import " in stripped
+            ):
+                # Extract module name
+                mod_name = stripped.split()[1].lstrip(".")
+                if mod_name in EXACT_MODULE_NAMES:
+                    indent = line[: len(line) - len(line.lstrip())]
+                    indent = line[: len(line) - len(line.lstrip())]
+                    after_from = stripped[len("from "):]
+                    mod_and_import = after_from.split(" import ", 1)
+                    import_part = mod_and_import[1] if len(mod_and_import) > 1 else ""
+                    import_part = import_part.rstrip(",").rstrip(")")
+
+                    if "(" not in import_part:
+                        # Single-line import
+                        for alias in import_part.split(","):
+                            alias = alias.strip()
+                            if " as " in alias:
+                                orig, new_name = alias.split(" as ", 1)
+                                result.append(f"{indent}{new_name.strip()} = {orig.strip()}")
+                            elif alias:
+                                result.append(f"{indent}{alias} = {alias}")
+                        i += 1
+                        continue
+                    else:
+                        # Multi-line import
+                        all_names = []
+                        import_text = import_part.lstrip("(").strip()
+                        if import_text:
+                            for part in import_text.split(","):
+                                part = part.strip().rstrip(",").rstrip(")")
+                                if part:
+                                    all_names.append(part)
+                        i += 1
+                        while i < len(lines):
+                            l = lines[i].strip()
+                            if l.startswith(")"):
+                                i += 1
+                                break
+                            l = l.rstrip(",").rstrip(")")
+                            if l:
+                                all_names.append(l)
+                            i += 1
+                        for name in all_names:
+                            name = name.strip()
+                            if " as " in name:
+                                orig, new_name = name.split(" as ", 1)
+                                result.append(f"{indent}{new_name.strip()} = {orig.strip()}")
+                            elif name:
+                                result.append(f"{indent}{name} = {name}")
+                        continue
+                elif mod_name in INLINED_NAMES:
+                    # Non-exact inlined module (evaluator, units, etc.) - just remove import
+                    # The names are already globals in the single file
+                    i += 1
+                    continue
+            result.append(line)
+            i += 1
+        return "\n".join(result)
+
+    final_content = _replace_local_imports(final_content)
 
     with open(output_path, "w") as f:
         f.write(final_content)

@@ -1,0 +1,175 @@
+{
+  "description": "line_range_compare: comparison scenarios",
+  "tool": "line_range_compare",
+  "cases": [
+    {
+      "name": "equal_ranges_identical",
+      "description": "Identical ranges from identical texts",
+      "input": {
+        "left_text": "line1\nline2\nline3",
+        "right_text": "line1\nline2\nline3",
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected": {
+        "equal": true,
+        "diff_summary": "equal",
+        "fingerprints_match": true
+      }
+    },
+    {
+      "name": "equal_ranges_same_content",
+      "description": "Same content from different full texts",
+      "input": {
+        "left_text": "prefix\nline1\nline2\nsuffix",
+        "right_text": "LINE1\nline1\nline2\nEND",
+        "start_line": 2,
+        "end_line": 3
+      },
+      "expected": {
+        "equal": true,
+        "diff_summary": "equal"
+      }
+    },
+    {
+      "name": "different_single_line",
+      "description": "Single line differs between texts",
+      "input": {
+        "left_text": "line1\nline2\nline3",
+        "right_text": "line1\nLINE2\nline3",
+        "start_line": 2,
+        "end_line": 2
+      },
+      "expected": {
+        "equal": false,
+        "first_diff_line": 2,
+        "first_diff_left": "line2",
+        "first_diff_right": "LINE2"
+      }
+    },
+    {
+      "name": "different_multiple_lines",
+      "description": "Multiple lines differ",
+      "input": {
+        "left_text": "aaa\nbbb\nccc",
+        "right_text": "aaa\nBBB\nccc",
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected": {
+        "equal": false,
+        "first_diff_line": 2
+      }
+    },
+    {
+      "name": "trailing_whitespace_exact_mode",
+      "description": "Trailing whitespace differs in exact mode",
+      "input": {
+        "left_text": "hello  \nworld",
+        "right_text": "hello\nworld",
+        "start_line": 1,
+        "end_line": 1,
+        "comparison_mode": "exact"
+      },
+      "expected": {
+        "equal": false
+      }
+    },
+    {
+      "name": "trailing_whitespace_ignore",
+      "description": "Trailing whitespace ignored in ignore_trailing_whitespace mode",
+      "input": {
+        "left_text": "hello  \nworld",
+        "right_text": "hello\nworld",
+        "start_line": 1,
+        "end_line": 1,
+        "comparison_mode": "ignore_trailing_whitespace"
+      },
+      "expected": {
+        "equal": true
+      }
+    },
+    {
+      "name": "crlf_vs_lf_normalize_newlines",
+      "description": "CRLF vs LF normalized in normalize_newlines mode",
+      "input": {
+        "left_text": "hello\r\nworld",
+        "right_text": "hello\nworld",
+        "start_line": 1,
+        "end_line": 1,
+        "comparison_mode": "normalize_newlines"
+      },
+      "expected": {
+        "equal": true
+      }
+    },
+    {
+      "name": "crlf_vs_lf_exact_mode",
+      "description": "CRLF vs LF differ in exact mode",
+      "input": {
+        "left_text": "hello\r\nworld",
+        "right_text": "hello\nworld",
+        "start_line": 1,
+        "end_line": 2,
+        "comparison_mode": "exact"
+      },
+      "expected": {
+        "equal": false
+      }
+    },
+    {
+      "name": "different_lengths",
+      "description": "Left has more lines than right",
+      "input": {
+        "left_text": "aaa\nbbb\nccc",
+        "right_text": "aaa",
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected": {
+        "equal": false,
+        "has_different_lengths": true
+      }
+    },
+    {
+      "name": "empty_lines_both",
+      "description": "Both texts are empty lines",
+      "input": {
+        "left_text": "\n\n",
+        "right_text": "\n\n",
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected": {
+        "equal": true
+      }
+    },
+    {
+      "name": "unicode_comparison",
+      "description": "Unicode content comparison",
+      "input": {
+        "left_text": "hello 世界\nfoo",
+        "right_text": "hello 世界\nfoo",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "expected": {
+        "equal": true
+      }
+    },
+    {
+      "name": "fingerprints_always_present",
+      "description": "Fingerprints are always computed",
+      "input": {
+        "left_text": "aaa\nbbb",
+        "right_text": "aaa\nbbb",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "expected": {
+        "left_fingerprint_not_empty": true,
+        "right_fingerprint_not_empty": true
+      }
+    }
+  ]
+}

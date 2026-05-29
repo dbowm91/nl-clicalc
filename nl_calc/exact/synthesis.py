@@ -7,6 +7,7 @@ for text inspection, comparison, and measurement.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from typing import Any, TypedDict
 
@@ -1126,14 +1127,30 @@ def text_window(
     """
     from .primitives import (
         byte_offset_to_codepoint_index as _byte_to_cp,
-        codepoint_index_to_line_column as _cp_to_line_col,
+    )
+    from .primitives import (
         codepoint_index_to_byte_offset as _cp_to_byte,
-        get_surrounding_lines as _get_surrounding,
-        get_line_text as _get_line_text,
-        detect_newline_style as _detect_newline,
+    )
+    from .primitives import (
+        codepoint_index_to_line_column as _cp_to_line_col,
+    )
+    from .primitives import (
         count_graphemes as _count_graphemes,
-        visible_repr as _visible_repr,
+    )
+    from .primitives import (
+        detect_newline_style as _detect_newline,
+    )
+    from .primitives import (
+        get_line_text as _get_line_text,
+    )
+    from .primitives import (
+        get_surrounding_lines as _get_surrounding,
+    )
+    from .primitives import (
         utf8_bytes as _utf8_bytes,
+    )
+    from .primitives import (
+        visible_repr as _visible_repr,
     )
 
     warnings: list[str] = []
@@ -1279,4 +1296,493 @@ def text_window(
         newline_style=newline_style,
         at_codepoint=at_codepoint,
         warnings=warnings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# text_replace_check
+# ---------------------------------------------------------------------------
+
+MAX_PREVIEW_CHARS = 2000
+
+
+class TextReplaceCheckResult(TypedDict):
+    """Result of text_replace_check."""
+    match_count: int
+    unique_match: bool
+    expected_count_met: bool
+    would_change: bool
+    positions: list[dict[str, int]]
+    changed_text_fingerprint: str
+    newline_style_before: str
+    newline_style_after: str
+    preview_before: str
+    preview_after: str
+    findings: list[dict[str, str]]
+
+
+def text_replace_check(
+    text: str,
+    old: str,
+    new: str,
+    mode: str = "exact",
+    expected_count: int | None = None,
+    allow_multiple: bool = False,
+    newline_policy: str = "preserve",
+    return_preview: bool = False,
+    max_preview_chars: int = MAX_PREVIEW_CHARS,
+) -> TextReplaceCheckResult:
+    """Check whether a replacement would apply cleanly before editing.
+
+    Args:
+        text: Source text.
+        old: Text to find.
+        new: Replacement text.
+        mode: Matching mode (exact, nfc, nfkc, casefold, whitespace_collapse).
+        expected_count: Expected number of matches (optional).
+        allow_multiple: If False and more than one match, add a finding.
+        newline_policy: How to handle newlines (preserve, normalize_lf, normalize_crlf).
+        return_preview: If True, include before/after previews.
+        max_preview_chars: Maximum characters in preview output.
+
+    Returns:
+        TextReplaceCheckResult with match info, positions, and findings.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+
+    valid_modes = {"exact", "nfc", "nfkc", "casefold", "whitespace_collapse"}
+    if mode not in valid_modes:
+        raise ValueError(f"Invalid mode: {mode}. Use one of: {', '.join(valid_modes)}")
+
+    valid_newline = {"preserve", "normalize_lf", "normalize_crlf"}
+    if newline_policy not in valid_newline:
+        raise ValueError(f"Invalid newline_policy: {newline_policy}. Use one of: {', '.join(valid_newline)}")
+
+    if max_preview_chars < 0:
+        raise ValueError("max_preview_chars must be non-negative")
+
+    import hashlib
+
+    from .primitives import (
+        codepoint_index_to_line_column as _cp_to_line_col,
+    )
+    from .primitives import (
+        detect_newline_style as _detect_newline_fn,
+    )
+
+    findings: list[dict[str, str]] = []
+
+    # Prepare text and old for matching based on mode
+    def _normalize_for_match(s: str, m: str) -> str:
+        if m == "nfc":
+            return _normalize_unicode(s, "NFC")
+        elif m == "nfkc":
+            return _normalize_unicode(s, "NFKC")
+        elif m == "casefold":
+            return _casefold_text(s)
+        elif m == "whitespace_collapse":
+            return re.sub(r"\s+", " ", s)
+        return s
+
+    text_norm = _normalize_for_match(text, mode)
+    old_norm = _normalize_for_match(old, mode)
+
+    # Find all matches (non-overlapping)
+    positions: list[dict[str, int]] = []
+    search_start = 0
+    while search_start <= len(text_norm):
+        idx = text_norm.find(old_norm, search_start)
+        if idx == -1:
+            break
+        byte_start = len(text[:idx].encode("utf-8"))
+        byte_end = len(text[:idx + len(old)].encode("utf-8"))
+        cp_line, cp_col = _cp_to_line_col(text, idx, 1, 1)
+        positions.append({
+            "codepoint_index": idx,
+            "byte_start": byte_start,
+            "byte_end": byte_end,
+            "line": cp_line,
+            "column": cp_col,
+        })
+        search_start = idx + len(old_norm) if len(old_norm) > 0 else idx + 1
+
+    match_count = len(positions)
+    unique_match = match_count == 1
+    would_change = match_count > 0
+
+    # Expected count check
+    expected_count_met = True
+    if expected_count is not None:
+        if match_count != expected_count:
+            expected_count_met = False
+            if match_count == 0:
+                findings.append({
+                    "kind": "no_match",
+                    "message": f"Expected {expected_count} match(es) but found 0",
+                })
+            else:
+                findings.append({
+                    "kind": "count_mismatch",
+                    "message": f"Expected {expected_count} match(es) but found {match_count}",
+                })
+
+    # Ambiguity warning
+    if not allow_multiple and match_count > 1:
+        findings.append({
+            "kind": "ambiguous_replacement",
+            "message": f"Found {match_count} matches but allow_multiple is false; replacement is ambiguous",
+        })
+
+    if match_count == 0:
+        findings.append({
+            "kind": "no_match",
+            "message": "No matches found; replacement would not change text",
+        })
+
+    # Build changed text for fingerprinting and preview
+    if would_change:
+        changed_text = text_norm.replace(old_norm, new) if mode != "whitespace_collapse" else re.sub(r"\s+", " ", text).replace(re.sub(r"\s+", " ", old), new)
+        if mode in ("nfc", "nfkc", "casefold"):
+            # Rebuild from original
+            if mode == "casefold":
+                # casefold matching but keep original casing elsewhere
+                parts = []
+                last = 0
+                for pos in positions:
+                    parts.append(text[last:pos["codepoint_index"]])
+                    parts.append(new)
+                    last = pos["codepoint_index"] + len(old)
+                parts.append(text[last:])
+                changed_text = "".join(parts)
+            else:
+                parts = []
+                last = 0
+                for pos in positions:
+                    parts.append(text[last:pos["codepoint_index"]])
+                    parts.append(new)
+                    last = pos["codepoint_index"] + len(old)
+                parts.append(text[last:])
+                changed_text = "".join(parts)
+    else:
+        changed_text = text
+
+    # Compute fingerprints
+    before_fp = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    after_fp = hashlib.sha256(changed_text.encode("utf-8")).hexdigest()[:16]
+
+    # Newline style detection
+    newline_before = _detect_newline_fn(text)
+    newline_after = _detect_newline_fn(changed_text)
+
+    # Previews
+    preview_before = ""
+    preview_after = ""
+    if return_preview:
+        cap = min(max_preview_chars, MAX_PREVIEW_CHARS)
+        preview_before = text[:cap]
+        preview_after = changed_text[:cap]
+        if len(text) > cap:
+            findings.append({
+                "kind": "preview_truncated",
+                "message": f"Preview before truncated at {cap} characters",
+            })
+        if len(changed_text) > cap:
+            findings.append({
+                "kind": "preview_truncated",
+                "message": f"Preview after truncated at {cap} characters",
+            })
+
+    return TextReplaceCheckResult(
+        match_count=match_count,
+        unique_match=unique_match,
+        expected_count_met=expected_count_met,
+        would_change=would_change,
+        positions=positions,
+        changed_text_fingerprint=after_fp,
+        newline_style_before=newline_before,
+        newline_style_after=newline_after,
+        preview_before=preview_before,
+        preview_after=preview_after,
+        findings=findings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# line_range_extract
+# ---------------------------------------------------------------------------
+
+class LineRangeExtractResult(TypedDict):
+    """Result of line_range_extract."""
+    line_count_total: int
+    start_line: int
+    end_line: int
+    valid_range: bool
+    text: str
+    lines: list[dict[str, Any]]
+    byte_start: int
+    byte_end: int
+    char_start: int
+    char_end: int
+    newline_style: str
+    ends_with_newline: bool
+    fingerprint: str
+    findings: list[dict[str, str]]
+
+
+def line_range_extract(
+    text: str,
+    start_line: int,
+    end_line: int,
+    line_base: int = 1,
+    include_line_numbers: bool = False,
+    include_fingerprint: bool = True,
+) -> LineRangeExtractResult:
+    """Extract exact line ranges and return stable offsets/fingerprints.
+
+    Args:
+        text: Input string.
+        start_line: First line to extract.
+        end_line: Last line to extract (inclusive).
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+        include_line_numbers: If True, include line number in each line dict.
+        include_fingerprint: If True, compute SHA-256 fingerprint.
+
+    Returns:
+        LineRangeExtractResult with extracted text, offsets, and metadata.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        raise ValueError(f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+
+    if start_line > end_line:
+        raise ValueError(f"start_line ({start_line}) must be <= end_line ({end_line})")
+
+    import hashlib
+
+    from .primitives import (
+        detect_newline_style as _detect_newline_lr,
+    )
+
+    findings: list[dict[str, str]] = []
+
+    # Split text into lines (preserving content)
+    lines_raw = text.split("\n")
+    # Remove trailing empty if text ends with newline
+    if text.endswith("\n"):
+        total_lines = len(lines_raw) - 1  # last element is empty
+    else:
+        total_lines = len(lines_raw)
+
+    if total_lines == 0:
+        total_lines = 1  # Empty text still has line 1
+
+    # Convert to 1-based for comparison
+    start_1based = start_line + (1 - line_base)
+    end_1based = end_line + (1 - line_base)
+
+    valid_range = True
+    if start_1based < 1:
+        valid_range = False
+        findings.append({
+            "kind": "out_of_range",
+            "message": f"start_line {start_line} is before the first line",
+        })
+    if end_1based > total_lines:
+        valid_range = False
+        findings.append({
+            "kind": "out_of_range",
+            "message": f"end_line {end_line} exceeds total lines ({total_lines})",
+        })
+
+    if not valid_range:
+        # Clamp to valid range
+        start_1based = max(1, start_1based)
+        end_1based = min(total_lines, end_1based)
+
+    # Compute byte/char offsets for the line range
+    # Find start of start_line
+    char_start = 0
+    current_line = 1
+    for i, ch in enumerate(text):
+        if current_line == start_1based:
+            char_start = i
+            break
+        if ch == "\n":
+            current_line += 1
+    else:
+        # start_line not found, use end of text
+        char_start = len(text)
+
+    # Find end of end_line (exclusive, up to and including newline if present)
+    char_end = len(text)
+    current_line = 1
+    found_start = False
+    for i, ch in enumerate(text):
+        if current_line == start_1based and not found_start:
+            found_start = True
+        if ch == "\n":
+            if current_line == end_1based:
+                char_end = i + 1  # include the newline
+                break
+            current_line += 1
+
+    # Ensure char_end is at least char_start
+    if char_end < char_start:
+        char_end = char_start
+
+    byte_start = len(text[:char_start].encode("utf-8"))
+    byte_end = len(text[:char_end].encode("utf-8"))
+
+    # Extract lines
+    extracted_lines: list[dict[str, Any]] = []
+    extracted_text_parts: list[str] = []
+    for i in range(start_1based - 1, min(end_1based, len(lines_raw))):
+        line_text = lines_raw[i] if i < len(lines_raw) else ""
+        line_dict: dict[str, Any] = {"text": line_text}
+        if include_line_numbers:
+            line_dict["line"] = i + line_base
+        extracted_lines.append(line_dict)
+        extracted_text_parts.append(line_text)
+
+    extracted_text = "\n".join(extracted_text_parts)
+
+    # Fingerprint
+    fingerprint = ""
+    if include_fingerprint:
+        fingerprint = hashlib.sha256(extracted_text.encode("utf-8")).hexdigest()[:16]
+
+    newline_style = _detect_newline_lr(text)
+    ends_with_newline = text.endswith("\n")
+
+    return LineRangeExtractResult(
+        line_count_total=total_lines,
+        start_line=start_line,
+        end_line=end_line,
+        valid_range=valid_range,
+        text=extracted_text,
+        lines=extracted_lines,
+        byte_start=byte_start,
+        byte_end=byte_end,
+        char_start=char_start,
+        char_end=char_end,
+        newline_style=newline_style,
+        ends_with_newline=ends_with_newline,
+        fingerprint=fingerprint,
+        findings=findings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# line_range_compare
+# ---------------------------------------------------------------------------
+
+class LineRangeCompareResult(TypedDict):
+    """Result of line_range_compare."""
+    equal: bool
+    left_fingerprint: str
+    right_fingerprint: str
+    diff_summary: str
+    first_difference: dict[str, Any] | None
+
+
+def line_range_compare(
+    left_text: str,
+    right_text: str,
+    start_line: int,
+    end_line: int,
+    line_base: int = 1,
+    comparison_mode: str = "exact",
+) -> LineRangeCompareResult:
+    """Compare a line range from two text inputs.
+
+    Args:
+        left_text: First text input.
+        right_text: Second text input.
+        start_line: First line to compare.
+        end_line: Last line to compare (inclusive).
+        line_base: Base for line numbers.
+        comparison_mode: "exact", "ignore_trailing_whitespace", or "normalize_newlines".
+
+    Returns:
+        LineRangeCompareResult with equality, fingerprints, and diff info.
+    """
+    for label, t in [("left_text", left_text), ("right_text", right_text)]:
+        if len(t) > MAX_TEXT_LENGTH:
+            raise ValueError(f"{label} length {len(t)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+
+    valid_modes = {"exact", "ignore_trailing_whitespace", "normalize_newlines"}
+    if comparison_mode not in valid_modes:
+        raise ValueError(f"Invalid comparison_mode: {comparison_mode}. Use one of: {', '.join(valid_modes)}")
+
+    import hashlib
+
+    def _extract_lines(t: str) -> list[str]:
+        raw = t.split("\n")
+        if t.endswith("\n"):
+            return raw[:-1]  # drop trailing empty
+        return raw
+
+    left_lines = _extract_lines(left_text)
+    right_lines = _extract_lines(right_text)
+
+    total_left = len(left_lines) or 1
+    total_right = len(right_lines) or 1
+
+    # Clamp to available range
+    start_1based = start_line + (1 - line_base)
+    end_1based = end_line + (1 - line_base)
+
+    left_slice = left_lines[max(0, start_1based - 1):end_1based]
+    right_slice = right_lines[max(0, start_1based - 1):end_1based]
+
+    def _normalize_for_compare(s: str, mode: str) -> str:
+        if mode == "ignore_trailing_whitespace":
+            return s.rstrip()
+        elif mode == "normalize_newlines":
+            # After splitting by \n, trailing \r should be stripped
+            return s.rstrip("\r")
+        return s
+
+    left_norm = [_normalize_for_compare(l, comparison_mode) for l in left_slice]
+    right_norm = [_normalize_for_compare(r, comparison_mode) for r in right_slice]
+
+    equal = left_norm == right_norm
+
+    left_text_slice = "\n".join(left_slice)
+    right_text_slice = "\n".join(right_slice)
+    left_fp = hashlib.sha256(left_text_slice.encode("utf-8")).hexdigest()[:16]
+    right_fp = hashlib.sha256(right_text_slice.encode("utf-8")).hexdigest()[:16]
+
+    diff_summary = "equal" if equal else "different"
+    first_diff: dict[str, Any] | None = None
+
+    if not equal:
+        for i, (l, r) in enumerate(zip(left_norm, right_norm)):
+            if l != r:
+                first_diff = {
+                    "line_offset": i,
+                    "line_number": start_1based + i,
+                    "left": left_slice[i],
+                    "right": right_slice[i],
+                }
+                diff_summary = f"differ at line {start_1based + i}"
+                break
+        if first_diff is None and len(left_norm) != len(right_norm):
+            min_len = min(len(left_norm), len(right_norm))
+            diff_summary = f"different lengths: {len(left_norm)} vs {len(right_norm)} lines"
+            if min_len < max(len(left_norm), len(right_norm)):
+                idx = min_len
+                first_diff = {
+                    "line_offset": idx,
+                    "line_number": start_1based + idx,
+                    "left": left_slice[idx] if idx < len(left_slice) else None,
+                    "right": right_slice[idx] if idx < len(right_slice) else None,
+                }
+
+    return LineRangeCompareResult(
+        equal=equal,
+        left_fingerprint=left_fp,
+        right_fingerprint=right_fp,
+        diff_summary=diff_summary,
+        first_difference=first_diff,
     )

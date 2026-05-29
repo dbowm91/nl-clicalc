@@ -1,0 +1,83 @@
+{
+  "description": "Bidi override and control characters - right-to-left and directional markers",
+  "tool": "inspect_text",
+  "cases": [
+    {
+      "name": "rtl_override",
+      "description": "RTL override (U+202E) reverses visual display of subsequent chars",
+      "input": {
+        "text": "abc\u202edefg"
+      },
+      "expected": {
+        "has_bidi_controls": true,
+        "bidi_count": 1
+      }
+    },
+    {
+      "name": "ltr_override",
+      "description": "LTR override (U+202D)",
+      "input": {
+        "text": "\u202dhello"
+      },
+      "expected": {
+        "has_bidi_controls": true,
+        "bidi_count": 1
+      }
+    },
+    {
+      "name": "rtl_embedding",
+      "description": "RTL embedding (U+202B)",
+      "input": {
+        "text": "before\u202bafter"
+      },
+      "expected": {
+        "has_bidi_controls": true,
+        "bidi_count": 1
+      }
+    },
+    {
+      "name": "pop_directional_formatting",
+      "description": "Pop directional formatting (U+202C)",
+      "input": {
+        "text": "before\u202cafter"
+      },
+      "expected": {
+        "has_bidi_controls": true,
+        "bidi_count": 1
+      }
+    },
+    {
+      "name": "left_to_right_mark",
+      "description": "Left-to-right mark (U+200E)",
+      "input": {
+        "text": "hello\u200eworld"
+      },
+      "expected": {
+        "has_bidi_controls": true,
+        "bidi_count": 1
+      }
+    },
+    {
+      "name": "right_to_left_mark",
+      "description": "Right-to-left mark (U+200F)",
+      "input": {
+        "text": "hello\u200fworld"
+      },
+      "expected": {
+        "has_bidi_controls": true,
+        "bidi_count": 1
+      }
+    },
+    {
+      "name": "multiple_bidi_mixed_with_text",
+      "description": "Multiple bidi controls embedded in normal text",
+      "input": {
+        "text": "start\u202emiddle\u202cend"
+      },
+      "expected": {
+        "has_bidi_controls": true,
+        "bidi_count": 2
+      }
+    }
+  ]
+}

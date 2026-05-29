@@ -15,8 +15,6 @@ Provides comprehensive unit conversion support including:
 
 from __future__ import annotations
 
-from typing import Any
-
 Numeric = float | int | complex
 
 FLOAT_EPSILON = 1e-10
@@ -82,7 +80,7 @@ class UnitValue:
     def __rsub__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             return other.__sub__(self)
-        raise ValueError(f"Cannot subtract dimensional value from scalar")
+        raise ValueError("Cannot subtract dimensional value from scalar")
 
     def __mul__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
@@ -134,7 +132,6 @@ class UnitValue:
 
     def convert_to(self, target_unit: str) -> UnitValue:
         """Convert to a different unit of the same type."""
-        import warnings
 
         if self.unit == target_unit:
             return UnitValue(self.value, target_unit)

@@ -12,7 +12,6 @@ import re
 import unicodedata
 from typing import Any, TypedDict
 
-
 MAX_INPUT_LENGTH = 100_000
 MAX_PATTERN_LENGTH = 1000
 MAX_PATTERN_NESTING = 5
@@ -1597,7 +1596,7 @@ MAX_SCHEMA_VIOLATIONS = 100
 class JsonShapeKey(TypedDict):
     """A single key in json_shape result."""
     type: str
-    keys: dict[str, "JsonShapeKey"] | None
+    keys: dict[str, JsonShapeKey] | None
     key_count: int | None
     item_types: list[str] | None
     item_count: int | None
@@ -1929,7 +1928,7 @@ def regex_safety_check(pattern: str) -> RegexSafetyResult:
 
     try:
         re.compile(pattern)
-    except re.error as e:
+    except re.error:
         return RegexSafetyResult(
             valid_pattern=False,
             risk="low",

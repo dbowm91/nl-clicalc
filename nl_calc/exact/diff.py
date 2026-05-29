@@ -11,7 +11,6 @@ from __future__ import annotations
 import difflib
 from typing import TypedDict
 
-
 __all__ = [
     "FirstDiff",
     "CommonPrefixSuffix",

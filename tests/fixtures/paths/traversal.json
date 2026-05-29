@@ -1,0 +1,161 @@
+{
+  "description": "path_analyze: traversal, dot-dot, and component analysis",
+  "tool": "path_analyze",
+  "cases": [
+    {
+      "name": "simple_relative",
+      "description": "Simple relative path",
+      "input": {
+        "path": "src/main.py"
+      },
+      "expected": {
+        "style": "posix",
+        "absolute": false,
+        "has_traversal": false,
+        "components": ["src", "main.py"],
+        "name": "main.py",
+        "stem": "main",
+        "suffix": ".py",
+        "hidden": false
+      }
+    },
+    {
+      "name": "absolute_posix",
+      "description": "Absolute POSIX path",
+      "input": {
+        "path": "/usr/local/bin/python"
+      },
+      "expected": {
+        "style": "posix",
+        "absolute": true,
+        "has_traversal": false,
+        "components": ["usr", "local", "bin", "python"],
+        "name": "python",
+        "hidden": false
+      }
+    },
+    {
+      "name": "dotdot_traversal",
+      "description": "Path with parent traversal",
+      "input": {
+        "path": "src/../lib/main.py"
+      },
+      "expected": {
+        "style": "posix",
+        "absolute": false,
+        "has_traversal": true,
+        "components": ["src", "..", "lib", "main.py"],
+        "warnings_min": 1
+      }
+    },
+    {
+      "name": "multiple_dotdot",
+      "description": "Path with multiple parent traversals",
+      "input": {
+        "path": "a/b/../../c"
+      },
+      "expected": {
+        "has_traversal": true,
+        "components": ["a", "b", "..", "..", "c"]
+      }
+    },
+    {
+      "name": "hidden_file",
+      "description": "Hidden file (dot prefix)",
+      "input": {
+        "path": ".gitignore"
+      },
+      "expected": {
+        "hidden": true,
+        "name": ".gitignore",
+        "suffix": ".gitignore"
+      }
+    },
+    {
+      "name": "hidden_directory",
+      "description": "Hidden directory",
+      "input": {
+        "path": ".config/app/settings.json"
+      },
+      "expected": {
+        "hidden": false,
+        "components": [".config", "app", "settings.json"]
+      }
+    },
+    {
+      "name": "dotdot_in_middle",
+      "description": "Dot-dot in middle of path",
+      "input": {
+        "path": "/usr/local/../bin/python"
+      },
+      "expected": {
+        "style": "posix",
+        "absolute": true,
+        "has_traversal": true,
+        "components": ["usr", "local", "..", "bin", "python"]
+      }
+    },
+    {
+      "name": "double_extension",
+      "description": "File with compound suffix",
+      "input": {
+        "path": "archive.tar.gz"
+      },
+      "expected": {
+        "suffix": ".gz",
+        "suffixes": [".tar.gz", ".gz"],
+        "stem": "archive"
+      }
+    },
+    {
+      "name": "windows_style",
+      "description": "Windows-style path",
+      "input": {
+        "path": "C:\\Users\\test\\file.txt"
+      },
+      "expected": {
+        "style": "windows",
+        "absolute": true,
+        "components": ["Users", "test", "file.txt"]
+      }
+    },
+    {
+      "name": "windows_unc",
+      "description": "Windows UNC path",
+      "input": {
+        "path": "\\\\server\\share\\file.txt"
+      },
+      "expected": {
+        "style": "windows",
+        "absolute": true,
+        "has_traversal": false
+      }
+    },
+    {
+      "name": "root_only",
+      "description": "Root path only",
+      "input": {
+        "path": "/"
+      },
+      "expected": {
+        "style": "posix",
+        "absolute": true,
+        "components": [],
+        "name": null
+      }
+    },
+    {
+      "name": "empty_path",
+      "description": "Empty path",
+      "input": {
+        "path": ""
+      },
+      "expected": {
+        "style": "posix",
+        "absolute": false,
+        "components": [],
+        "name": null
+      }
+    }
+  ]
+}

@@ -1,10 +1,10 @@
 """Integration tests for MCP server protocol and tools."""
 
 import json
-import pytest
-from nl_calc.mcp.server import handle_request, main, TOOL_HANDLERS
-from nl_calc.mcp.tools import MAX_TEXT_LENGTH
+
 from nl_calc.exact.identifier import identifier_analyze
+from nl_calc.mcp.server import TOOL_HANDLERS, handle_request
+from nl_calc.mcp.tools import MAX_TEXT_LENGTH
 
 
 class TestProtocolHandshake:
@@ -3581,15 +3581,15 @@ class TestToolListGolden:
 
     def test_all_handlers_have_schemas(self):
         """Every tool in TOOL_HANDLERS must have a schema."""
-        from nl_calc.mcp.server import TOOL_HANDLERS
         from nl_calc.mcp.schemas import TOOL_SCHEMAS
+        from nl_calc.mcp.server import TOOL_HANDLERS
         for name in TOOL_HANDLERS:
             assert name in TOOL_SCHEMAS, f"Tool {name} has no schema"
 
     def test_all_schemas_have_handlers(self):
         """Every schema must have a corresponding handler."""
-        from nl_calc.mcp.server import TOOL_HANDLERS
         from nl_calc.mcp.schemas import TOOL_SCHEMAS
+        from nl_calc.mcp.server import TOOL_HANDLERS
         for name in TOOL_SCHEMAS:
             assert name in TOOL_HANDLERS, f"Schema {name} has no handler"
 
@@ -4802,3 +4802,265 @@ class TestJsonQuery:
         assert content["ok"] is True
         assert content["result"]["found"] is True
         assert content["result"]["value"] == 42
+
+
+class TestResponseEnvelope:
+    """Test the standardized response envelope with findings, machine_code, recommended_next_tool."""
+
+    def test_success_envelope_has_standard_fields(self):
+        """Success envelope always has ok, tool, result, warnings, limits_applied."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3000,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "1 + 1"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "tool" in content
+        assert "result" in content
+        assert "warnings" in content
+        assert "limits_applied" in content
+
+    def test_success_envelope_omits_findings_when_absent(self):
+        """findings, machine_code, recommended_next_tool omitted when not applicable."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3001,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "1 + 1"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert "findings" not in content
+        assert "machine_code" not in content
+        assert "recommended_next_tool" not in content
+
+    def test_text_inspect_findings_on_invisible(self):
+        """text_inspect emits INVISIBLE_CHAR finding for zero-width chars."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3002,
+            "method": "tools/call",
+            "params": {
+                "name": "text_inspect",
+                "arguments": {"text": "hello\u200bworld"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "findings" in content
+        assert len(content["findings"]) > 0
+        assert content["findings"][0]["code"] == "INVISIBLE_CHAR"
+        assert content["findings"][0]["severity"] == "warn"
+        assert content["machine_code"] == "INVISIBLES_DETECTED"
+
+    def test_text_inspect_findings_on_confusable(self):
+        """text_inspect emits CONFUSABLE_CHAR finding for homoglyphs."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3003,
+            "method": "tools/call",
+            "params": {
+                "name": "text_inspect",
+                "arguments": {"text": "p\u0430ypal"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "findings" in content
+        confusable_findings = [f for f in content["findings"] if f["code"] == "CONFUSABLE_CHAR"]
+        assert len(confusable_findings) > 0
+        assert content["machine_code"] == "CONFUSABLES_DETECTED"
+
+    def test_text_inspect_no_findings_for_clean_text(self):
+        """text_inspect has no findings for plain ASCII."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3004,
+            "method": "tools/call",
+            "params": {
+                "name": "text_inspect",
+                "arguments": {"text": "hello world"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content.get("findings") is None or content["findings"] == []
+
+    def test_regex_safety_check_findings_on_unsafe(self):
+        """regex_safety_check emits findings for risky patterns."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3005,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_safety_check",
+                "arguments": {"pattern": "(a+)+b"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "findings" in content
+        assert len(content["findings"]) > 0
+        assert content["findings"][0]["severity"] in ("warn", "error")
+        assert content["machine_code"] == "REGEX_UNSAFE"
+
+    def test_regex_safety_check_no_findings_for_safe(self):
+        """regex_safety_check has no findings for safe patterns."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3006,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_safety_check",
+                "arguments": {"pattern": "hello"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content.get("findings") is None or content["findings"] == []
+
+    def test_validate_json_findings_on_invalid(self):
+        """validate_json emits JSON_PARSE_ERROR finding for invalid JSON."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3007,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_json",
+                "arguments": {"text": '{"name":}'},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "findings" in content
+        assert len(content["findings"]) == 1
+        assert content["findings"][0]["code"] == "JSON_PARSE_ERROR"
+        assert content["findings"][0]["severity"] == "error"
+        assert content["machine_code"] == "JSON_INVALID"
+
+    def test_validate_json_no_findings_for_valid(self):
+        """validate_json has no findings for valid JSON."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3008,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_json",
+                "arguments": {"text": '{"key": "value"}'},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content.get("findings") is None or content["findings"] == []
+
+    def test_path_analyze_findings_on_traversal(self):
+        """path_analyze emits PATH_TRAVERSAL finding."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3009,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "../src/main.rs"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "findings" in content
+        assert len(content["findings"]) > 0
+        assert content["findings"][0]["code"] == "PATH_TRAVERSAL"
+        assert content["machine_code"] == "PATH_HAS_TRAVERSAL"
+
+    def test_path_analyze_findings_on_hidden(self):
+        """path_analyze emits PATH_HIDDEN finding for dotfiles."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3010,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/home/.bashrc"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "findings" in content
+        assert content["findings"][0]["code"] == "PATH_HIDDEN"
+        assert content["machine_code"] == "PATH_IS_HIDDEN"
+
+    def test_identifier_inspect_findings_on_collision(self):
+        """identifier_inspect emits IDENT_COLLISIONS for confusable identifiers."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3011,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_inspect",
+                "arguments": {"identifiers": ["paypal", "p\u0430ypal"]},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "findings" in content
+        collision_findings = [f for f in content["findings"] if f["code"] == "IDENT_COLLISION"]
+        assert len(collision_findings) > 0
+        assert content["machine_code"] == "IDENT_COLLISIONS"
+
+    def test_error_envelope_unchanged(self):
+        """Error envelope still has ok=false, error_type, error, hints."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3012,
+            "method": "tools/call",
+            "params": {
+                "name": "text_measure",
+                "arguments": {"text": "x" * (MAX_TEXT_LENGTH + 1)},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+        data = response["error"]["data"]
+        assert data["ok"] is False
+        assert "error_type" in data
+        assert "error" in data
+        assert "hints" in data
+
+    def test_machine_code_absent_when_clean(self):
+        """machine_code is omitted when there are no findings."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3013,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_json",
+                "arguments": {"text": '{"valid": true}'},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "machine_code" not in content
+
+    def test_findings_contain_span_when_available(self):
+        """Findings include span with char_start/char_end when available."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3014,
+            "method": "tools/call",
+            "params": {
+                "name": "text_inspect",
+                "arguments": {"text": "ab\u200bcd"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        finding = content["findings"][0]
+        assert "span" in finding
+        assert "char_start" in finding["span"]
+        assert "char_end" in finding["span"]

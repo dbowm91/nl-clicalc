@@ -1,0 +1,112 @@
+{
+  "description": "path_normalize: dot segment collapse and normalization",
+  "tool": "path_normalize",
+  "cases": [
+    {
+      "name": "collapse_dot_segments",
+      "description": "Collapse . and .. segments",
+      "input": {
+        "path": "src/../lib/main.py",
+        "platform": "posix",
+        "collapse_dot_segments": true
+      },
+      "expected": {
+        "normalized": "lib/main.py",
+        "is_absolute": false,
+        "warnings_min": 1
+      }
+    },
+    {
+      "name": "collapse_multiple_dotdot",
+      "description": "Collapse multiple parent traversals",
+      "input": {
+        "path": "a/b/../../c",
+        "platform": "posix",
+        "collapse_dot_segments": true
+      },
+      "expected": {
+        "normalized": "c",
+        "is_absolute": false
+      }
+    },
+    {
+      "name": "absolute_collapse",
+      "description": "Collapse in absolute path",
+      "input": {
+        "path": "/usr/local/../bin",
+        "platform": "posix",
+        "collapse_dot_segments": true
+      },
+      "expected": {
+        "normalized": "/usr/bin",
+        "is_absolute": true
+      }
+    },
+    {
+      "name": "preserve_dot_segments",
+      "description": "Preserve dot segments when collapse is false",
+      "input": {
+        "path": "src/../lib/main.py",
+        "platform": "posix",
+        "collapse_dot_segments": false
+      },
+      "expected": {
+        "normalized": "src/../lib/main.py",
+        "is_absolute": false
+      }
+    },
+    {
+      "name": "posix_absolute_with_dots",
+      "description": "Absolute POSIX path with dots",
+      "input": {
+        "path": "/usr/local/../bin/python",
+        "platform": "posix",
+        "collapse_dot_segments": true
+      },
+      "expected": {
+        "normalized": "/usr/bin/python",
+        "is_absolute": true
+      }
+    },
+    {
+      "name": "preserve_trailing_separator",
+      "description": "Trailing separator preserved when requested",
+      "input": {
+        "path": "src/main.py/",
+        "platform": "posix",
+        "collapse_dot_segments": true,
+        "preserve_trailing_separator": true
+      },
+      "expected": {
+        "normalized": "src/main.py/",
+        "is_absolute": false
+      }
+    },
+    {
+      "name": "collapse_dot_only",
+      "description": "Collapse current directory dot",
+      "input": {
+        "path": "./src/main.py",
+        "platform": "posix",
+        "collapse_dot_segments": true
+      },
+      "expected": {
+        "normalized": "src/main.py",
+        "is_absolute": false
+      }
+    },
+    {
+      "name": "posix_absolute_preserves_root",
+      "description": "Absolute POSIX path preserves leading /",
+      "input": {
+        "path": "/usr/bin",
+        "platform": "posix",
+        "collapse_dot_segments": true
+      },
+      "expected": {
+        "normalized": "/usr/bin",
+        "is_absolute": true
+      }
+    }
+  ]
+}

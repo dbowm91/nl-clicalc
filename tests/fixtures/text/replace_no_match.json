@@ -1,0 +1,74 @@
+{
+  "description": "text_replace_check: no match scenarios",
+  "tool": "text_replace_check",
+  "cases": [
+    {
+      "name": "no_match_simple",
+      "description": "Pattern not present in text",
+      "input": {
+        "text": "hello world",
+        "old": "xyz",
+        "new": "abc"
+      },
+      "expected": {
+        "match_count": 0,
+        "unique_match": false,
+        "would_change": false,
+        "finding_kind": "no_match"
+      }
+    },
+    {
+      "name": "no_match_case_sensitive",
+      "description": "Case mismatch in exact mode",
+      "input": {
+        "text": "Hello World",
+        "old": "world",
+        "new": "earth",
+        "mode": "exact"
+      },
+      "expected": {
+        "match_count": 0,
+        "would_change": false
+      }
+    },
+    {
+      "name": "no_match_empty_text",
+      "description": "Non-empty pattern on empty text",
+      "input": {
+        "text": "",
+        "old": "abc",
+        "new": "xyz"
+      },
+      "expected": {
+        "match_count": 0,
+        "would_change": false
+      }
+    },
+    {
+      "name": "no_match_pattern_longer_than_text",
+      "description": "Pattern longer than text",
+      "input": {
+        "text": "hi",
+        "old": "hello world",
+        "new": "x"
+      },
+      "expected": {
+        "match_count": 0,
+        "would_change": false
+      }
+    },
+    {
+      "name": "no_match_unicode_not_present",
+      "description": "Unicode pattern not present in ASCII text",
+      "input": {
+        "text": "hello",
+        "old": "日本",
+        "new": "x"
+      },
+      "expected": {
+        "match_count": 0,
+        "would_change": false
+      }
+    }
+  ]
+}

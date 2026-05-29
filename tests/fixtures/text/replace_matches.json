@@ -1,0 +1,109 @@
+{
+  "description": "text_replace_check: single and multiple match scenarios",
+  "tool": "text_replace_check",
+  "cases": [
+    {
+      "name": "single_match_simple",
+      "description": "One occurrence of pattern",
+      "input": {
+        "text": "hello world",
+        "old": "world",
+        "new": "earth"
+      },
+      "expected": {
+        "match_count": 1,
+        "unique_match": true,
+        "would_change": true,
+        "position_line": 1,
+        "position_column": 7
+      }
+    },
+    {
+      "name": "single_match_unicode",
+      "description": "Single Unicode pattern match",
+      "input": {
+        "text": "hello 世界",
+        "old": "世界",
+        "new": "earth"
+      },
+      "expected": {
+        "match_count": 1,
+        "unique_match": true,
+        "would_change": true
+      }
+    },
+    {
+      "name": "multiple_matches_three",
+      "description": "Three occurrences of pattern",
+      "input": {
+        "text": "aaa bbb aaa ccc aaa",
+        "old": "aaa",
+        "new": "xxx"
+      },
+      "expected": {
+        "match_count": 3,
+        "unique_match": false,
+        "would_change": true
+      }
+    },
+    {
+      "name": "multiple_matches_adjacent",
+      "description": "Pattern matches adjacent to itself",
+      "input": {
+        "text": "ababab",
+        "old": "ab",
+        "new": "xy"
+      },
+      "expected": {
+        "match_count": 3,
+        "unique_match": false,
+        "would_change": true
+      }
+    },
+    {
+      "name": "single_match_at_start",
+      "description": "Match at start of text",
+      "input": {
+        "text": "hello world",
+        "old": "hello",
+        "new": "hi"
+      },
+      "expected": {
+        "match_count": 1,
+        "unique_match": true,
+        "position_line": 1,
+        "position_column": 1,
+        "position_codepoint_index": 0
+      }
+    },
+    {
+      "name": "single_match_at_end",
+      "description": "Match at end of text",
+      "input": {
+        "text": "hello world",
+        "old": "world",
+        "new": "earth"
+      },
+      "expected": {
+        "match_count": 1,
+        "unique_match": true,
+        "position_codepoint_index": 6
+      }
+    },
+    {
+      "name": "match_multiline",
+      "description": "Match spanning multiple lines context",
+      "input": {
+        "text": "line1\nline2\nline3",
+        "old": "line3",
+        "new": "LINE3"
+      },
+      "expected": {
+        "match_count": 1,
+        "unique_match": true,
+        "position_line": 3,
+        "position_column": 1
+      }
+    }
+  ]
+}

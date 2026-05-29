@@ -1,0 +1,61 @@
+{
+  "description": "Zero-width joiner and non-joiner sequences - invisible characters that affect rendering",
+  "tool": "measure_text",
+  "cases": [
+    {
+      "name": "zwj_heart_zwj_emoji",
+      "description": "ZWJ sequence: heart + ZWJ + emoji",
+      "input": {
+        "text": "❤️‍💖"
+      },
+      "expected": {
+        "codepoints": 4,
+        "contains_invisibles": true
+      }
+    },
+    {
+      "name": "zero_width_non_joiner",
+      "description": "ZWNJ (U+200C) between Arabic letters prevents ligature",
+      "input": {
+        "text": "ا‌ب"
+      },
+      "expected": {
+        "codepoints": 3,
+        "contains_invisibles": true
+      }
+    },
+    {
+      "name": "zero_width_space",
+      "description": "ZWSP (U+200B) used for line break opportunity",
+      "input": {
+        "text": "hello​world"
+      },
+      "expected": {
+        "codepoints": 11,
+        "contains_invisibles": true
+      }
+    },
+    {
+      "name": "word_joiner",
+      "description": "Word Joiner (U+2060) prevents line break",
+      "input": {
+        "text": "hello⁠world"
+      },
+      "expected": {
+        "codepoints": 11,
+        "contains_invisibles": true
+      }
+    },
+    {
+      "name": "multiple_invisible_between_visible",
+      "description": "Multiple invisible chars between visible chars",
+      "input": {
+        "text": "a​‌‍b"
+      },
+      "expected": {
+        "codepoints": 5,
+        "contains_invisibles": true
+      }
+    }
+  ]
+}

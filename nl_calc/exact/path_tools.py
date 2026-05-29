@@ -13,6 +13,24 @@ from typing import TypedDict
 from .unicode_tools import detect_confusables
 
 
+class PathCompareResult(TypedDict):
+    equal: bool
+    left_normalized: str
+    right_normalized: str
+    differences: list[str]
+    findings: list[str]
+
+
+class PathScopeCheckResult(TypedDict):
+    inside_root: bool
+    root_normalized: str
+    target_normalized: str
+    relative_path: str
+    escapes_via_dotdot: bool
+    absolute_target: str
+    findings: list[str]
+
+
 class PathAnalyzeResult(TypedDict):
     input: str
     style: str
@@ -369,4 +387,179 @@ def path_normalize(
         is_absolute=is_absolute,
         components=components,
         warnings=warnings,
+    )
+
+
+def path_compare(
+    left: str,
+    right: str,
+    platform: str = "posix",
+    case_sensitive: bool = True,
+    normalize_separators: bool = True,
+    collapse_dot_segments: bool = True,
+) -> PathCompareResult:
+    """Compare two paths under explicit normalization rules.
+
+    This is lexical comparison only. Does NOT call filesystem APIs.
+
+    Args:
+        left: First path string.
+        right: Second path string.
+        platform: "posix" or "windows".
+        case_sensitive: Whether comparison is case-sensitive.
+        normalize_separators: Whether to normalize path separators.
+        collapse_dot_segments: Whether to collapse . and .. segments.
+
+    Returns:
+        PathCompareResult with comparison result.
+    """
+    findings: list[str] = []
+
+    if platform not in ("posix", "windows"):
+        platform = "posix"
+
+    sep = "/" if platform == "posix" else "\\"
+
+    def _normalize_path(p: str) -> str:
+        result = p
+        if normalize_separators:
+            if platform == "posix":
+                result = result.replace("\\", "/")
+            else:
+                result = result.replace("/", "\\")
+        norm_result = path_normalize(result, platform, collapse_dot_segments)
+        return norm_result["normalized"]
+
+    left_normalized = _normalize_path(left)
+    right_normalized = _normalize_path(right)
+
+    left_cmp = left_normalized
+    right_cmp = right_normalized
+
+    if not case_sensitive:
+        left_cmp = left_cmp.lower()
+        right_cmp = right_cmp.lower()
+
+    equal = left_cmp == right_cmp
+
+    differences: list[str] = []
+    if not equal:
+        differences.append(f"Normalized forms differ: '{left_normalized}' vs '{right_normalized}'")
+
+    if not case_sensitive:
+        findings.append("Case-insensitive comparison used")
+    if normalize_separators:
+        findings.append("Separators normalized to platform default")
+    if collapse_dot_segments:
+        findings.append("Dot segments collapsed")
+
+    return PathCompareResult(
+        equal=equal,
+        left_normalized=left_normalized,
+        right_normalized=right_normalized,
+        differences=differences,
+        findings=findings,
+    )
+
+
+def path_scope_check(
+    root: str,
+    target: str,
+    platform: str = "posix",
+    case_sensitive: bool = True,
+) -> PathScopeCheckResult:
+    """Determine whether a target path remains lexically inside a declared root.
+
+    This is lexical only. Does NOT resolve symlinks. Symlink-safe
+    enforcement requires filesystem-aware checks outside this tool.
+
+    Args:
+        root: Root directory path.
+        target: Target path to check.
+        platform: "posix" or "windows".
+        case_sensitive: Whether comparison is case-sensitive.
+
+    Returns:
+        PathScopeCheckResult with scope check result.
+    """
+    findings: list[str] = []
+
+    if platform not in ("posix", "windows"):
+        platform = "posix"
+
+    sep = "/" if platform == "posix" else "\\"
+
+    def _pre_normalize(p: str) -> str:
+        result = p
+        if platform == "windows":
+            result = result.replace("/", "\\")
+        else:
+            result = result.replace("\\", "/")
+        return result
+
+    root_pre = _pre_normalize(root)
+    target_pre = _pre_normalize(target)
+
+    root_norm = path_normalize(root_pre, platform, True)
+    target_norm = path_normalize(target_pre, platform, True)
+
+    root_normalized = root_norm["normalized"]
+    target_normalized = target_norm["normalized"]
+
+    root_is_abs = root_norm["is_absolute"]
+    target_is_abs = target_norm["is_absolute"]
+
+    if target_is_abs and not root_is_abs:
+        findings.append("Target is absolute but root is relative")
+
+    absolute_target = target_normalized
+    if target_is_abs:
+        absolute_target = target_normalized
+    else:
+        if platform == "posix":
+            absolute_target = root_normalized.rstrip("/") + "/" + target_normalized
+        else:
+            absolute_target = root_normalized.rstrip("\\") + "\\" + target_normalized
+        abs_norm = path_normalize(absolute_target, platform, True)
+        absolute_target = abs_norm["normalized"]
+
+    root_cmp = root_normalized
+    target_cmp = absolute_target
+    if not case_sensitive:
+        root_cmp = root_cmp.lower()
+        target_cmp = target_cmp.lower()
+
+    if platform == "posix":
+        root_prefix = root_cmp.rstrip("/") + "/"
+    else:
+        root_prefix = root_cmp.rstrip("\\") + "\\"
+
+    inside_root = target_cmp.startswith(root_prefix) or target_cmp == root_cmp
+
+    escapes_via_dotdot = ".." in target
+
+    relative_path = ""
+    if inside_root:
+        if platform == "posix":
+            relative_path = target_cmp[len(root_prefix):]
+        else:
+            relative_path = target_cmp[len(root_prefix):]
+        if not relative_path:
+            relative_path = "."
+
+    if not case_sensitive:
+        findings.append("Case-insensitive comparison used")
+    if escapes_via_dotdot:
+        findings.append("Target path contains parent traversal segments")
+    if not target_is_abs:
+        findings.append("Target is relative, resolved against root")
+
+    return PathScopeCheckResult(
+        inside_root=inside_root,
+        root_normalized=root_normalized,
+        target_normalized=target_normalized,
+        relative_path=relative_path,
+        escapes_via_dotdot=escapes_via_dotdot,
+        absolute_target=absolute_target,
+        findings=findings,
     )

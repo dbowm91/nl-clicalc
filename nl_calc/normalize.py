@@ -17,12 +17,24 @@ import argparse
 import re
 import sys
 import traceback
+from collections.abc import Mapping
 from functools import lru_cache
-from typing import Any, Mapping, Pattern
+from re import Pattern
+from typing import Any
 
 from .evaluator import EvaluationError, evaluate
-from .units import UnitValue, UNIT_ALIASES, is_unit, UNIT_CATEGORIES
-from .exact import inspect_text, count_chars, regex_test
+from .exact import (
+    count_chars,
+    dotenv_validate,
+    inspect_text,
+    line_range_extract,
+    markdown_structure,
+    patch_apply_check,
+    regex_test,
+    shell_split,
+    text_replace_check,
+)
+from .units import UNIT_ALIASES, UNIT_CATEGORIES, UnitValue, is_unit
 
 __all__ = [
     "evaluate",
@@ -1090,7 +1102,7 @@ def _handle_unit_conversion_from_tokens(tokens: list) -> list:
                                 break
 
                         if to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
-                            from .units import get_unit_category, are_units_compatible
+                            from .units import are_units_compatible, get_unit_category
 
                             cat1 = get_unit_category(from_unit_normalized)
                             cat2 = get_unit_category(to_unit_normalized)
@@ -1203,7 +1215,6 @@ def run(
 
 def _run_repl(show_expression: bool = True) -> int:
     """Run interactive REPL mode."""
-    import sys
 
     print("nl-calc interactive mode. Type 'help' for available commands, 'quit' or 'exit' to exit.")
     print()
@@ -1270,6 +1281,17 @@ def print_help() -> None:
         "  calc count <text>         Count characters (or count <text> <char>)",
         "  calc regex <pat> <text>  Test regex pattern against text",
         "",
+        "Text tools:",
+        "  calc replace-check <old> ||| <new> ||| <text>",
+        "  calc lines <start[-end]> <text>",
+        "  calc patch-check <original> ||| <patch>",
+        "  calc shell-split <command>",
+        "  calc md-structure <text>",
+        "  calc dotenv-check <text>",
+        "",
+        "Flags:",
+        "  --json                    Output result as JSON",
+        "",
         "Operators:",
         "  Arithmetic: +  -  *  /  **",
         "  Words: plus, minus, times, divided by, over, raised to",
@@ -1311,14 +1333,24 @@ def print_help() -> None:
         '  calc count "hello world"',
         '  calc count "hello" l',
         '  calc regex "^\\d+$" "12345"',
+        '  calc replace-check "foo" ||| "bar" ||| "foo baz foo"',
+        '  calc lines 2-4 "line1\\nline2\\nline3\\nline4\\nline5"',
+        '  calc shell-split "git commit -m \\"fix\\""',
+        '  calc md-structure "# Hello\\n\\nA [link](http://x.com)"',
+        '  calc dotenv-check "DB_HOST=localhost\\nDB_PORT=5432"',
+        "",
+        "All text commands support --json for machine-readable output.",
     ]
 
     for line in lines:
         print(line)
 
 
-def _cli_text_command(expression: str) -> int:
-    """Handle text commands (inspect, count, regex) before math evaluation.
+_DELIM = "|||"
+
+
+def _cli_text_command(expression: str, json_output: bool = False) -> int:
+    """Handle text commands before math evaluation.
 
     Returns:
         0 if command was handled, 1 if expression should continue to math eval
@@ -1339,6 +1371,11 @@ def _cli_text_command(expression: str) -> int:
         except ValueError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
 
         if result["warnings"]:
             for w in result["warnings"]:
@@ -1368,6 +1405,10 @@ def _cli_text_command(expression: str) -> int:
             except ValueError as e:
                 print(f"Error: {e}", file=sys.stderr)
                 return 1
+            if json_output:
+                import json
+                print(json.dumps(result))
+                return 0
             print(f"'{char}' appears {result['count']} time(s) in \"{text}\"")
             return 0
 
@@ -1375,6 +1416,10 @@ def _cli_text_command(expression: str) -> int:
         try:
             if " " in text:
                 result = count_chars(text)
+                if json_output:
+                    import json
+                    print(json.dumps(result))
+                    return 0
                 if isinstance(result, dict):
                     print(f"\"{text}\":")
                     print(f"  {len(text)} characters")
@@ -1387,6 +1432,10 @@ def _cli_text_command(expression: str) -> int:
                 return 0
             else:
                 result = count_chars(text)
+                if json_output:
+                    import json
+                    print(json.dumps(result))
+                    return 0
                 print(f"\"{text}\": {len(text)} character(s)")
         except ValueError as e:
             print(f"Error: {e}", file=sys.stderr)
@@ -1409,6 +1458,11 @@ def _cli_text_command(expression: str) -> int:
             print(f"\u2717 Invalid regex pattern: {pattern}", file=sys.stderr)
             return 1
 
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
         if result["results"]:
             r = result["results"][0]
             if r["matches"]:
@@ -1418,9 +1472,227 @@ def _cli_text_command(expression: str) -> int:
                 if r["groupdict"]:
                     print(f"  Named groups: {r['groupdict']}")
             else:
-                print(f"\u2717 No match")
+                print("\u2717 No match")
         else:
-            print(f"\u2717 No match")
+            print("\u2717 No match")
+        return 0
+
+    if cmd == "replace-check":
+        if _DELIM not in expression:
+            print(f"Usage: calc replace-check <old> {_DELIM} <new> {_DELIM} <text>", file=sys.stderr)
+            return 1
+        raw = expression[len(cmd):].strip()
+        segments = raw.split(_DELIM)
+        if len(segments) < 3:
+            print(f"Usage: calc replace-check <old> {_DELIM} <new> {_DELIM} <text>", file=sys.stderr)
+            return 1
+        old = segments[0].strip()
+        new = segments[1].strip()
+        text = segments[2].strip()
+        try:
+            result = text_replace_check(text, old, new, return_preview=True)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        count = result["match_count"]
+        if count == 0:
+            print("\u2717 No match for replacement.")
+        elif count == 1:
+            print("\u2713 Replacement would apply cleanly to 1 match.")
+        else:
+            print(f"\u221d Replacement is ambiguous: {count} matches found.")
+        for f in result["findings"]:
+            print(f"  {f['kind']}: {f['message']}")
+        return 0
+
+    if cmd == "lines":
+        # Split into at most 3 parts to preserve text content (including newlines)
+        split_parts = expression.strip().split(None, 2)
+        if len(split_parts) < 3:
+            print("Usage: calc lines <start[-end]> <text>", file=sys.stderr)
+            return 1
+        range_str = split_parts[1]
+        text = split_parts[2]
+        # Parse range: "1-5" or just "3" (single line)
+        if "-" in range_str:
+            try:
+                start_str, end_str = range_str.split("-", 1)
+                start_line = int(start_str)
+                end_line = int(end_str)
+            except ValueError:
+                print(f"Error: Invalid line range '{range_str}'", file=sys.stderr)
+                return 1
+        else:
+            try:
+                start_line = int(range_str)
+                end_line = start_line
+            except ValueError:
+                print(f"Error: Invalid line number '{range_str}'", file=sys.stderr)
+                return 1
+        try:
+            result = line_range_extract(text, start_line, end_line, include_line_numbers=True)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        if not result["valid_range"]:
+            for f in result["findings"]:
+                print(f"  {f['kind']}: {f['message']}")
+            return 1
+        for line_info in result["lines"]:
+            num = line_info.get("line", "")
+            content = line_info.get("text", "")
+            print(f"{num}: {content}")
+        return 0
+
+    if cmd == "patch-check":
+        if _DELIM not in expression:
+            print(f"Usage: calc patch-check <original> {_DELIM} <patch>", file=sys.stderr)
+            return 1
+        raw = expression[len(cmd):].strip()
+        segments = raw.split(_DELIM, 1)
+        if len(segments) < 2:
+            print(f"Usage: calc patch-check <original> {_DELIM} <patch>", file=sys.stderr)
+            return 1
+        original = segments[0].strip()
+        patch_text = segments[1].strip()
+        try:
+            result = patch_apply_check(original, patch_text)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        if not result["patch_parse_ok"]:
+            print("\u2717 Failed to parse patch.")
+            for f in result["findings"]:
+                print(f"  {f}")
+            return 1
+        total = result["hunks_total"]
+        applied = result["hunks_applied"]
+        failed = result["hunks_failed"]
+        if result["applies"]:
+            print(f"\u2713 Patch applies cleanly. {applied}/{total} hunks applied.")
+        else:
+            print(f"\u2717 Patch fails: {failed}/{total} hunks failed.")
+        for f in result["findings"]:
+            print(f"  {f}")
+        return 0
+
+    if cmd == "shell-split":
+        if len(parts) < 2:
+            print("Usage: calc shell-split <command>", file=sys.stderr)
+            return 1
+        command = " ".join(parts[1:])
+        try:
+            result = shell_split(command)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        if not result["parse_ok"]:
+            print("\u2717 Parse failed.")
+            for f in result["findings"]:
+                print(f"  {f}")
+            return 1
+        argv = result["argv"]
+        print(f"Parsed {result['argc']} token(s): {argv}")
+        features = result["features"]
+        active = [k.replace("has_", "") for k, v in features.items() if v]
+        if active:
+            print(f"Contains: {', '.join(active)}")
+        for f in result["findings"]:
+            print(f"  {f}")
+        return 0
+
+    if cmd == "md-structure":
+        # Split into at most 2 parts to preserve text content (including newlines)
+        split_parts = expression.strip().split(None, 1)
+        if len(split_parts) < 2:
+            print("Usage: calc md-structure <text>", file=sys.stderr)
+            return 1
+        text = split_parts[1]
+        try:
+            result = markdown_structure(text)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        headings = result["headings"]
+        fences = result["code_fences"]
+        links = result["links"]
+        unclosed = [f for f in fences if not f["closed"]]
+        parts_out = []
+        if headings:
+            parts_out.append(f"{len(headings)} heading(s)")
+        if fences:
+            label = "code fence(s)" if len(fences) != 1 else "code fence"
+            if unclosed:
+                parts_out.append(f"{len(fences)} {label} ({len(unclosed)} unclosed)")
+            else:
+                parts_out.append(f"{len(fences)} {label}")
+        if links:
+            parts_out.append(f"{len(links)} link(s)")
+        if result["frontmatter"]["present"]:
+            parts_out.append(f"frontmatter ({result['frontmatter']['format']})")
+        if result["tables_detected"]:
+            parts_out.append("table(s)")
+        if parts_out:
+            print(f"Markdown contains: {', '.join(parts_out)}.")
+        else:
+            print("Markdown is empty or has no structural elements.")
+        for f in result["findings"]:
+            print(f"  {f}")
+        return 0
+
+    if cmd == "dotenv-check":
+        if len(parts) < 2:
+            print("Usage: calc dotenv-check <text>", file=sys.stderr)
+            return 1
+        text = " ".join(parts[1:])
+        try:
+            result = dotenv_validate(text)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if json_output:
+            import json
+            print(json.dumps(result))
+            return 0
+
+        entries = result["entries"]
+        if result["parse_ok"] and not result["invalid_lines"]:
+            print(f"\u2713 Valid .env: {len(entries)} entry/entries.")
+        else:
+            print(f"\u2717 Invalid .env: {len(result['invalid_lines'])} invalid line(s).")
+        for f in result["findings"]:
+            print(f"  {f}")
         return 0
 
     return 1  # Not a text command, continue to math eval
@@ -1429,6 +1701,7 @@ def _cli_text_command(expression: str) -> int:
 def main() -> int:
     """Main entry point for CLI."""
     import os
+
     from nl_calc import __version__
 
     parser = argparse.ArgumentParser(
@@ -1519,8 +1792,8 @@ def main() -> int:
                 print(line, file=sys.stderr)
             return 1
 
-    # Try text commands first (inspect, count, regex)
-    cmd_result = _cli_text_command(expression)
+    # Try text commands first (inspect, count, regex, etc.)
+    cmd_result = _cli_text_command(expression, json_output=args.json)
     if cmd_result == 0:
         return 0  # Command was handled
 

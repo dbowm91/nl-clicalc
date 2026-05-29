@@ -12,35 +12,35 @@ Tests for:
 import pytest
 
 from nl_calc.exact import (
-    utf8_bytes,
-    codepoints,
-    normalize_unicode,
     casefold_text,
-    raw_equal,
-    normalized_equal,
-    measure_basic,
-    find_invisibles,
-    visible_repr,
-    unicode_script,
-    detect_mixed_scripts,
-    detect_confusables,
-    first_diff,
-    common_prefix_suffix,
-    levenshtein_distance,
-    longest_common_subsequence,
-    diff_spans,
-    check_brackets,
-    validate_json,
-    regex_test,
-    line_metrics,
-    word_metrics,
     char_category_metrics,
-    measure_text,
-    text_equal,
-    explain_diff,
-    inspect_text,
+    check_brackets,
+    codepoints,
+    common_prefix_suffix,
     count_chars,
+    detect_confusables,
+    detect_mixed_scripts,
+    diff_spans,
+    explain_diff,
+    find_invisibles,
+    first_diff,
+    inspect_text,
+    levenshtein_distance,
+    line_metrics,
     list_compare,
+    longest_common_subsequence,
+    measure_basic,
+    measure_text,
+    normalize_unicode,
+    normalized_equal,
+    raw_equal,
+    regex_test,
+    text_equal,
+    unicode_script,
+    utf8_bytes,
+    validate_json,
+    visible_repr,
+    word_metrics,
 )
 
 
@@ -51,8 +51,8 @@ class TestPrimitives:
         assert utf8_bytes("hello") == b"hello"
 
     def test_utf8_bytes_unicode(self):
-        assert utf8_bytes("héllo") == "héllo".encode("utf-8")
-        assert utf8_bytes("日本語") == "日本語".encode("utf-8")
+        assert utf8_bytes("héllo") == "héllo".encode()
+        assert utf8_bytes("日本語") == "日本語".encode()
 
     def test_utf8_bytes_empty(self):
         assert utf8_bytes("") == b""

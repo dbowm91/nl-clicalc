@@ -8,7 +8,7 @@ and handles input validation and error wrapping.
 from __future__ import annotations
 
 import json
-from functools import lru_cache
+import re
 from typing import Any
 
 from .. import EvaluationError, evaluate_raw
@@ -16,31 +16,7 @@ from ..exact import (
     check_brackets as _check_brackets,
 )
 from ..exact import (
-    regex_test as _regex_test,
-)
-from ..exact import (
-    validate_json as _validate_json,
-)
-from ..exact import (
-    validate_toml_text as _validate_toml_text,
-)
-from ..exact import (
-    toml_shape as _toml_shape,
-)
-from ..exact import (
-    version_compare as _version_compare,
-)
-from ..exact import (
-    list_dedupe as _list_dedupe,
-)
-from ..exact import (
-    list_sort as _list_sort,
-)
-from ..exact import (
     glob_match as _glob_match,
-)
-from ..exact import (
-    text_fingerprint as _text_fingerprint,
 )
 from ..exact import (
     identifier_inspect as _identifier_inspect,
@@ -55,16 +31,82 @@ from ..exact import (
     json_shape as _json_shape,
 )
 from ..exact import (
+    list_dedupe as _list_dedupe,
+)
+from ..exact import (
+    list_sort as _list_sort,
+)
+from ..exact import (
     regex_finditer as _regex_finditer,
 )
 from ..exact import (
     regex_safety_check as _regex_safety_check,
 )
 from ..exact import (
-    validate_schema_light as _validate_schema_light,
+    regex_test as _regex_test,
+)
+from ..exact import (
+    text_fingerprint as _text_fingerprint,
 )
 from ..exact import (
     text_position as _text_position,
+)
+from ..exact import (
+    toml_shape as _toml_shape,
+)
+from ..exact import (
+    validate_json as _validate_json,
+)
+from ..exact import (
+    validate_schema_light as _validate_schema_light,
+)
+from ..exact import (
+    validate_toml_text as _validate_toml_text,
+)
+from ..exact import (
+    version_compare as _version_compare,
+)
+from ..exact.config import (
+    dotenv_validate as _dotenv_validate,
+)
+from ..exact.config import (
+    ini_validate as _ini_validate,
+)
+from ..exact.identifier import (
+    identifier_analyze as _identifier_analyze,
+)
+from ..exact.markdown import (
+    code_fence_extract as _code_fence_extract,
+)
+from ..exact.markdown import (
+    markdown_structure as _markdown_structure,
+)
+from ..exact.path_tools import (
+    path_analyze as _path_analyze,
+)
+from ..exact.path_tools import (
+    path_compare as _path_compare,
+)
+from ..exact.path_tools import (
+    path_normalize as _path_normalize,
+)
+from ..exact.path_tools import (
+    path_scope_check as _path_scope_check,
+)
+from ..exact.primitives import (
+    count_graphemes as _count_graphemes,
+)
+from ..exact.primitives import (
+    truncate_to_grapheme as _truncate_to_grapheme,
+)
+from ..exact.shell import (
+    argv_compare as _argv_compare,
+)
+from ..exact.shell import (
+    shell_quote_join as _shell_quote_join,
+)
+from ..exact.shell import (
+    shell_split as _shell_split,
 )
 from ..exact.synthesis import (
     count_chars as _count_chars,
@@ -76,6 +118,12 @@ from ..exact.synthesis import (
     inspect_text as _inspect_text,
 )
 from ..exact.synthesis import (
+    line_range_compare as _line_range_compare,
+)
+from ..exact.synthesis import (
+    line_range_extract as _line_range_extract,
+)
+from ..exact.synthesis import (
     list_compare as _list_compare,
 )
 from ..exact.synthesis import (
@@ -84,32 +132,38 @@ from ..exact.synthesis import (
 from ..exact.synthesis import (
     text_equal as _text_equal,
 )
-from ..exact.path_tools import (
-    path_analyze as _path_analyze,
-    path_normalize as _path_normalize,
+from ..exact.synthesis import (
+    text_replace_check as _text_replace_check,
+)
+from ..exact.synthesis import (
+    text_window as _text_window,
+)
+from ..exact.transform import (
+    escape_text as _escape_text,
+)
+from ..exact.transform import (
+    text_fingerprint as _text_fingerprint,
+)
+from ..exact.transform import (
+    text_hash as _text_hash,
 )
 from ..exact.transform import (
     text_transform as _text_transform,
-    escape_text as _escape_text,
+)
+from ..exact.transform import (
     unescape_text as _unescape_text,
-    text_hash as _text_hash,
-    text_fingerprint as _text_fingerprint,
 )
-from ..exact.primitives import (
-    truncate_to_grapheme as _truncate_to_grapheme,
-    count_graphemes as _count_graphemes,
+from ..exact.unicode_policy import (
+    canonicalize_text as _canonicalize_text,
 )
-from ..exact.identifier import (
-    identifier_analyze as _identifier_analyze,
+from ..exact.unicode_policy import (
+    unicode_policy_check as _unicode_policy_check,
 )
 from ..exact.validate import (
     json_canonicalize as _json_canonicalize,
 )
 from ..exact.validate import (
     json_query as _json_query,
-)
-from ..exact.synthesis import (
-    text_window as _text_window,
 )
 from .schemas import ErrorEnvelope
 
@@ -241,15 +295,25 @@ def _success_response(
     tool: str | None = None,
     warnings: list[str] | None = None,
     limits_applied: list[str] | None = None,
+    findings: list[dict] | None = None,
+    machine_code: str | None = None,
+    recommended_next_tool: str | list[str] | None = None,
 ) -> dict:
     """Create a standardized success envelope."""
-    return {
+    envelope: dict[str, Any] = {
         "ok": True,
         "tool": tool,
         "result": result,
         "warnings": warnings or [],
         "limits_applied": limits_applied or [],
     }
+    if findings:
+        envelope["findings"] = findings
+    if machine_code is not None:
+        envelope["machine_code"] = machine_code
+    if recommended_next_tool is not None:
+        envelope["recommended_next_tool"] = recommended_next_tool
+    return envelope
 
 
 def math_eval(expression: str) -> dict:
@@ -288,8 +352,10 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
         Success response with conversion result.
     """
     try:
-        from ..units import get_conversion_factor, convert_temperature
-        from ..units import UNIT_ALIASES, UNIT_CATEGORIES, is_unit
+        from ..units import (
+            get_conversion_factor,
+            is_unit,
+        )
 
         if not is_unit(from_unit):
             return _error_response("invalid_arguments", f"Unknown unit: {from_unit}", tool="unit_convert")
@@ -321,7 +387,7 @@ def unit_info(unit: str) -> dict:
         Success response with unit information.
     """
     try:
-        from ..units import UNIT_ALIASES, UNIT_CATEGORIES, UNIT_BASE
+        from ..units import UNIT_ALIASES, UNIT_BASE, UNIT_CATEGORIES
 
         if unit not in UNIT_ALIASES:
             return _error_response("invalid_arguments", f"Unknown unit: {unit}", tool="unit_info")
@@ -611,7 +677,44 @@ def text_inspect(
 
     try:
         result = _inspect_text(text, include_codepoints, include_confusables, detail, normalize, compare_normalized)
-        return _success_response(result, tool="text_inspect")
+
+        findings: list[dict] = []
+        for inv in result.get("invisibles", []):
+            findings.append({
+                "code": "INVISIBLE_CHAR",
+                "severity": "warn",
+                "message": f"Invisible character: {inv.get('name', 'unknown')} at index {inv.get('index', '?')}",
+                "span": {"char_start": inv.get("index", 0), "char_end": inv.get("index", 0) + 1},
+                "details": {"codepoint": inv.get("codepoint"), "category": inv.get("category")},
+            })
+        for conf in result.get("confusables", []):
+            findings.append({
+                "code": "CONFUSABLE_CHAR",
+                "severity": "warn",
+                "message": f"Confusable character at index {conf.get('index', '?')}",
+                "span": {"char_start": conf.get("index", 0), "char_end": conf.get("index", 0) + 1},
+                "details": {"original": conf.get("original"), "confusable": conf.get("confusable")},
+            })
+        for bidi in result.get("bidi_controls", []):
+            findings.append({
+                "code": "BIDI_CONTROL",
+                "severity": "warn",
+                "message": f"Bidirectional control character: {bidi.get('name', 'unknown')} at index {bidi.get('index', '?')}",
+                "span": {"char_start": bidi.get("index", 0), "char_end": bidi.get("index", 0) + 1},
+                "details": {"codepoint": bidi.get("codepoint")},
+            })
+
+        machine_code: str | None = None
+        if findings:
+            codes = {f["code"] for f in findings}
+            if "CONFUSABLE_CHAR" in codes:
+                machine_code = "CONFUSABLES_DETECTED"
+            elif "BIDI_CONTROL" in codes:
+                machine_code = "BIDI_DETECTED"
+            elif "INVISIBLE_CHAR" in codes:
+                machine_code = "INVISIBLES_DETECTED"
+
+        return _success_response(result, tool="text_inspect", findings=findings or None, machine_code=machine_code)
     except ValueError as e:
         return _error_response("invalid_arguments", str(e), tool="text_inspect")
 
@@ -725,7 +828,27 @@ def validate_json(text: str) -> dict:
 
     try:
         result = _validate_json(text)
-        return _success_response(result, tool="validate_json")
+
+        findings: list[dict] = []
+        if not result.get("valid", True):
+            span: dict = {}
+            if result.get("line") is not None:
+                span["line"] = result["line"]
+            if result.get("column") is not None:
+                span["column"] = result["column"]
+            findings.append({
+                "code": "JSON_PARSE_ERROR",
+                "severity": "error",
+                "message": result.get("error", "Invalid JSON"),
+                "span": span or None,
+                "details": {"position": result.get("position")},
+            })
+
+        machine_code: str | None = None
+        if not result.get("valid", True):
+            machine_code = "JSON_INVALID"
+
+        return _success_response(result, tool="validate_json", findings=findings or None, machine_code=machine_code)
     except Exception as e:
         return _error_response("internal_error", str(e), tool="validate_json")
 
@@ -1069,7 +1192,21 @@ def regex_safety_check(pattern: str) -> dict:
 
     try:
         result = _regex_safety_check(pattern)
-        return _success_response(result, tool="regex_safety_check")
+
+        findings: list[dict] = []
+        for risk in result.get("findings", []):
+            findings.append({
+                "code": risk.get("kind", "UNKNOWN_RISK").upper(),
+                "severity": risk.get("severity", "warn"),
+                "message": risk.get("message", risk.get("kind", "Unknown risk")),
+                "details": {"pattern_length": result.get("pattern_length", len(pattern))},
+            })
+
+        machine_code: str | None = None
+        if result.get("risk") in ("medium", "high"):
+            machine_code = "REGEX_UNSAFE"
+
+        return _success_response(result, tool="regex_safety_check", findings=findings or None, machine_code=machine_code)
     except Exception as e:
         return _error_response("internal_error", str(e), tool="regex_safety_check")
 
@@ -1617,7 +1754,7 @@ def text_hash(
 
     try:
         result = _text_hash(text, algorithms, encoding)
-    except (LookupError, UnicodeDecodeError) as e:
+    except (LookupError, UnicodeDecodeError):
         return _error_response(
             "invalid_arguments",
             f"Invalid encoding: {encoding}",
@@ -1675,6 +1812,27 @@ def path_analyze_mcp(path: str, style: str = "auto", detail: str = "normal") -> 
     try:
         result = _path_analyze(path, style)
 
+        findings: list[dict] = []
+        if result.get("has_traversal"):
+            findings.append({
+                "code": "PATH_TRAVERSAL",
+                "severity": "warn",
+                "message": "Path contains parent directory traversal (..)",
+                "details": {"normalized_lexical": result.get("normalized_lexical")},
+            })
+        if result.get("hidden"):
+            findings.append({
+                "code": "PATH_HIDDEN",
+                "severity": "info",
+                "message": "Path starts with a dot (hidden file/directory)",
+            })
+
+        machine_code: str | None = None
+        if result.get("has_traversal"):
+            machine_code = "PATH_HAS_TRAVERSAL"
+        elif result.get("hidden"):
+            machine_code = "PATH_IS_HIDDEN"
+
         if detail == "summary":
             summary_result = {
                 "summary": result["summary"],
@@ -1687,7 +1845,7 @@ def path_analyze_mcp(path: str, style: str = "auto", detail: str = "normal") -> 
         else:
             summary_result = dict(result)
 
-        return _success_response(summary_result, tool="path_analyze")
+        return _success_response(summary_result, tool="path_analyze", findings=findings or None, machine_code=machine_code)
     except Exception as e:
         return _error_response("internal_error", str(e), tool="path_analyze")
 
@@ -1731,6 +1889,110 @@ def path_normalize(
         return _success_response(result, tool="path_normalize")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="path_normalize")
+
+
+def path_compare_mcp(
+    left: str,
+    right: str,
+    platform: str = "posix",
+    case_sensitive: bool = True,
+    normalize_separators: bool = True,
+    collapse_dot_segments: bool = True,
+) -> dict:
+    """Compare two paths under explicit normalization rules.
+
+    Args:
+        left: First path string.
+        right: Second path string.
+        platform: "posix" or "windows".
+        case_sensitive: Whether comparison is case-sensitive.
+        normalize_separators: Whether to normalize path separators.
+        collapse_dot_segments: Whether to collapse . and .. segments.
+
+    Returns:
+        Success envelope with comparison result, or error envelope.
+    """
+    if len(left) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Left path length {len(left)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="path_compare",
+        )
+
+    if len(right) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Right path length {len(right)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="path_compare",
+        )
+
+    valid_platforms = {"posix", "windows"}
+    if platform not in valid_platforms:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported platform: {platform}",
+            [f"Use one of: {', '.join(valid_platforms)}"],
+            tool="path_compare",
+        )
+
+    try:
+        result = _path_compare(left, right, platform, case_sensitive, normalize_separators, collapse_dot_segments)
+        return _success_response(result, tool="path_compare")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="path_compare")
+
+
+def path_scope_check_mcp(
+    root: str,
+    target: str,
+    platform: str = "posix",
+    case_sensitive: bool = True,
+) -> dict:
+    """Determine whether a target path remains lexically inside a declared root.
+
+    This is lexical only. Does NOT resolve symlinks.
+
+    Args:
+        root: Root directory path.
+        target: Target path to check.
+        platform: "posix" or "windows".
+        case_sensitive: Whether comparison is case-sensitive.
+
+    Returns:
+        Success envelope with scope check result, or error envelope.
+    """
+    if len(root) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Root path length {len(root)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="path_scope_check",
+        )
+
+    if len(target) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Target path length {len(target)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="path_scope_check",
+        )
+
+    valid_platforms = {"posix", "windows"}
+    if platform not in valid_platforms:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported platform: {platform}",
+            [f"Use one of: {', '.join(valid_platforms)}"],
+            tool="path_scope_check",
+        )
+
+    try:
+        result = _path_scope_check(root, target, platform, case_sensitive)
+        return _success_response(result, tool="path_scope_check")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="path_scope_check")
 
 
 def identifier_analyze(
@@ -2071,9 +2333,107 @@ def identifier_inspect_mcp(
 
     try:
         result = _identifier_inspect(identifiers, language, normalization, casefold, check_confusables)
-        return _success_response(result, tool="identifier_inspect")
+
+        findings: list[dict] = []
+        for ident_info in result.get("identifiers", []):
+            for issue in ident_info.get("issues", []):
+                findings.append({
+                    "code": issue.get("code", "IDENT_ISSUE"),
+                    "severity": issue.get("severity", "warn"),
+                    "message": issue.get("message", "Identifier issue"),
+                    "details": {"identifier": ident_info.get("raw", "")},
+                })
+        for collision in result.get("collisions", []):
+            findings.append({
+                "code": "IDENT_COLLISION",
+                "severity": "warn",
+                "message": collision.get("message", "Identifier collision detected"),
+                "details": collision,
+            })
+
+        machine_code: str | None = None
+        if result.get("collisions"):
+            machine_code = "IDENT_COLLISIONS"
+        elif any(f.get("severity") == "error" for f in findings):
+            machine_code = "IDENT_INVALID"
+
+        return _success_response(result, tool="identifier_inspect", findings=findings or None, machine_code=machine_code)
     except Exception as e:
         return _error_response("internal_error", str(e), tool="identifier_inspect")
+
+
+def markdown_structure_mcp(
+    text: str,
+    include_sections: bool = True,
+    include_links: bool = True,
+    include_code_fences: bool = True,
+    include_html_comments: bool = True,
+) -> dict:
+    """Parse Markdown structure using a deterministic line scanner.
+
+    Args:
+        text: Markdown text to analyze.
+        include_sections: Include heading detection (default true).
+        include_links: Include link detection (default true).
+        include_code_fences: Include code fence detection (default true).
+        include_html_comments: Include HTML comment detection (default true).
+
+    Returns:
+        Success envelope with Markdown structure, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="markdown_structure",
+        )
+
+    try:
+        result = _markdown_structure(
+            text,
+            include_sections=include_sections,
+            include_links=include_links,
+            include_code_fences=include_code_fences,
+            include_html_comments=include_html_comments,
+        )
+        return _success_response(result, tool="markdown_structure")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="markdown_structure")
+
+
+def code_fence_extract_mcp(
+    text: str,
+    language: str | None = None,
+    include_content: bool = True,
+) -> dict:
+    """Extract fenced code blocks with exact line ranges and fingerprints.
+
+    Args:
+        text: Markdown text to scan.
+        language: Optional language filter (case-insensitive).
+        include_content: Include block content in output (default true).
+
+    Returns:
+        Success envelope with extracted code blocks, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="code_fence_extract",
+        )
+
+    try:
+        result = _code_fence_extract(
+            text,
+            language=language,
+            include_content=include_content,
+        )
+        return _success_response(result, tool="code_fence_extract")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="code_fence_extract")
 
 
 def version_compare_mcp(
@@ -2247,3 +2607,602 @@ def list_sort_mcp(
         }, tool="list_sort")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="list_sort")
+
+
+def text_replace_check(
+    text: str,
+    old: str,
+    new: str,
+    mode: str = "exact",
+    expected_count: int | None = None,
+    allow_multiple: bool = False,
+    newline_policy: str = "preserve",
+    return_preview: bool = False,
+    max_preview_chars: int = 2000,
+) -> dict:
+    """Check whether a replacement would apply cleanly before editing.
+
+    Args:
+        text: Source text.
+        old: Text to find.
+        new: Replacement text.
+        mode: Matching mode (exact, nfc, nfkc, casefold, whitespace_collapse).
+        expected_count: Expected number of matches.
+        allow_multiple: If False and more than one match, add a finding.
+        newline_policy: How to handle newlines.
+        return_preview: If True, include before/after previews.
+        max_preview_chars: Maximum characters in preview output.
+
+    Returns:
+        Success envelope with replace check result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="text_replace_check",
+        )
+
+    valid_modes = {"exact", "nfc", "nfkc", "casefold", "whitespace_collapse"}
+    if mode not in valid_modes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported mode: {mode}",
+            [f"Use one of: {', '.join(valid_modes)}"],
+            tool="text_replace_check",
+        )
+
+    valid_newline = {"preserve", "normalize_lf", "normalize_crlf"}
+    if newline_policy not in valid_newline:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported newline_policy: {newline_policy}",
+            [f"Use one of: {', '.join(valid_newline)}"],
+            tool="text_replace_check",
+        )
+
+    if max_preview_chars < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"max_preview_chars must be non-negative, got {max_preview_chars}",
+            tool="text_replace_check",
+        )
+
+    try:
+        result = _text_replace_check(
+            text, old, new, mode, expected_count, allow_multiple,
+            newline_policy, return_preview, max_preview_chars,
+        )
+        return _success_response(result, tool="text_replace_check")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="text_replace_check")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_replace_check")
+
+
+def line_range_extract(
+    text: str,
+    start_line: int,
+    end_line: int,
+    line_base: int = 1,
+    include_line_numbers: bool = False,
+    include_fingerprint: bool = True,
+) -> dict:
+    """Extract exact line ranges and return stable offsets/fingerprints.
+
+    Args:
+        text: Input string.
+        start_line: First line to extract.
+        end_line: Last line to extract (inclusive).
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+        include_line_numbers: If True, include line number in each line dict.
+        include_fingerprint: If True, compute SHA-256 fingerprint.
+
+    Returns:
+        Success envelope with line range extract result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="line_range_extract",
+        )
+
+    if start_line > end_line:
+        return _error_response(
+            "invalid_arguments",
+            f"start_line ({start_line}) must be <= end_line ({end_line})",
+            tool="line_range_extract",
+        )
+
+    try:
+        result = _line_range_extract(
+            text, start_line, end_line, line_base,
+            include_line_numbers, include_fingerprint,
+        )
+        return _success_response(result, tool="line_range_extract")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="line_range_extract")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="line_range_extract")
+
+
+def line_range_compare(
+    left_text: str,
+    right_text: str,
+    start_line: int,
+    end_line: int,
+    line_base: int = 1,
+    comparison_mode: str = "exact",
+) -> dict:
+    """Compare a line range from two text inputs.
+
+    Args:
+        left_text: First text input.
+        right_text: Second text input.
+        start_line: First line to compare.
+        end_line: Last line to compare (inclusive).
+        line_base: Base for line numbers.
+        comparison_mode: "exact", "ignore_trailing_whitespace", or "normalize_newlines".
+
+    Returns:
+        Success envelope with line range compare result, or error envelope.
+    """
+    for label, t in [("left_text", left_text), ("right_text", right_text)]:
+        if len(t) > MAX_TEXT_LENGTH:
+            return _error_response(
+                "input_too_large",
+                f"{label} length {len(t)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+                [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+                tool="line_range_compare",
+            )
+
+    valid_modes = {"exact", "ignore_trailing_whitespace", "normalize_newlines"}
+    if comparison_mode not in valid_modes:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported comparison_mode: {comparison_mode}",
+            [f"Use one of: {', '.join(valid_modes)}"],
+            tool="line_range_compare",
+        )
+
+    try:
+        result = _line_range_compare(
+            left_text, right_text, start_line, end_line,
+            line_base, comparison_mode,
+        )
+        return _success_response(result, tool="line_range_compare")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="line_range_compare")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="line_range_compare")
+
+
+def shell_split(
+    command: str,
+    shell: str = "posix",
+    detect_risky_features: bool = True,
+) -> dict:
+    """Parse a shell-like command string into argv and report risky features.
+
+    This performs lexical POSIX-like parsing only, not full shell evaluation.
+
+    Args:
+        command: The command string to parse.
+        shell: Shell dialect (only "posix" is supported).
+        detect_risky_features: Whether to detect risky lexical features.
+
+    Returns:
+        Success envelope with parsed argv and features, or error envelope.
+    """
+    if len(command) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Command length {len(command)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="shell_split",
+        )
+
+    valid_shells = {"posix"}
+    if shell not in valid_shells:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported shell: {shell}",
+            [f"Use one of: {', '.join(valid_shells)}"],
+            tool="shell_split",
+        )
+
+    try:
+        result = _shell_split(command, shell=shell, detect_risky_features=detect_risky_features)
+        return _success_response(result, tool="shell_split")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="shell_split")
+
+
+def shell_quote_join(
+    argv: list[str],
+    shell: str = "posix",
+) -> dict:
+    """Safely quote a list of argv tokens into a POSIX-like shell string.
+
+    Args:
+        argv: List of argument strings to join.
+        shell: Shell dialect (only "posix" is supported).
+
+    Returns:
+        Success envelope with quoted command and roundtrip status, or error envelope.
+    """
+    if len(argv) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"argv length {len(argv)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="shell_quote_join",
+        )
+
+    valid_shells = {"posix"}
+    if shell not in valid_shells:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported shell: {shell}",
+            [f"Use one of: {', '.join(valid_shells)}"],
+            tool="shell_quote_join",
+        )
+
+    try:
+        result = _shell_quote_join(argv, shell=shell)
+        return _success_response(result, tool="shell_quote_join")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="shell_quote_join")
+
+
+def shell_argv_compare(
+    left_command: str | None = None,
+    right_command: str | None = None,
+    left_argv: list[str] | None = None,
+    right_argv: list[str] | None = None,
+    shell: str = "posix",
+) -> dict:
+    """Compare two command strings or argv lists by parsed argv.
+
+    Args:
+        left_command: Left command string to parse and compare.
+        right_command: Right command string to parse and compare.
+        left_argv: Left pre-parsed argv list.
+        right_argv: Right pre-parsed argv list.
+        shell: Shell dialect (only "posix" is supported).
+
+    Returns:
+        Success envelope with comparison results, or error envelope.
+    """
+    valid_shells = {"posix"}
+    if shell not in valid_shells:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported shell: {shell}",
+            [f"Use one of: {', '.join(valid_shells)}"],
+            tool="argv_compare",
+        )
+
+    if left_command is not None and len(left_command) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Left command length {len(left_command)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="argv_compare",
+        )
+
+    if right_command is not None and len(right_command) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Right command length {len(right_command)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="argv_compare",
+        )
+
+    if left_argv is not None and len(left_argv) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"left_argv length {len(left_argv)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="argv_compare",
+        )
+
+    if right_argv is not None and len(right_argv) > MAX_LIST_ITEMS:
+        return _error_response(
+            "input_too_large",
+            f"right_argv length {len(right_argv)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="argv_compare",
+        )
+
+    try:
+        result = _argv_compare(
+            left_command=left_command,
+            right_command=right_command,
+            left_argv=left_argv,
+            right_argv=right_argv,
+            shell=shell,
+        )
+        return _success_response(result, tool="argv_compare")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="argv_compare")
+
+
+def dotenv_validate_mcp(
+    text: str,
+    allow_export: bool = True,
+    key_pattern: str = r"^[A-Za-z_][A-Za-z0-9_]*$",
+    duplicate_policy: str = "warn",
+) -> dict:
+    """Validate .env-style key=value text.
+
+    Args:
+        text: Input text to validate.
+        allow_export: If True, allow ``export KEY=VALUE`` syntax (default true).
+        key_pattern: Regex pattern keys must match (default POSIX-ish identifier).
+        duplicate_policy: ``warn``, ``error``, or ``allow`` (default ``warn``).
+
+    Returns:
+        Success envelope with validation result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="dotenv_validate",
+        )
+
+    valid_policies = {"warn", "error", "allow"}
+    if duplicate_policy not in valid_policies:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported duplicate_policy: {duplicate_policy}",
+            [f"Use one of: {', '.join(sorted(valid_policies))}"],
+            tool="dotenv_validate",
+        )
+
+    if len(key_pattern) > 1000:
+        return _error_response(
+            "input_too_large",
+            f"key_pattern length {len(key_pattern)} exceeds 1000",
+            tool="dotenv_validate",
+        )
+
+    try:
+        result = _dotenv_validate(text, allow_export, key_pattern, duplicate_policy)
+        return _success_response(result, tool="dotenv_validate")
+    except re.error:
+        return _error_response(
+            "invalid_arguments",
+            f"Invalid key_pattern regex: {key_pattern}",
+            ["Provide a valid regular expression for key_pattern"],
+            tool="dotenv_validate",
+        )
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="dotenv_validate")
+
+
+def ini_validate_mcp(
+    text: str,
+    duplicate_policy: str = "warn",
+) -> dict:
+    """Validate simple INI-style configuration.
+
+    Args:
+        text: Input text to validate.
+        duplicate_policy: ``warn``, ``error``, or ``allow`` (default ``warn``).
+
+    Returns:
+        Success envelope with validation result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="ini_validate",
+        )
+
+    valid_policies = {"warn", "error", "allow"}
+    if duplicate_policy not in valid_policies:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported duplicate_policy: {duplicate_policy}",
+            [f"Use one of: {', '.join(sorted(valid_policies))}"],
+            tool="ini_validate",
+        )
+
+    try:
+        result = _ini_validate(text, duplicate_policy)
+        return _success_response(result, tool="ini_validate")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="ini_validate")
+
+
+def patch_apply_check_mcp(
+    original_text: str,
+    patch_text: str,
+    strict: bool = True,
+    return_result_fingerprint: bool = True,
+    return_result_text: bool = False,
+) -> dict:
+    """Check whether a unified diff applies cleanly to original text.
+
+    Args:
+        original_text: The original source text.
+        patch_text: The unified diff patch.
+        strict: If True, context lines must match exactly.
+        return_result_fingerprint: If True, compute SHA-256 of result.
+        return_result_text: If True, include the resulting text (bounded).
+
+    Returns:
+        Success envelope with patch apply check result, or error envelope.
+    """
+    from ..exact.patch import (
+        MAX_ORIGINAL_LENGTH,
+        MAX_PATCH_LENGTH,
+    )
+    from ..exact.patch import (
+        patch_apply_check as _patch_apply_check,
+    )
+
+    if len(original_text) > MAX_ORIGINAL_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Original text length {len(original_text)} exceeds maximum of {MAX_ORIGINAL_LENGTH}",
+            [f"Maximum original text length is {MAX_ORIGINAL_LENGTH}"],
+            tool="patch_apply_check",
+        )
+
+    if len(patch_text) > MAX_PATCH_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Patch text length {len(patch_text)} exceeds maximum of {MAX_PATCH_LENGTH}",
+            [f"Maximum patch text length is {MAX_PATCH_LENGTH}"],
+            tool="patch_apply_check",
+        )
+
+    try:
+        result = _patch_apply_check(
+            original_text,
+            patch_text,
+            strict=strict,
+            return_result_fingerprint=return_result_fingerprint,
+            return_result_text=return_result_text,
+        )
+        return _success_response(result, tool="patch_apply_check")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="patch_apply_check")
+
+
+def patch_summary_mcp(
+    patch_text: str,
+) -> dict:
+    """Summarize a unified diff without applying it.
+
+    Args:
+        patch_text: The unified diff text.
+
+    Returns:
+        Success envelope with patch summary result, or error envelope.
+    """
+    from ..exact.patch import (
+        MAX_PATCH_LENGTH,
+    )
+    from ..exact.patch import (
+        patch_summary as _patch_summary,
+    )
+
+    if len(patch_text) > MAX_PATCH_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Patch text length {len(patch_text)} exceeds maximum of {MAX_PATCH_LENGTH}",
+            [f"Maximum patch text length is {MAX_PATCH_LENGTH}"],
+            tool="patch_summary",
+        )
+
+    try:
+        result = _patch_summary(patch_text)
+        return _success_response(result, tool="patch_summary")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="patch_summary")
+
+
+def unicode_policy_check_mcp(
+    text: str,
+    policy: str,
+    normalization: str | None = None,
+) -> dict:
+    """Apply a named Unicode safety policy to text.
+
+    Args:
+        text: Input text to check.
+        policy: One of identifier_strict, filename_safe, source_code,
+                human_text, json_key, domain_like.
+        normalization: Optional normalization form (defaults to policy-specific).
+
+    Returns:
+        Success envelope with policy check result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="unicode_policy_check",
+        )
+
+    valid_policies = {
+        "identifier_strict", "filename_safe", "source_code",
+        "human_text", "json_key", "domain_like",
+    }
+    if policy not in valid_policies:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported policy: {policy}",
+            [f"Use one of: {', '.join(sorted(valid_policies))}"],
+            tool="unicode_policy_check",
+        )
+
+    if normalization is not None:
+        valid_normalizations = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
+        if normalization not in valid_normalizations:
+            return _error_response(
+                "invalid_arguments",
+                f"Unsupported normalization form: {normalization}",
+                [f"Use one of: {', '.join(valid_normalizations)}"],
+                tool="unicode_policy_check",
+            )
+
+    try:
+        result = _unicode_policy_check(text, policy, normalization)
+        return _success_response(result, tool="unicode_policy_check")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="unicode_policy_check")
+
+
+def canonicalize_text_mcp(
+    text: str,
+    profile: str,
+    return_mapping: bool = False,
+) -> dict:
+    """Apply a named text canonicalization profile.
+
+    Args:
+        text: Input text to canonicalize.
+        profile: One of source_file_identity, identifier_compare,
+                 human_label_compare, json_key_compare, path_segment_compare.
+        return_mapping: If True, include a character mapping.
+
+    Returns:
+        Success envelope with canonicalization result, or error envelope.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            tool="canonicalize_text",
+        )
+
+    valid_profiles = {
+        "source_file_identity", "identifier_compare", "human_label_compare",
+        "json_key_compare", "path_segment_compare",
+    }
+    if profile not in valid_profiles:
+        return _error_response(
+            "invalid_arguments",
+            f"Unsupported profile: {profile}",
+            [f"Use one of: {', '.join(sorted(valid_profiles))}"],
+            tool="canonicalize_text",
+        )
+
+    try:
+        result = _canonicalize_text(text, profile, return_mapping)
+        return _success_response(result, tool="canonicalize_text")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="canonicalize_text")

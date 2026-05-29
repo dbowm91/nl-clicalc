@@ -1,0 +1,56 @@
+{
+  "description": "Mixed-script identifiers - identifiers combining multiple Unicode scripts",
+  "tool": "inspect_text",
+  "cases": [
+    {
+      "name": "latin_and_cyrillic",
+      "description": "Identifier mixing Latin and Cyrillic: 'café' where 'e' is actually Cyrillic е (U+0435)",
+      "input": {
+        "text": "caf\u0435"
+      },
+      "expected": {
+        "mixed_scripts": true
+      }
+    },
+    {
+      "name": "latin_and_greek",
+      "description": "Identifier mixing Latin and Greek: 'alpha' where 'a' is Greek α (U+03B1)",
+      "input": {
+        "text": "\u03b1lpha"
+      },
+      "expected": {
+        "mixed_scripts": true
+      }
+    },
+    {
+      "name": "cjk_mixed_with_latin",
+      "description": "CJK characters mixed with Latin in same text",
+      "input": {
+        "text": "hello世界"
+      },
+      "expected": {
+        "mixed_scripts": true
+      }
+    },
+    {
+      "name": "pure_latin_not_mixed",
+      "description": "Pure Latin text is not mixed",
+      "input": {
+        "text": "hello world"
+      },
+      "expected": {
+        "mixed_scripts": false
+      }
+    },
+    {
+      "name": "pure_han_not_mixed",
+      "description": "Pure Han text is not mixed",
+      "input": {
+        "text": "天地玄黄"
+      },
+      "expected": {
+        "mixed_scripts": false
+      }
+    }
+  ]
+}

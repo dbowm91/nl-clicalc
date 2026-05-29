@@ -1,0 +1,62 @@
+{
+  "description": "NFC vs NFD equivalent strings - visually identical but different byte representations",
+  "tool": "text_equal",
+  "cases": [
+    {
+      "name": "cafe_accent_precomposed_vs_decomposed",
+      "description": "café (NFC: U+00E9) vs café (NFD: e + U+0301 combining acute)",
+      "input": {
+        "a": "caf\u00e9",
+        "b": "caf\u0065\u0301"
+      },
+      "expected": {
+        "raw_equal": false,
+        "nfc_equal": true,
+        "nfd_equal": true,
+        "byte_equal": false,
+        "classification": "accent_or_diacritic_difference"
+      }
+    },
+    {
+      "name": "korean_jamo_precomposed_vs_decomposed",
+      "description": "Korean Hangul syllable ga (NFC) vs jamo compose (NFD)",
+      "input": {
+        "a": "\uac00",
+        "b": "\u1100\u1161"
+      },
+      "expected": {
+        "raw_equal": false,
+        "nfc_equal": true,
+        "classification": "accent_or_diacritic_difference"
+      }
+    },
+    {
+      "name": "both_already_nfc",
+      "description": "Two NFC strings that are byte-identical",
+      "input": {
+        "a": "caf\u00e9",
+        "b": "caf\u00e9"
+      },
+      "expected": {
+        "raw_equal": true,
+        "nfc_equal": true,
+        "byte_equal": true,
+        "classification": "exact_match"
+      }
+    },
+    {
+      "name": "both_already_nfd",
+      "description": "Two NFD strings that are byte-identical",
+      "input": {
+        "a": "caf\u0065\u0301",
+        "b": "caf\u0065\u0301"
+      },
+      "expected": {
+        "raw_equal": true,
+        "nfc_equal": true,
+        "byte_equal": true,
+        "classification": "exact_match"
+      }
+    }
+  ]
+}

@@ -6,7 +6,7 @@ nl-clicalc includes an MCP (Model Context Protocol) server that exposes text ana
 
 The Model Context Protocol is a JSON-RPC 2.0 based protocol for exposing tools to AI agents. The calc MCP server provides:
 
-- **39 deterministic tools** for AI agent workflows
+- **53 deterministic tools** for AI agent workflows
 - **Deterministic results** - same input always produces same output
 - **No external dependencies** - pure Python standard library
 - **stdio-based communication** - operates over stdin/stdout
@@ -895,6 +895,160 @@ Validate JSON against a simple schema format with type, required, enum, pattern,
 
 ---
 
+### unit_convert
+
+Convert a numeric value from one unit to another using pre-defined conversion factors.
+
+**Arguments:**
+- `value` (number): Numeric value to convert
+- `from_unit` (string): Source unit (e.g., 'km', 'ft', 'kg')
+- `to_unit` (string): Target unit (e.g., 'm', 'in', 'lb')
+
+**Tier:** 2
+**Tags:** `math`, `units`, `conversion`
+
+**Returns:**
+- `value`: Converted value
+- `from_unit`: Source unit
+- `to_unit`: Target unit
+- `factor`: Conversion factor used
+
+**Example:**
+```json
+{"name": "unit_convert", "arguments": {"value": 1, "from_unit": "km", "to_unit": "m"}}
+// Returns: {"ok": true, "result": {"value": 1000.0, "from_unit": "km", "to_unit": "m", "factor": 1000.0}}
+```
+
+---
+
+### unit_info
+
+Get information about a unit including its canonical form and category.
+
+**Arguments:**
+- `unit` (string): Unit name or alias (e.g., 'km', 'kilogram', '℃')
+
+**Tier:** 2
+**Tags:** `math`, `units`, `information`
+
+**Returns:**
+- `unit`: Original input
+- `canonical`: Canonical unit name
+- `category`: Unit category (e.g., 'length', 'mass', 'temperature')
+- `is_valid`: Whether the unit is recognized
+
+**Example:**
+```json
+{"name": "unit_info", "arguments": {"unit": "kilograms"}}
+// Returns: {"ok": true, "result": {"unit": "kilograms", "canonical": "kg", "category": "mass", "is_valid": true}}
+```
+
+---
+
+### constant_lookup
+
+Look up physical constant values and symbols (Avogadro, Planck, speed of light, etc.).
+
+**Arguments:**
+- `name` (string): Constant name (e.g., 'avogadro', 'planck', 'c', 'G')
+
+**Tier:** 2
+**Tags:** `math`, `constants`, `physics`, `lookup`
+
+**Returns:**
+- `name`: Original input
+- `value`: Constant value
+- `symbol`: Display symbol (e.g., 'N_A', 'h', 'c')
+- `display_name`: Human-readable name
+
+**Example:**
+```json
+{"name": "constant_lookup", "arguments": {"name": "avogadro"}}
+// Returns: {"ok": true, "result": {"name": "avogadro", "value": 6.02214076e+23, "symbol": "N_A", "display_name": "Avogadro constant"}}
+```
+
+**Supported constants:** avogadro, planck, boltzmann, c (speed of light), echarge (elementary charge), faraday, amu, epsilon0 (vacuum permittivity), mu0 (vacuum permeability), g (standard gravity), G (gravitational constant), rydberg, stefan (Stefan-Boltzmann), hbar (reduced Planck), me (electron mass), mp (proton mass), mn (neutron mass), re (classical electron radius), alpha (fine-structure), wien (Wien displacement), r (gas constant)
+
+---
+
+### json_shape
+
+Analyze the structure of a JSON document without returning values. Shows type, keys, and nested structure with configurable depth limits.
+
+**Arguments:**
+- `text` (string): JSON document string to analyze
+- `max_depth` (integer, optional): Maximum depth for nested structure (default 4)
+- `max_keys` (integer, optional): Maximum keys to show per object (default 100)
+- `max_array_items` (integer, optional): Maximum array item previews (default 5)
+
+**Tier:** 3
+**Tags:** `json`, `structured-data`, `shape`, `schema`
+
+**Returns:**
+- `valid`: Boolean
+- `top_level_type`: "object", "array", or primitive type name
+- `structure`: Nested structure representation
+
+**Example:**
+```json
+{"name": "json_shape", "arguments": {"text": "{\"a\": 1, \"b\": [1, 2, 3]}", "max_depth": 2}}
+// Returns: {"ok": true, "result": {"valid": true, "top_level_type": "object", "structure": {"a": "integer", "b": "array"}}}
+```
+
+---
+
+### regex_finditer
+
+Find all regex matches in text with positions, line/column info, and capture groups.
+
+**Arguments:**
+- `pattern` (string): Regular expression pattern
+- `text` (string): Input string to search
+- `flags` (array of strings, optional): Flag names (IGNORECASE, MULTILINE, DOTALL, etc.)
+- `max_matches` (integer, optional): Maximum matches to return (default 100)
+- `include_line_column` (boolean, optional): Include line and column info (default true)
+- `include_groups` (boolean, optional): Include capture groups (default true)
+
+**Tier:** 1
+**Tags:** `text`, `regex`, `search`, `find`, `pattern`
+
+**Returns:**
+- `match_count`: Number of matches found
+- `matches`: Array of match objects with span, groups, line/column info
+
+**Example:**
+```json
+{"name": "regex_finditer", "arguments": {"pattern": "(\\d+)", "text": "abc 123 def 456"}}
+// Returns: {"ok": true, "result": {"match_count": 2, "matches": [{"span": [4, 7], "groups": ["123"], ...}, ...]}}
+```
+
+**Limits:** Text limited to 100,000 characters. Pattern limited to 1,000 characters. Maximum 100 matches.
+
+---
+
+### regex_safety_check
+
+Heuristic check for potential catastrophic backtracking risks in regex patterns. Flags nested quantifiers, repeated alternations, ambiguous dot-star, and backreferences.
+
+**Arguments:**
+- `pattern` (string): Regular expression pattern to check
+
+**Tier:** 1
+**Tags:** `text`, `regex`, `safety`, `security`, `backtracking`
+
+**Returns:**
+- `safe`: Boolean indicating if pattern appears safe
+- `findings`: Array of risk findings with severity and explanation
+- `pattern_length`: Length of the pattern
+
+**Example:**
+```json
+{"name": "regex_safety_check", "arguments": {"pattern": "(a+)+b"}}
+// Returns: {"ok": true, "result": {"safe": false, "findings": [{"kind": "nested_quantifier", "severity": "high", ...}], ...}}
+```
+
+---
+
 ## Error Responses
 
 When a tool call fails, the response includes an error envelope:
@@ -914,6 +1068,99 @@ When a tool call fails, the response includes an error envelope:
 
 ---
 
+## Response Envelope
+
+All tool responses follow a standard envelope. Callers (e.g., `codegg`, `eggsact`) can consume results predictably by checking the envelope fields.
+
+### Success Envelope
+
+```json
+{
+  "ok": true,
+  "tool": "tool_name",
+  "result": { ... },
+  "warnings": [],
+  "limits_applied": [],
+  "findings": [],
+  "machine_code": null,
+  "recommended_next_tool": null
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ok` | boolean | yes | Always `true` for success |
+| `tool` | string | yes | Tool name that produced this result |
+| `result` | object | yes | Tool-specific result payload |
+| `warnings` | array of strings | yes | Human-readable warnings |
+| `limits_applied` | array of strings | yes | Limits that were applied (e.g., truncation) |
+| `findings` | array of Finding | no | Structured issues or observations |
+| `machine_code` | string | no | Stable code summarizing the outcome |
+| `recommended_next_tool` | string or array | no | Suggested follow-up tool(s) |
+
+### Error Envelope
+
+```json
+{
+  "ok": false,
+  "tool": "tool_name",
+  "error_type": "invalid_arguments",
+  "error": "Human-readable error message",
+  "hints": ["Suggestion for fixing the error"],
+  "warnings": []
+}
+```
+
+### Finding Shape
+
+Findings provide structured, machine-readable diagnostics. They are emitted by tools that perform inspection, validation, or safety analysis.
+
+```json
+{
+  "code": "ZERO_WIDTH_CHAR",
+  "severity": "warn",
+  "message": "Zero-width character found at index 4",
+  "span": {
+    "byte_start": 4,
+    "byte_end": 7,
+    "char_start": 4,
+    "char_end": 5,
+    "line": 1,
+    "column": 5
+  },
+  "details": {}
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `code` | string | yes | Machine-readable code (e.g., `INVISIBLE_CHAR`, `CONFUSABLE_CHAR`, `JSON_PARSE_ERROR`) |
+| `severity` | string | yes | One of `info`, `warn`, `error` |
+| `message` | string | yes | Human-readable description |
+| `span` | object | no | Location within the input (byte and character offsets, line/column) |
+| `details` | object | no | Additional structured context |
+
+**Common finding codes:**
+
+| Code | Severity | Description |
+|------|----------|-------------|
+| `INVISIBLE_CHAR` | warn | Invisible Unicode character detected |
+| `CONFUSABLE_CHAR` | warn | Confusable (homoglyph) character detected |
+| `BIDI_CONTROL` | warn | Bidirectional control character detected |
+| `JSON_PARSE_ERROR` | error | Invalid JSON syntax |
+| `REGEX_UNSAFE` | warn | Regex pattern may cause catastrophic backtracking |
+| `PATH_TRAVERSAL` | warn | Path contains `..` traversal |
+| `PATH_HIDDEN` | info | Path starts with a dot |
+| `IDENT_COLLISIONS` | warn | Identifier collision detected |
+| `IDENT_INVALID` | error | Invalid identifier for target language |
+
+**Severity semantics:**
+- `info`: Observational, no action required
+- `warn`: Potential issue, review recommended
+- `error`: Definite problem, action required
+
+---
+
 ## Input Limits
 
 The MCP server enforces these limits to prevent DoS:
@@ -926,16 +1173,66 @@ The MCP server enforces these limits to prevent DoS:
 
 ## Tool Tiers
 
-Tools are categorized into three tiers:
+Tools are categorized into tiers based on scope and context cost:
 
-**Tier 1:** Core tools, always available, low-context overhead.
-- `math_eval`, `text_measure`, `text_equal`, `text_inspect`, `text_count`, `text_truncate`, `validate_brackets`, `validate_json`, `validate_regex`
+**Tier 0:** Ultra-common, small-schema tools. Always exposed.
+- `math_eval`, `text_equal`, `text_count`, `text_measure`, `text_fingerprint`, `validate_json`, `path_normalize`
 
-**Tier 2:** Useful coding-agent tools, deterministic, moderate context.
-- `json_compare`, `json_extract`, `validate_toml`, `text_position`, `text_transform`, `escape_text`, `unescape_text`, `text_hash`, `path_analyze`, `list_compare`
+**Tier 1:** Default coding-agent sanity tools. Exposed by default for coding agents.
+- `text_diff_explain`, `text_inspect`, `text_replace_check`, `line_range_extract`, `json_query`, `json_compare`, `validate_toml`, `glob_match`, `validate_regex`, `regex_finditer`, `regex_safety_check`, `identifier_inspect`, `escape_text`, `unescape_text`, `text_window`, `json_canonicalize`, `validate_brackets`, `list_dedupe`, `list_sort`
 
-**Tier 3:** Specialized tools, more context, opt-in for context-constrained agents.
-- `identifier_analyze`, `validate_schema_light`
+**Tier 2:** Heavier analysis tools. Exposed when text/unicode/config analysis is needed.
+- `text_position`, `text_hash`, `text_transform`, `unit_convert`, `unit_info`, `constant_lookup`, `path_analyze`, `path_compare`, `path_scope_check`, `list_compare`, `json_extract`, `version_compare`, `toml_shape`, `markdown_structure`, `code_fence_extract`, `dotenv_validate`, `ini_validate`, `patch_apply_check`, `patch_summary`, `shell_split`, `shell_quote_join`, `argv_compare`, `unicode_policy_check`, `canonicalize_text`, `line_range_compare`
+
+**Tier 3:** Domain-specific tools. Opt-in for specialized workflows.
+- `text_truncate`, `json_shape`, `identifier_analyze`, `validate_schema_light`
+
+---
+
+## Tool Profiles
+
+Profiles are named subsets of tools that agents can request via the `names` filter in `tools/list`. Each profile includes only the tools relevant to its use case, minimizing context overhead.
+
+### `minimal`
+
+Ultra-common tools only. Ideal for agents with tight context budgets or non-coding workflows.
+
+**Tier 0 tools:**
+- `math_eval`, `text_equal`, `text_count`, `text_measure`, `text_fingerprint`, `validate_json`, `path_normalize`
+
+**Use when:** You need math evaluation, basic text comparison, or JSON validation without loading the full tool set.
+
+### `coding-agent-default`
+
+Tier 0 + Tier 1 tools. Recommended for general-purpose coding agents.
+
+**Includes all Tier 0 and Tier 1 tools (26 tools total).**
+
+**Use when:** You want the standard set of tools for code editing, text inspection, regex testing, path manipulation, JSON comparison, and TOML validation.
+
+### `text-unicode-heavy`
+
+Tier 0 + Tier 1 + Tier 2 text/unicode tools. For agents working with internationalized text, confusable detection, or Unicode security.
+
+**Adds Tier 2 tools:** `text_position`, `text_hash`, `text_transform`, `unicode_policy_check`, `canonicalize_text`
+
+**Use when:** You need deep Unicode analysis, canonicalization profiles, or security policy checks beyond basic text inspection.
+
+### `config-heavy`
+
+Tier 0 + Tier 1 + Tier 2 config/validation tools. For agents working with configuration files, patches, or structured data.
+
+**Adds Tier 2 tools:** `patch_apply_check`, `patch_summary`, `dotenv_validate`, `ini_validate`, `markdown_structure`, `code_fence_extract`, `toml_shape`, `version_compare`, `shell_split`, `shell_quote_join`, `argv_compare`
+
+**Use when:** You need to validate, compare, or analyze configuration files, unified diffs, shell commands, or Markdown structure.
+
+### `rust-project`
+
+`coding-agent-default` + Tier 2 + Tier 3 tools relevant to Rust projects.
+
+**Adds:** `toml_shape`, `version_compare`, `identifier_analyze`, `validate_schema_light`
+
+**Use when:** Working on Rust projects with Cargo.toml, lockfiles, or package-manager-specific workflows.
 
 ---
 
@@ -1090,6 +1387,68 @@ Normalize and analyze a path with explicit platform semantics.
 
 ---
 
+### path_compare
+
+Compare two paths under explicit normalization rules with separator normalization, dot-segment collapsing, and optional case-insensitive comparison.
+
+**Arguments:**
+- `left` (string): First path string
+- `right` (string): Second path string
+- `platform` (string, optional): "posix" or "windows" (default "posix")
+- `case_sensitive` (boolean, optional): Case-sensitive comparison (default true)
+- `normalize_separators` (boolean, optional): Normalize path separators (default true)
+- `collapse_dot_segments` (boolean, optional): Collapse . and .. segments (default true)
+
+**Tier:** 2
+**Tags:** `text`, `path`, `filesystem`, `comparison`
+
+**Returns:**
+- `equal`: Boolean indicating if paths are equal under normalization
+- `left_normalized`: Normalized left path
+- `right_normalized`: Normalized right path
+- `differences`: Array of differences found
+- `findings`: Array of normalization notes
+
+**Example:**
+```json
+{"name": "path_compare", "arguments": {"left": "src/../src/main.rs", "right": "src/main.rs"}}
+// Returns: {"ok": true, "result": {"equal": true, "left_normalized": "src/main.rs", "right_normalized": "src/main.rs", ...}}
+```
+
+---
+
+### path_scope_check
+
+Determine whether a target path remains lexically inside a declared root. Lexical only, does not resolve symlinks. Symlink-safe enforcement requires filesystem-aware checks outside this tool.
+
+**Arguments:**
+- `root` (string): Root directory path
+- `target` (string): Target path to check
+- `platform` (string, optional): "posix" or "windows" (default "posix")
+- `case_sensitive` (boolean, optional): Case-sensitive comparison (default true)
+
+**Tier:** 2
+**Tags:** `text`, `path`, `filesystem`, `security`, `scope`
+
+**Returns:**
+- `inside_root`: Boolean indicating if target is lexically inside root
+- `root_normalized`: Normalized root path
+- `target_normalized`: Normalized target path
+- `relative_path`: Relative path from root to target (if inside)
+- `escapes_via_dotdot`: Boolean indicating if target contains parent traversal
+- `absolute_target`: Absolute form of target
+- `findings`: Array of analysis notes
+
+**Example:**
+```json
+{"name": "path_scope_check", "arguments": {"root": "/home/user", "target": "/home/user/docs/file.txt"}}
+// Returns: {"ok": true, "result": {"inside_root": true, "relative_path": "docs/file.txt", ...}}
+```
+
+**Security note:** This tool performs lexical analysis only. It does NOT resolve symlinks. To enforce that a path stays within a root on a real filesystem, combine this tool with filesystem-aware checks.
+
+---
+
 ### version_compare
 
 Compare two version strings with explicit scheme.
@@ -1190,6 +1549,400 @@ Sort a list of strings with optional normalization and casefolding.
 ```json
 {"name": "list_sort", "arguments": {"items": ["b", "A", "c"], "casefold": true}}
 // Returns: {"ok": true, "result": {"items": ["A", "b", "c"], "count": 3}}
+```
+
+---
+
+### text_replace_check
+
+Check whether a text replacement would apply cleanly before an agent attempts to edit text.
+
+**Arguments:**
+- `text` (string): Source text to search in
+- `old` (string): Text to find
+- `new` (string): Replacement text
+- `mode` (string, optional): Matching mode - `exact`, `nfc`, `nfkc`, `casefold`, `whitespace_collapse` (default: `exact`)
+- `expected_count` (integer, optional): Expected number of matches
+- `allow_multiple` (boolean, optional): If false and more than one match, add a finding (default: false)
+- `newline_policy` (string, optional): How to handle newlines - `preserve`, `normalize_lf`, `normalize_crlf` (default: `preserve`)
+- `return_preview` (boolean, optional): Include before/after text previews (default: false)
+- `max_preview_chars` (integer, optional): Maximum characters in preview output (default: 2000)
+
+**Tier:** 2
+**Tags:** `text`, `replace`, `edit`, `safety`, `check`
+
+**Example:**
+```json
+{"name": "text_replace_check", "arguments": {"text": "hello world", "old": "world", "new": "earth"}}
+// Returns: {"ok": true, "result": {"match_count": 1, "unique_match": true, "would_change": true, ...}}
+```
+
+---
+
+### line_range_extract
+
+Extract exact line ranges from text and return stable offsets, byte positions, line counts, and optional fingerprint.
+
+**Arguments:**
+- `text` (string): Input text
+- `start_line` (integer): First line to extract
+- `end_line` (integer): Last line to extract (inclusive)
+- `line_base` (integer, optional): Base for line numbers (default: 1)
+- `include_line_numbers` (boolean, optional): Include line number in each line dict (default: false)
+- `include_fingerprint` (boolean, optional): Compute SHA-256 fingerprint (default: true)
+
+**Tier:** 2
+**Tags:** `text`, `line`, `range`, `extract`, `offset`
+
+**Example:**
+```json
+{"name": "line_range_extract", "arguments": {"text": "line1\nline2\nline3", "start_line": 1, "end_line": 2}}
+// Returns: {"ok": true, "result": {"text": "line1\nline2", "line_count_total": 3, ...}}
+```
+
+---
+
+### line_range_compare
+
+Compare a line range from two text inputs with exact, trailing-whitespace-ignoring, or newline-normalizing comparison.
+
+**Arguments:**
+- `left_text` (string): First text input
+- `right_text` (string): Second text input
+- `start_line` (integer): First line to compare
+- `end_line` (integer): Last line to compare (inclusive)
+- `line_base` (integer, optional): Base for line numbers (default: 1)
+- `comparison_mode` (string, optional): `exact`, `ignore_trailing_whitespace`, `normalize_newlines` (default: `exact`)
+
+**Tier:** 2
+**Tags:** `text`, `line`, `range`, `compare`, `diff`
+
+**Example:**
+```json
+{"name": "line_range_compare", "arguments": {"left_text": "aaa\nbbb", "right_text": "aaa\nBBB", "start_line": 2, "end_line": 2}}
+// Returns: {"ok": true, "result": {"equal": false, "first_difference": {"line_number": 2, ...}, ...}}
+```
+
+---
+
+### shell_split
+
+Parse a shell-like command string into argv tokens and report risky lexical features.
+
+**Arguments:**
+- `command` (string): The shell command string to parse
+- `shell` (string, optional): Shell dialect, only `posix` supported (default: `posix`)
+- `detect_risky_features` (boolean, optional): Whether to detect risky lexical features (default: `true`)
+
+**Tier:** 2
+**Tags:** `shell`, `argv`, `parsing`, `security`, `sanity`
+
+**Returns:**
+- `parse_ok` (boolean): Whether the command parsed successfully
+- `argv` (array): Parsed argument tokens
+- `argc` (integer): Number of arguments
+- `features` (object): Detected risky features (has_pipe, has_redirection, has_command_substitution, has_variable_expansion, has_glob_pattern, has_control_operator, has_unbalanced_quotes)
+- `findings` (array): Analysis notes and warnings
+
+**Note:** This is lexical POSIX-like parsing only, not full shell evaluation.
+
+**Example:**
+```json
+{"name": "shell_split", "arguments": {"command": "cargo test -- --nocapture"}}
+// Returns: {"ok": true, "result": {"parse_ok": true, "argv": ["cargo", "test", "--", "--nocapture"], "argc": 4, ...}}
+```
+
+---
+
+### shell_quote_join
+
+Safely quote a list of argv tokens into a POSIX-like shell string. Verifies round-trip safety.
+
+**Arguments:**
+- `argv` (array of strings): List of argument strings to join
+- `shell` (string, optional): Shell dialect, only `posix` supported (default: `posix`)
+
+**Tier:** 2
+**Tags:** `shell`, `argv`, `quoting`, `safety`
+
+**Returns:**
+- `command` (string): Safely quoted command string
+- `roundtrip_ok` (boolean): Whether shell_split(quote_join(argv)) produces equivalent argv
+- `findings` (array): Analysis notes
+
+**Example:**
+```json
+{"name": "shell_quote_join", "arguments": {"argv": ["echo", "hello world"]}}
+// Returns: {"ok": true, "result": {"command": "echo 'hello world'", "roundtrip_ok": true, ...}}
+```
+
+---
+
+### argv_compare
+
+Compare two command strings or argv lists by parsed argv tokens rather than raw text.
+
+**Arguments:**
+- `left_command` (string, optional): Left command string to parse and compare
+- `right_command` (string, optional): Right command string to parse and compare
+- `left_argv` (array of strings, optional): Left pre-parsed argv list
+- `right_argv` (array of strings, optional): Right pre-parsed argv list
+- `shell` (string, optional): Shell dialect, only `posix` supported (default: `posix`)
+
+**Tier:** 2
+**Tags:** `shell`, `argv`, `comparison`, `sanity`
+
+**Returns:**
+- `argv_equal` (boolean): Whether parsed argv lists are identical
+- `left_argv` (array): Resolved left argv
+- `right_argv` (array): Resolved right argv
+- `first_difference` (integer or null): Index of first differing token
+- `findings` (array): Analysis notes
+
+**Example:**
+```json
+{"name": "argv_compare", "arguments": {"left_command": "cargo test -- --nocapture", "right_argv": ["cargo", "test", "--", "--nocapture"]}}
+// Returns: {"ok": true, "result": {"argv_equal": true, ...}}
+```
+
+---
+
+### markdown_structure
+
+Parse Markdown structure with a deterministic line scanner. Reports headings, code fences, links, HTML comments, frontmatter, and table detection. Not a full CommonMark parser.
+
+**Arguments:**
+- `text` (string): Markdown text to analyze
+- `include_sections` (boolean, optional): Include heading detection (default true)
+- `include_links` (boolean, optional): Include link detection (default true)
+- `include_code_fences` (boolean, optional): Include code fence detection (default true)
+- `include_html_comments` (boolean, optional): Include HTML comment detection (default true)
+
+**Tier:** 2
+**Tags:** `markdown`, `structure`, `headings`, `code-fences`, `links`, `frontmatter`
+
+**Returns:**
+- `headings` (array): Headings with level, text, line number, and slug
+- `code_fences` (array): Code fences with language, start/end lines, closed state
+- `links` (array): Links with visible text, target, line number, mismatch flags
+- `html_comments` (array): HTML comments with text, line number, and column positions
+- `frontmatter` (object): Detection result with present, format (yaml/toml), line range
+- `tables_detected` (boolean): Whether Markdown tables were detected
+- `findings` (array): Warnings (e.g., unclosed fences)
+
+**Example:**
+```json
+{"name": "markdown_structure", "arguments": {"text": "# Hello\n\n```python\nprint('hi')\n```\n\n[link](http://example.com)"}}
+// Returns: {"ok": true, "result": {"headings": [{"level": 1, "text": "Hello", "line": 1, "slug": "hello"}], "code_fences": [{"language": "python", "start_line": 3, "end_line": 5, "closed": true}], "links": [{"visible_text": "link", "target": "http://example.com", "line": 7, "mismatch_flags": []}], ...}}
+```
+
+---
+
+### code_fence_extract
+
+Extract fenced code blocks from Markdown with exact line ranges, optional language filter, content, and SHA-256 fingerprints. Reports unclosed fences.
+
+**Arguments:**
+- `text` (string): Markdown text to scan
+- `language` (string, optional): Language filter (case-insensitive)
+- `include_content` (boolean, optional): Include block content in output (default true)
+
+**Tier:** 2
+**Tags:** `markdown`, `code-fences`, `extraction`, `fingerprint`
+
+**Returns:**
+- `blocks` (array): Code blocks with index, language, start/end lines, closed state, content, fingerprint
+- `unclosed_fences` (array): Unclosed code fences found
+- `findings` (array): Warnings
+
+**Example:**
+```json
+{"name": "code_fence_extract", "arguments": {"text": "```python\nprint('hi')\n```", "language": "python"}}
+// Returns: {"ok": true, "result": {"blocks": [{"index": 0, "language": "python", "start_line": 1, "end_line": 3, "closed": true, "content": "print('hi')", "fingerprint": "..."}], "unclosed_fences": [], "findings": []}}
+```
+
+**Limits:** Input limited to 100,000 characters.
+
+---
+
+### dotenv_validate
+
+Validate .env-style key=value configuration text. Detects invalid keys, duplicate keys, missing quotes, and variable expansion syntax. Line-by-line parser, no shell evaluation.
+
+**Arguments:**
+- `text` (string): .env file content to validate
+- `allow_export` (boolean, optional): Allow `export KEY=VALUE` syntax (default true)
+- `key_pattern` (string, optional): Regex pattern keys must match (default `^[A-Za-z_][A-Za-z0-9_]*$`)
+- `duplicate_policy` (string, optional): "warn", "error", or "allow" (default "warn")
+
+**Tier:** 2
+**Tags:** `validation`, `config`, `env`, `dotenv`
+
+**Returns:**
+- `parse_ok` (boolean): True if no parse errors found
+- `entries` (array): Parsed entries with key, value, value_present, quote_style, line
+- `duplicates` (array): Duplicate key entries with first_line, second_line
+- `invalid_lines` (array): Lines that failed to parse with line number and reason
+- `requires_quoting` (array): Keys whose unquoted values contain spaces
+- `contains_expansion_syntax` (array): Keys with `${VAR}` or `$VAR` syntax
+- `findings` (array): Human-readable findings
+
+**Example:**
+```json
+{"name": "dotenv_validate", "arguments": {"text": "DB_HOST=localhost\nDB_PORT=5432\nexport API_KEY=secret"}}
+// Returns: {"ok": true, "result": {"parse_ok": true, "entries": [{"key": "DB_HOST", "value": "localhost", ...}, ...], ...}}
+```
+
+---
+
+### ini_validate
+
+Validate simple INI-style configuration files. Supports [section] headers, key=value and key:value lines, ; and # comments. Detects duplicate sections, duplicate keys, and malformed lines.
+
+**Arguments:**
+- `text` (string): INI file content to validate
+- `duplicate_policy` (string, optional): "warn", "error", or "allow" (default "warn")
+
+**Tier:** 2
+**Tags:** `validation`, `config`, `ini`
+
+**Returns:**
+- `parse_ok` (boolean): True if no parse errors found
+- `sections` (array): Ordered list of section names
+- `keys_by_section` (object): Keys grouped by section
+- `duplicates` (array): Duplicate keys/sections with line numbers
+- `invalid_lines` (array): Lines that failed to parse with line number and reason
+- `findings` (array): Human-readable findings
+
+**Example:**
+```json
+{"name": "ini_validate", "arguments": {"text": "[server]\nhost = localhost\nport = 8080\n\n[database]\nurl = postgres://localhost/mydb"}}
+// Returns: {"ok": true, "result": {"parse_ok": true, "sections": ["server", "database"], "keys_by_section": {"server": ["host", "port"], "database": ["url"]}, ...}}
+```
+
+---
+
+### patch_apply_check
+
+Validate and simulate a unified diff against provided in-memory files/text without touching the filesystem. Reports parse status, application success, failed hunks with context, and optional result fingerprint.
+
+**Arguments:**
+- `original_text` (string): The original source text to apply the patch to
+- `patch_text` (string): The unified diff patch text
+- `strict` (boolean, optional): If True, context lines must match exactly (default true)
+- `return_result_fingerprint` (boolean, optional): If True, compute SHA-256 of result (default true)
+- `return_result_text` (boolean, optional): If True, include the resulting text, bounded to 50000 chars (default false)
+
+**Tier:** 2
+**Tags:** `patch`, `diff`, `unified`, `validation`, `apply`
+
+**Returns:**
+- `patch_parse_ok` (boolean): True if patch parsed successfully
+- `applies` (boolean): True if all hunks applied cleanly
+- `hunks_total` (integer): Total number of hunks in patch
+- `hunks_applied` (integer): Number of hunks that applied successfully
+- `hunks_failed` (integer): Number of hunks that failed to apply
+- `failed_hunks` (array): Details of each failed hunk with expected/actual context and reason
+- `affected_line_ranges` (array): Line ranges affected by successful hunks
+- `newline_style_before` (string): Newline style in original text
+- `newline_style_after` (string): Newline style in result text
+- `result_fingerprint` (string): SHA-256 of the result text
+- `result_text` (string|null): Resulting text if requested
+- `findings` (array): Analysis notes and warnings
+
+**Example:**
+```json
+{"name": "patch_apply_check", "arguments": {"original_text": "def hello():\n    print('hello')", "patch_text": "--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,2 @@\n def hello():\n-    print('hello')\n+    print('world')\n"}}
+// Returns: {"ok": true, "result": {"patch_parse_ok": true, "applies": true, "hunks_total": 1, "hunks_applied": 1, "hunks_failed": 0, ...}}
+```
+
+---
+
+### patch_summary
+
+Summarize a unified diff without applying it. Reports file counts, hunk counts, additions, deletions, renames, and line ranges by file.
+
+**Arguments:**
+- `patch_text` (string): The unified diff text to summarize
+
+**Tier:** 2
+**Tags:** `patch`, `diff`, `unified`, `summary`, `statistics`
+
+**Returns:**
+- `files_changed` (integer): Number of files changed
+- `hunks_total` (integer): Total number of hunks across all files
+- `additions` (integer): Total number of added lines
+- `deletions` (integer): Total number of deleted lines
+- `renames_detected` (array): Detected file renames with from/to
+- `binary_patch_detected` (boolean): True if binary patch content detected
+- `line_ranges_by_file` (object): Line ranges affected per file
+- `findings` (array): Analysis notes and warnings
+
+**Example:**
+```json
+{"name": "patch_summary", "arguments": {"patch_text": "--- a/f.py\n+++ b/f.py\n@@ -1,2 +1,2 @@\n def hello():\n-    print('hello')\n+    print('world')\n"}}
+// Returns: {"ok": true, "result": {"files_changed": 1, "hunks_total": 1, "additions": 1, "deletions": 1, ...}}
+```
+
+---
+
+### unicode_policy_check
+
+Apply a named deterministic Unicode safety policy to input text. Policies are deterministic heuristics, not semantic security guarantees.
+
+**Arguments:**
+- `text` (string): Input text to check
+- `policy` (string): One of `identifier_strict`, `filename_safe`, `source_code`, `human_text`, `json_key`, `domain_like`
+- `normalization` (string, optional): Normalization form (defaults to policy-specific)
+
+**Tier:** 2
+**Tags:** `text`, `unicode`, `policy`, `security`, `validation`
+
+**Policies:**
+
+| Policy | Checks | Severity |
+|--------|--------|----------|
+| `identifier_strict` | Mixed scripts, bidi controls, zero-width chars, confusables, normalization instability, invisible chars | Error |
+| `filename_safe` | Control chars, path separators, bidi controls, zero-width chars, reserved Windows names | Error |
+| `source_code` | Bidi controls, zero-width chars, confusables | Error/Warning |
+| `human_text` | Mixed scripts, bidi controls, zero-width chars, confusables | Warning only |
+| `json_key` | Bidi controls, zero-width chars, control chars, confusables | Error/Warning |
+| `domain_like` | Mixed scripts, confusables, bidi controls, zero-width chars | Error |
+
+**Example:**
+```json
+{"name": "unicode_policy_check", "arguments": {"text": "hello\u0410", "policy": "identifier_strict"}}
+// Returns: {"ok": true, "result": {"pass": false, "policy": "identifier_strict", "findings": [{"rule": "mixed_scripts", "severity": "error", "message": "Mixed scripts detected: Cyrillic, Latin"}], ...}}
+```
+
+---
+
+### canonicalize_text
+
+Apply a named text canonicalization profile. Profiles provide a single call to select common normalization sequences.
+
+**Arguments:**
+- `text` (string): Input text to canonicalize
+- `profile` (string): One of `source_file_identity`, `identifier_compare`, `human_label_compare`, `json_key_compare`, `path_segment_compare`
+- `return_mapping` (boolean, optional): If True, include character mapping of changes
+
+**Tier:** 2
+**Tags:** `text`, `unicode`, `canonicalization`, `normalization`, `identity`
+
+**Profiles:**
+
+| Profile | Operations |
+|---------|------------|
+| `source_file_identity` | NFC + LF newlines + strip trailing whitespace + ensure final newline |
+| `identifier_compare` | NFC + casefold |
+| `human_label_compare` | NFC + casefold + trim + collapse whitespace |
+| `json_key_compare` | NFC + casefold |
+| `path_segment_compare` | NFC + lowercase + LF newlines |
+
+**Example:**
+```json
+{"name": "canonicalize_text", "arguments": {"text": "HELLO", "profile": "identifier_compare"}}
+// Returns: {"ok": true, "result": {"text": "hello", "changed": true, "operations_applied": ["casefold"], "fingerprint_before": "...", "fingerprint_after": "..."}}
 ```
 
 ---

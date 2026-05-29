@@ -1,7 +1,8 @@
 """Shared pytest fixtures for nl-calc tests."""
 
 import pytest
-from nl_calc import evaluate, evaluate_raw, UnitValue
+
+from nl_calc import UnitValue, evaluate, evaluate_raw
 from nl_calc.normalize import NORMALIZE, PATTERNS
 
 

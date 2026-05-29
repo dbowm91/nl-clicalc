@@ -7,12 +7,100 @@ perform semantic interpretation or call LLMs.
 
 from __future__ import annotations
 
+# Re-export config
+from .config import (
+    DotenvEntry,
+    DotenvValidateResult,
+    IniKeyValueLine,
+    IniSectionLine,
+    IniValidateResult,
+    dotenv_validate,
+    ini_validate,
+)
+
+# Re-export diff
+from .diff import (
+    CommonPrefixSuffix,
+    DiffSpan,
+    FirstDiff,
+    common_prefix_suffix,
+    diff_spans,
+    first_diff,
+    levenshtein_distance,
+    longest_common_subsequence,
+)
+
+# Re-export glob
+from .glob import (
+    GlobMatchResult,
+    glob_match,
+)
+
+# Re-export identifier
+from .identifier import (
+    IdentifierAnalyzeResult,
+    identifier_analyze,
+)
+
+# Re-export identifier_inspect
+from .identifier_inspect import (
+    CollisionInfo,
+    IdentifierInfo,
+    IdentifierInspectResult,
+    identifier_inspect,
+)
+
+# Re-export markdown
+from .markdown import (
+    CodeFenceBlock,
+    CodeFenceExtractResult,
+    MarkdownCodeFence,
+    MarkdownFrontmatter,
+    MarkdownHeading,
+    MarkdownLink,
+    MarkdownStructureResult,
+    code_fence_extract,
+    markdown_structure,
+)
+
+# Re-export measure
+from .measure import (
+    CharCategoryMetrics,
+    LineMetrics,
+    WordMetrics,
+    char_category_metrics,
+    line_metrics,
+    word_metrics,
+)
+
+# Re-export patch
+from .patch import (
+    FailedHunk,
+    PatchApplyCheckResult,
+    PatchFile,
+    PatchHunk,
+    PatchParseResult,
+    PatchSummaryResult,
+    patch_apply_check,
+    patch_summary,
+)
+
 # Re-export path_tools
 from .path_tools import (
     PathAnalyzeResult,
+    PathCompareResult,
     PathNormalizeResult,
+    PathScopeCheckResult,
     path_analyze,
+    path_compare,
     path_normalize,
+    path_scope_check,
+)
+
+# Re-export position
+from .position import (
+    TextPositionResult,
+    text_position,
 )
 
 # Re-export primitives
@@ -23,14 +111,25 @@ from .primitives import (
     casefold_text,
     codepoints,
     count_graphemes,
-    truncate_to_grapheme,
     find_invisibles,
     measure_basic,
     normalize_unicode,
     normalized_equal,
     raw_equal,
+    truncate_to_grapheme,
     utf8_bytes,
     visible_repr,
+)
+
+# Re-export shell
+from .shell import (
+    ArgvCompareResult,
+    ShellFeatures,
+    ShellQuoteJoinResult,
+    ShellSplitResult,
+    argv_compare,
+    shell_quote_join,
+    shell_split,
 )
 
 # Re-export synthesis
@@ -38,14 +137,46 @@ from .synthesis import (
     CountCharsResult,
     ExplainDiffResult,
     InspectTextResult,
+    LineRangeCompareResult,
+    LineRangeExtractResult,
     MeasureTextResult,
     TextEqualResult,
+    TextReplaceCheckResult,
+    TextWindowResult,
     count_chars,
     explain_diff,
     inspect_text,
+    line_range_compare,
+    line_range_extract,
     list_compare,
     measure_text,
     text_equal,
+    text_replace_check,
+    text_window,
+)
+
+# Re-export transform
+from .transform import (
+    EscapeTextResult,
+    RemovedChar,
+    TextFingerprintResult,
+    TextTransformResult,
+    UnescapeTextResult,
+    escape_text,
+    text_fingerprint,
+    text_hash,
+    text_transform,
+    unescape_text,
+)
+
+# Re-export unicode_policy
+from .unicode_policy import (
+    CanonicalizeResult,
+    CanonicalizeResultWithMapping,
+    PolicyFinding,
+    UnicodePolicyCheckResult,
+    canonicalize_text,
+    unicode_policy_check,
 )
 
 # Re-export unicode_tools
@@ -53,12 +184,12 @@ from .unicode_tools import (
     ConfusableInfo,
     MixedScriptsResult,
     ScriptInfo,
+    confusables_count,
     detect_confusables,
     detect_mixed_scripts,
+    reverse_confusables,
     unicode_script,
     unicode_scripts,
-    confusables_count,
-    reverse_confusables,
 )
 
 # Re-export validate
@@ -83,87 +214,27 @@ from .validate import (
     json_compare,
     json_extract,
     json_shape,
+    list_dedupe,
+    list_sort,
     regex_finditer,
     regex_safety_check,
     regex_test,
+    toml_shape,
     validate_json,
     validate_schema_light,
     validate_toml_text,
-    toml_shape,
     version_compare,
-    list_dedupe,
-    list_sort,
-)
-
-# Re-export glob
-from .glob import (
-    GlobMatchResult,
-    glob_match,
-)
-
-# Re-export transform
-from .transform import (
-    EscapeTextResult,
-    RemovedChar,
-    TextTransformResult,
-    TextFingerprintResult,
-    UnescapeTextResult,
-    escape_text,
-    text_hash,
-    text_transform,
-    text_fingerprint,
-    unescape_text,
-)
-
-# Re-export diff
-from .diff import (
-    CommonPrefixSuffix,
-    DiffSpan,
-    FirstDiff,
-    common_prefix_suffix,
-    diff_spans,
-    first_diff,
-    levenshtein_distance,
-    longest_common_subsequence,
-)
-
-# Re-export position
-from .position import (
-    TextPositionResult,
-    text_position,
-)
-
-# Re-export measure
-from .measure import (
-    CharCategoryMetrics,
-    LineMetrics,
-    WordMetrics,
-    char_category_metrics,
-    line_metrics,
-    word_metrics,
-)
-
-# Re-export identifier
-from .identifier import (
-    IdentifierAnalyzeResult,
-    identifier_analyze,
-)
-
-# Re-export identifier_inspect
-from .identifier_inspect import (
-    IdentifierInspectResult,
-    CollisionInfo,
-    IdentifierInfo,
-    identifier_inspect,
-)
-
-# Re-export path_tools
-from .path_tools import (
-    PathAnalyzeResult,
-    path_analyze,
 )
 
 __all__ = [
+    # Config
+    "dotenv_validate",
+    "ini_validate",
+    "DotenvEntry",
+    "DotenvValidateResult",
+    "IniSectionLine",
+    "IniKeyValueLine",
+    "IniValidateResult",
     # Glob
     "glob_match",
     "GlobMatchResult",
@@ -256,11 +327,19 @@ __all__ = [
     "inspect_text",
     "count_chars",
     "list_compare",
+    "text_window",
+    "text_replace_check",
+    "line_range_extract",
+    "line_range_compare",
     "MeasureTextResult",
     "TextEqualResult",
     "ExplainDiffResult",
     "InspectTextResult",
     "CountCharsResult",
+    "TextWindowResult",
+    "TextReplaceCheckResult",
+    "LineRangeExtractResult",
+    "LineRangeCompareResult",
     # Identifier
     "identifier_analyze",
     "IdentifierAnalyzeResult",
@@ -268,9 +347,52 @@ __all__ = [
     "IdentifierInspectResult",
     "CollisionInfo",
     "IdentifierInfo",
+    # Markdown
+    "markdown_structure",
+    "code_fence_extract",
+    "MarkdownStructureResult",
+    "CodeFenceExtractResult",
+    "MarkdownHeading",
+    "MarkdownCodeFence",
+    "MarkdownLink",
+    "MarkdownFrontmatter",
+    "CodeFenceBlock",
+    # Patch
+    "patch_apply_check",
+    "patch_summary",
+    "PatchApplyCheckResult",
+    "PatchSummaryResult",
+    "PatchParseResult",
+    "PatchFile",
+    "PatchHunk",
+    "FailedHunk",
     # Path
     "path_analyze",
     "path_normalize",
+    "path_compare",
+    "path_scope_check",
     "PathAnalyzeResult",
     "PathNormalizeResult",
+    "PathCompareResult",
+    "PathScopeCheckResult",
+    # Shell
+    "shell_split",
+    "shell_quote_join",
+    "argv_compare",
+    "ShellSplitResult",
+    "ShellQuoteJoinResult",
+    "ArgvCompareResult",
+    "ShellFeatures",
+    # Unicode policy
+    "unicode_policy_check",
+    "canonicalize_text",
+    "UnicodePolicyCheckResult",
+    "PolicyFinding",
+    "CanonicalizeResult",
+    "CanonicalizeResultWithMapping",
+    # Validate (re-exported)
+    "list_dedupe",
+    "list_sort",
+    "toml_shape",
+    "version_compare",
 ]

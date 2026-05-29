@@ -1,0 +1,75 @@
+{
+  "description": "Newline style variations - CRLF, LF, CR, and mixed newlines",
+  "tool": "measure_text",
+  "cases": [
+    {
+      "name": "lf_newlines",
+      "description": "Unix-style LF newlines",
+      "input": {
+        "text": "line1\nline2\nline3"
+      },
+      "expected": {
+        "newline_style": "LF",
+        "lines": 3,
+        "ends_with_newline": false
+      }
+    },
+    {
+      "name": "crlf_newlines",
+      "description": "Windows-style CRLF newlines",
+      "input": {
+        "text": "line1\r\nline2\r\nline3"
+      },
+      "expected": {
+        "newline_style": "CRLF",
+        "lines": 3,
+        "ends_with_newline": false
+      }
+    },
+    {
+      "name": "cr_newlines",
+      "description": "Classic Mac CR newlines",
+      "input": {
+        "text": "line1\rline2\rline3"
+      },
+      "expected": {
+        "newline_style": "CR",
+        "lines": 3,
+        "ends_with_newline": false
+      }
+    },
+    {
+      "name": "mixed_crlf_and_lf",
+      "description": "Mixed CRLF and LF newlines",
+      "input": {
+        "text": "line1\r\nline2\nline3"
+      },
+      "expected": {
+        "newline_style": "mixed",
+        "lines": 3
+      }
+    },
+    {
+      "name": "trailing_lf",
+      "description": "Text ending with newline",
+      "input": {
+        "text": "line1\nline2\n"
+      },
+      "expected": {
+        "newline_style": "LF",
+        "ends_with_newline": true
+      }
+    },
+    {
+      "name": "trailing_crlf",
+      "description": "Text ending with CRLF",
+      "input": {
+        "text": "line1\r\nline2\r\n"
+      },
+      "expected": {
+        "newline_style": "CRLF",
+        "ends_with_newline": true
+      }
+    }
+  ]
+}

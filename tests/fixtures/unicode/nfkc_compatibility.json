@@ -1,0 +1,76 @@
+{
+  "description": "NFKC-changing characters - compatibility equivalents that NFKC maps to ASCII",
+  "tool": "text_equal",
+  "cases": [
+    {
+      "name": "fullwidth_digits_to_ascii",
+      "description": "Fullwidth digits 123 (U+FF11-U+FF13) vs ASCII 123 under NFKC",
+      "input": {
+        "a": "\uff11\uff12\uff13",
+        "b": "123",
+        "normalization": "NFKC"
+      },
+      "expected": {
+        "raw_equal": false,
+        "nfkc_equal": true,
+        "classification": "ordinary_text_difference"
+      }
+    },
+    {
+      "name": "circled_numbers_to_ascii",
+      "description": "Circled number (U+2460) vs digit 1 under NFKC",
+      "input": {
+        "a": "\u2460",
+        "b": "1",
+        "normalization": "NFKC"
+      },
+      "expected": {
+        "raw_equal": false,
+        "nfkc_equal": true,
+        "classification": "ordinary_text_difference"
+      }
+    },
+    {
+      "name": "superscript_digits",
+      "description": "Superscript 2 (U+00B2) vs digit 2 under NFKC",
+      "input": {
+        "a": "\u00b2",
+        "b": "2",
+        "normalization": "NFKC"
+      },
+      "expected": {
+        "raw_equal": false,
+        "nfkc_equal": true,
+        "classification": "ordinary_text_difference"
+      }
+    },
+    {
+      "name": "small_form_variants",
+      "description": "Small form fi ligature (U+FB01) vs 'fi' under NFKC",
+      "input": {
+        "a": "\ufb01",
+        "b": "fi",
+        "normalization": "NFKC"
+      },
+      "expected": {
+        "raw_equal": false,
+        "nfkc_equal": true,
+        "classification": "case_only"
+      }
+    },
+    {
+      "name": "circled_letter_to_ascii",
+      "description": "Circled letter (U+24B6) vs A under NFKC",
+      "input": {
+        "a": "\u24b6",
+        "b": "A",
+        "normalization": "NFKC"
+      },
+      "expected": {
+        "raw_equal": false,
+        "nfkc_equal": true,
+        "classification": "ordinary_text_difference"
+      }
+    }
+  ]
+}

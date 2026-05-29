@@ -7,8 +7,7 @@ These tests verify that mathematical laws hold for the evaluator:
 - Trigonometric identities
 """
 
-import pytest
-from nl_calc import evaluate, UnitValue
+from nl_calc import UnitValue, evaluate
 
 
 def get_value(result):
@@ -122,13 +121,11 @@ class TestTrigonometricIdentities:
     """Test trigonometric identities."""
 
     def test_sin_squared_plus_cos_squared(self):
-        import math
         x = 0.5
         result = evaluate(f"sin({x})**2+cos({x})**2")
         assert abs(get_value(result) - 1) < 1e-10
 
     def test_tan_equals_sin_over_cos(self):
-        import math
         x = 0.5
         result1 = evaluate(f"tan({x})")
         result2 = evaluate(f"sin({x})/cos({x})")

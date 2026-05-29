@@ -1,0 +1,122 @@
+{
+  "description": "line_range_extract: basic line extraction scenarios",
+  "tool": "line_range_extract",
+  "cases": [
+    {
+      "name": "single_line_first",
+      "description": "Extract first line from three-line document",
+      "input": {
+        "text": "line1\nline2\nline3",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "expected": {
+        "line_count_total": 3,
+        "valid_range": true,
+        "text": "line1",
+        "line_count": 1,
+        "lines_0_text": "line1"
+      }
+    },
+    {
+      "name": "single_line_middle",
+      "description": "Extract middle line",
+      "input": {
+        "text": "line1\nline2\nline3",
+        "start_line": 2,
+        "end_line": 2
+      },
+      "expected": {
+        "line_count_total": 3,
+        "valid_range": true,
+        "text": "line2",
+        "line_count": 1
+      }
+    },
+    {
+      "name": "single_line_last",
+      "description": "Extract last line",
+      "input": {
+        "text": "line1\nline2\nline3",
+        "start_line": 3,
+        "end_line": 3
+      },
+      "expected": {
+        "line_count_total": 3,
+        "valid_range": true,
+        "text": "line3",
+        "line_count": 1
+      }
+    },
+    {
+      "name": "multiple_lines",
+      "description": "Extract first two lines",
+      "input": {
+        "text": "line1\nline2\nline3",
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected": {
+        "line_count_total": 3,
+        "valid_range": true,
+        "text": "line1\nline2",
+        "line_count": 2
+      }
+    },
+    {
+      "name": "all_lines",
+      "description": "Extract all lines",
+      "input": {
+        "text": "line1\nline2\nline3",
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected": {
+        "line_count_total": 3,
+        "valid_range": true,
+        "text": "line1\nline2\nline3",
+        "line_count": 3
+      }
+    },
+    {
+      "name": "single_line_out_of_range",
+      "description": "Extract line beyond document length",
+      "input": {
+        "text": "line1\nline2",
+        "start_line": 5,
+        "end_line": 5
+      },
+      "expected": {
+        "valid_range": false,
+        "finding_kind": "out_of_range"
+      }
+    },
+    {
+      "name": "range_exceeds_total",
+      "description": "End line exceeds total lines",
+      "input": {
+        "text": "line1\nline2",
+        "start_line": 1,
+        "end_line": 10
+      },
+      "expected": {
+        "valid_range": false,
+        "finding_kind": "out_of_range"
+      }
+    },
+    {
+      "name": "empty_text_single_line",
+      "description": "Empty text still has line 1",
+      "input": {
+        "text": "",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "expected": {
+        "valid_range": true,
+        "text": "",
+        "line_count": 1
+      }
+    }
+  ]
+}

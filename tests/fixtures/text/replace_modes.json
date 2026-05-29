@@ -1,0 +1,104 @@
+{
+  "description": "text_replace_check: Unicode normalization and mode-specific matching",
+  "tool": "text_replace_check",
+  "cases": [
+    {
+      "name": "nfc_mode_match_decomposed_pattern",
+      "description": "NFC mode matches decomposed pattern against precomposed text",
+      "input": {
+        "text": "caf\u00e9",
+        "old": "caf\u0065\u0301",
+        "new": "coffee",
+        "mode": "nfc"
+      },
+      "expected": {
+        "match_count": 1,
+        "would_change": true
+      }
+    },
+    {
+      "name": "nfkc_mode_fullwidth_digits",
+      "description": "NFKC mode matches fullwidth digits against ASCII",
+      "input": {
+        "text": "\uff11\uff12\uff13",
+        "old": "123",
+        "new": "abc",
+        "mode": "nfkc"
+      },
+      "expected": {
+        "match_count": 1,
+        "would_change": true
+      }
+    },
+    {
+      "name": "casefold_mode_match_uppercase",
+      "description": "Casefold mode matches case-insensitively",
+      "input": {
+        "text": "Hello World",
+        "old": "world",
+        "new": "earth",
+        "mode": "casefold"
+      },
+      "expected": {
+        "match_count": 1,
+        "would_change": true
+      }
+    },
+    {
+      "name": "casefold_mode_german_sz",
+      "description": "Casefold handles German sharp s correctly",
+      "input": {
+        "text": "STRASSE",
+        "old": "straße",
+        "new": "gasse",
+        "mode": "casefold"
+      },
+      "expected": {
+        "match_count": 1,
+        "would_change": true
+      }
+    },
+    {
+      "name": "whitespace_collapse_mode",
+      "description": "Whitespace collapse matches across multiple spaces",
+      "input": {
+        "text": "hello   world",
+        "old": "hello world",
+        "new": "hi earth",
+        "mode": "whitespace_collapse"
+      },
+      "expected": {
+        "match_count": 1,
+        "would_change": true
+      }
+    },
+    {
+      "name": "whitespace_collapse_tabs_and_newlines",
+      "description": "Whitespace collapse matches across tabs and newlines",
+      "input": {
+        "text": "hello\t\tworld",
+        "old": "hello world",
+        "new": "hi earth",
+        "mode": "whitespace_collapse"
+      },
+      "expected": {
+        "match_count": 1,
+        "would_change": true
+      }
+    },
+    {
+      "name": "exact_mode_no_normalization",
+      "description": "Exact mode does not normalize Unicode",
+      "input": {
+        "text": "caf\u00e9",
+        "old": "caf\u0065\u0301",
+        "new": "coffee",
+        "mode": "exact"
+      },
+      "expected": {
+        "match_count": 0,
+        "would_change": false
+      }
+    }
+  ]
+}

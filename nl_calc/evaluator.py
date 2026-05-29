@@ -18,13 +18,13 @@ from functools import lru_cache
 from typing import Any
 
 from .units import (
-    UnitValue,
     UNIT_ALIASES,
     UNIT_CONVERSIONS,
-    normalize_unit,
-    convert_temperature,
+    UnitValue,
     are_units_compatible,
+    convert_temperature,
     get_unit_category,
+    normalize_unit,
 )
 
 __all__ = [
@@ -127,7 +127,7 @@ def _ensure_config_loaded() -> None:
 def _cached_normalize_and_evaluate(expression: str) -> Any:
     """Cache for normalized and evaluated expressions."""
     _ensure_config_loaded()
-    from .normalize import normalize_expression, NORMALIZE, PATTERNS
+    from .normalize import NORMALIZE, PATTERNS, normalize_expression
 
     normalized, exit_code = normalize_expression(expression, NORMALIZE, PATTERNS)
     if exit_code != 0:
@@ -169,8 +169,8 @@ async def evaluate_async(expression: str) -> Any:
 def load_user_config_extended() -> None:
     """Load user-defined configuration including normalize (call after normalize is loaded)."""
     try:
-        import nl_calc_config as config
         import nl_calc.normalize as normalize_mod
+        import nl_calc_config as config
 
         for word, num in getattr(config, "CUSTOM_NUMBER_WORDS", {}).items():
             normalize_mod.NUMBER_WORDS[num] = normalize_mod.NUMBER_WORDS.get(num, [])
@@ -1331,7 +1331,7 @@ def evaluate_raw(expression: str) -> Any:
         EvaluationError: If the expression is invalid or contains unsupported operations.
     """
     _ensure_config_loaded()
-    from .normalize import normalize_expression, NORMALIZE, PATTERNS
+    from .normalize import NORMALIZE, PATTERNS, normalize_expression
 
     normalized, exit_code = normalize_expression(
         expression, NORMALIZE, PATTERNS, skip_validation=True
@@ -1477,7 +1477,7 @@ class PyCalcApp:
 
     def _evaluate_internal(self, expression: str) -> Any:
         """Internal evaluation that uses the instance's evaluator."""
-        from .normalize import normalize_expression, NORMALIZE, PATTERNS
+        from .normalize import NORMALIZE, PATTERNS, normalize_expression
 
         normalized, exit_code = normalize_expression(
             expression, NORMALIZE, PATTERNS, skip_validation=True

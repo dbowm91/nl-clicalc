@@ -63,11 +63,22 @@ Located in `nl_calc/exact/` - Provides low-level Unicode text primitives for det
 |--------|---------|
 | `primitives.py` | UTF-8 encoding, codepoint iteration, Unicode normalization |
 | `unicode_tools.py` | Script detection, confusable character detection |
+| `unicode_policy.py` | Named Unicode safety policies and canonicalization profiles |
 | `confusables.py` | Confusable character identification (homoglyphs) - large file (~180KB) |
 | `validate.py` | JSON/bracket/regex validation |
 | `diff.py` | String diffing algorithms |
 | `measure.py` | Text metrics (words, lines, categories) |
 | `synthesis.py` | Higher-level text analysis tools |
+| `patch.py` | Unified diff parsing, patch application simulation, patch summary |
+| `shell.py` | Shell command parsing, quoting, and argv comparison |
+| `config.py` | .env and INI config validation |
+| `markdown.py` | Markdown structure analysis and code fence extraction |
+| `path_tools.py` | Path lexical analysis, normalization, comparison, scope checking |
+| `identifier.py` | Identifier naming convention classification |
+| `identifier_inspect.py` | Identifier collision detection and confusable analysis |
+| `transform.py` | Text transformations, escaping, hashing, fingerprinting |
+| `position.py` | Text position conversion (byte offsets, line/column, UTF-16) |
+| `glob.py` | Glob pattern matching |
 
 ### Supporting Modules (mcp/)
 
@@ -106,7 +117,7 @@ Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool acce
 - New tests must use the correct API:
   - For NL/unit functionality → use `run()` or test through CLI
   - For pure math expressions → use `evaluate()`
-- 631 tests currently pass (as of last run)
+- 1016 tests currently pass (as of last run)
 
 ### Code Style
 - Follow existing patterns in the codebase
@@ -124,8 +135,21 @@ tests/
 ├── test_tokenization.py     # Tokenization edge cases
 ├── test_math_identities.py  # Mathematical laws verification
 ├── test_mcp_server.py       # MCP server integration tests
+├── test_mcp_tools_new.py    # MCP integration tests for new tools
 ├── test_exact.py            # Exact module tests
-└── test_cli_text.py         # CLI text tools tests
+├── test_patch_tools.py      # Patch apply/summary tools tests
+├── test_cli_text.py         # CLI text tools tests
+├── test_text_replace_check.py # Text replacement check tests
+├── test_line_range.py       # Line range extract/compare tests
+├── test_path_compare.py     # Path comparison tests
+├── test_path_scope.py       # Path scope check tests
+├── test_shell_tools.py      # Shell split/quote/compare tests
+├── test_markdown_tools.py   # Markdown structure tests
+├── test_config_validation.py # dotenv/INI validation tests
+├── test_unicode_policy.py   # Unicode policy/canonicalization tests
+├── test_tool_inventory.py   # Tool registry consistency tests
+├── test_golden_fixtures.py  # Golden fixture tests
+└── fixtures/                # Test fixtures directory
 ```
 
 ### API Usage Reminder
@@ -183,6 +207,7 @@ def val(expr):
 - **Build script**: `build_single.py`
 - **Install script**: `install.py`
 - **Active plan**: `plans/plan.md`
+- **Improvement plan**: `plans/improvements.md`
 
 ## Debugging Tips
 
@@ -227,6 +252,10 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - **`common_prefix_suffix()` examples fixed** - Docstring now has working examples showing overlap prevention behavior
 - **validate.py input limits** - `MAX_INPUT_LENGTH = 100_000` enforced in `check_brackets()` and `validate_json()`, raises `ValueError`
 - **`_INVISIBLE_CHARS` contains 22 characters** - Documentation only shows 12; missing: U+180e, U+034f, U+202b-202e, U+2066-2069
+- **`unicode_policy.py`** - Named policy checks and canonicalization profiles for Unicode safety. Policies are deterministic heuristics, not semantic security guarantees. Use `unicode_policy_check()` for validation and `canonicalize_text()` for normalization profiles.
+- **`shell.py`** - Shell command parsing, quoting, and argv comparison. Uses `shlex` for POSIX-like lexical parsing. Not full shell evaluation.
+- **`config.py`** - .env and INI config validation. Line-by-line parsers for common config formats.
+- **`markdown.py`** - Markdown structure analysis and code fence extraction. Deterministic line scanner, not a full CommonMark parser.
 
 ### TypedDict vs NamedTuple
 - Architecture docs may show `@dataclass class Xxx(NamedTuple)` but code uses `class Xxx(TypedDict)`

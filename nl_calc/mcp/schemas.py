@@ -10,6 +10,25 @@ from __future__ import annotations
 from typing import Any, TypedDict
 
 
+class FindingSpan(TypedDict, total=False):
+    """Location span within a finding."""
+    byte_start: int
+    byte_end: int
+    char_start: int
+    char_end: int
+    line: int
+    column: int
+
+
+class Finding(TypedDict, total=False):
+    """Structured finding emitted by MCP tools."""
+    code: str
+    severity: str  # "info" | "warn" | "error"
+    message: str
+    span: FindingSpan
+    details: dict[str, Any]
+
+
 class ErrorEnvelope(TypedDict):
     """Standard error envelope for MCP tool responses."""
     ok: bool
@@ -110,7 +129,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "text_measure": {
         "description": "Measure exact text properties: UTF-8 byte length, codepoint count, words, lines, whitespace, newline style, Unicode normalization state, invisibles, and mixed-script signals.",
-        "tier": 2,
+        "tier": 0,
         "tags": ["text", "measurement", "unicode", "metrics"],
         "inputSchema": {
             "type": "object",
@@ -144,7 +163,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "text_equal": {
         "description": "Compare two strings under raw, Unicode-normalized, casefolded, or trimmed modes and report exact equality evidence.",
-        "tier": 1,
+        "tier": 0,
         "tags": ["text", "comparison", "equality", "unicode"],
         "inputSchema": {
             "type": "object",
@@ -195,7 +214,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "text_diff_explain": {
         "description": "Explain why two strings differ, including spans, codepoints, Unicode names, normalization equivalence, confusables, invisibles, and agent-facing classification.",
-        "tier": 2,
+        "tier": 1,
         "tags": ["text", "diff", "comparison", "unicode"],
         "inputSchema": {
             "type": "object",
@@ -296,6 +315,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "text_count": {
         "description": "Count exact characters or produce a character frequency table with codepoint positions, grapheme clusters, bytes, or substring matches.",
+        "tier": 0,
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -331,6 +351,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "text_truncate": {
         "description": "Truncate a string to a specified number of grapheme clusters (user-perceived characters). Preserves emoji, combining sequences, and flag sequences intact. Useful for AI agent prompts where visual length matters.",
+        "tier": 3,
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -373,6 +394,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "validate_brackets": {
         "description": "Check whether delimiters are structurally balanced and report unmatched delimiters with line/column positions.",
+        "tier": 1,
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -395,6 +417,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "validate_json": {
         "description": "Validate JSON and report precise parse errors or top-level structure information.",
+        "tier": 0,
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -541,7 +564,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "validate_toml": {
         "description": "Validate TOML configuration files (Cargo.toml, pyproject.toml, etc.) and report parse errors with line/column positions.",
-        "tier": 2,
+        "tier": 1,
         "tags": ["validation", "structured-data", "toml", "config", "rust", "python"],
         "inputSchema": {
             "type": "object",
@@ -569,7 +592,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "json_compare": {
         "description": "Compare two JSON documents semantically, ignoring formatting and key order.",
-        "tier": 2,
+        "tier": 1,
         "tags": ["json", "structured-data", "comparison", "config"],
         "inputSchema": {
             "type": "object",
@@ -629,7 +652,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "escape_text": {
         "description": "Escape text for various output formats.",
-        "tier": 2,
+        "tier": 1,
         "tags": ["text", "escape", "encoding", "shell", "json", "regex"],
         "inputSchema": {
             "type": "object",
@@ -646,7 +669,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "unescape_text": {
         "description": "Unescape text from various formats.",
-        "tier": 2,
+        "tier": 1,
         "tags": ["text", "escape", "encoding", "shell", "json", "regex"],
         "inputSchema": {
             "type": "object",
@@ -725,7 +748,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "path_normalize": {
         "description": "Normalize a path using posixpath or ntpath semantics. Collapse dot segments, resolve components.",
-        "tier": 1,
+        "tier": 0,
         "tags": ["text", "path", "filesystem", "normalize"],
         "inputSchema": {
             "type": "object",
@@ -750,6 +773,60 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["path"],
+        },
+    },
+    "path_compare": {
+        "description": "Compare two paths under explicit normalization rules: separator normalization, dot-segment collapsing, and optional case-insensitive comparison.",
+        "tier": 2,
+        "tags": ["text", "path", "filesystem", "comparison"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "left": {"type": "string", "description": "First path string"},
+                "right": {"type": "string", "description": "Second path string"},
+                "platform": {"type": "string", "enum": ["posix", "windows"], "default": "posix", "description": "Platform semantics"},
+                "case_sensitive": {"type": "boolean", "default": True, "description": "Case-sensitive comparison"},
+                "normalize_separators": {"type": "boolean", "default": True, "description": "Normalize path separators"},
+                "collapse_dot_segments": {"type": "boolean", "default": True, "description": "Collapse . and .. segments"},
+            },
+            "required": ["left", "right"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "equal": {"type": "boolean", "description": "Whether paths are equal under normalization"},
+                "left_normalized": {"type": "string", "description": "Normalized left path"},
+                "right_normalized": {"type": "string", "description": "Normalized right path"},
+                "differences": {"type": "array", "description": "List of differences found"},
+                "findings": {"type": "array", "description": "Normalization notes"},
+            },
+        },
+    },
+    "path_scope_check": {
+        "description": "Determine whether a target path remains lexically inside a declared root. Lexical only, does not resolve symlinks.",
+        "tier": 2,
+        "tags": ["text", "path", "filesystem", "security", "scope"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "root": {"type": "string", "description": "Root directory path"},
+                "target": {"type": "string", "description": "Target path to check"},
+                "platform": {"type": "string", "enum": ["posix", "windows"], "default": "posix", "description": "Platform semantics"},
+                "case_sensitive": {"type": "boolean", "default": True, "description": "Case-sensitive comparison"},
+            },
+            "required": ["root", "target"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "inside_root": {"type": "boolean", "description": "Whether target is lexically inside root"},
+                "root_normalized": {"type": "string", "description": "Normalized root path"},
+                "target_normalized": {"type": "string", "description": "Normalized target path"},
+                "relative_path": {"type": "string", "description": "Relative path from root to target (if inside)"},
+                "escapes_via_dotdot": {"type": "boolean", "description": "Whether target contains parent traversal"},
+                "absolute_target": {"type": "string", "description": "Absolute form of target"},
+                "findings": {"type": "array", "description": "Analysis notes"},
+            },
         },
     },
     "json_shape": {
@@ -844,7 +921,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "text_fingerprint": {
         "description": "Compute a deterministic SHA-256 fingerprint of text with canonicalization options for Unicode normalization, newline style, casefold, and final newline trimming.",
-        "tier": 1,
+        "tier": 0,
         "tags": ["text", "hash", "fingerprint", "sha256", "identity", "canonicalization"],
         "inputSchema": {
             "type": "object",
@@ -956,6 +1033,579 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "items": {"type": "array", "items": {"type": "string"}},
                 "original_count": {"type": "integer"},
                 "sorted_count": {"type": "integer"},
+            },
+        },
+    },
+    "text_replace_check": {
+        "description": "Check whether a text replacement would apply cleanly before an agent attempts to edit. Reports match count, positions, ambiguity, and optional preview of before/after.",
+        "tier": 1,
+        "tags": ["text", "replace", "edit", "safety", "check"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Source text to search in"},
+                "old": {"type": "string", "description": "Text to find"},
+                "new": {"type": "string", "description": "Replacement text"},
+                "mode": {
+                    "type": "string",
+                    "enum": ["exact", "nfc", "nfkc", "casefold", "whitespace_collapse"],
+                    "default": "exact",
+                    "description": "Matching mode",
+                },
+                "expected_count": {
+                    "type": "integer",
+                    "description": "Expected number of matches (optional)",
+                },
+                "allow_multiple": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If False and more than one match, add a finding",
+                },
+                "newline_policy": {
+                    "type": "string",
+                    "enum": ["preserve", "normalize_lf", "normalize_crlf"],
+                    "default": "preserve",
+                    "description": "How to handle newlines",
+                },
+                "return_preview": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If True, include before/after text previews",
+                },
+                "max_preview_chars": {
+                    "type": "integer",
+                    "default": 2000,
+                    "description": "Maximum characters in preview output",
+                },
+            },
+            "required": ["text", "old", "new"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "match_count": {"type": "integer", "description": "Number of matches found"},
+                "unique_match": {"type": "boolean", "description": "True if exactly one match"},
+                "expected_count_met": {"type": "boolean", "description": "True if match count matches expected_count"},
+                "would_change": {"type": "boolean", "description": "True if replacement would change text"},
+                "positions": {"type": "array", "description": "Match positions with byte offsets and line/column"},
+                "changed_text_fingerprint": {"type": "string", "description": "SHA-256 fingerprint of changed text"},
+                "newline_style_before": {"type": "string"},
+                "newline_style_after": {"type": "string"},
+                "preview_before": {"type": "string"},
+                "preview_after": {"type": "string"},
+                "findings": {"type": "array", "description": "Warnings and info messages"},
+            },
+        },
+    },
+    "line_range_extract": {
+        "description": "Extract exact line ranges from text and return stable offsets, byte positions, line counts, and optional fingerprint.",
+        "tier": 1,
+        "tags": ["text", "line", "range", "extract", "offset"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input text"},
+                "start_line": {"type": "integer", "description": "First line to extract"},
+                "end_line": {"type": "integer", "description": "Last line to extract (inclusive)"},
+                "line_base": {
+                    "type": "integer",
+                    "default": 1,
+                    "description": "Base for line numbers (1 for 1-based, 0 for 0-based)",
+                },
+                "include_line_numbers": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Include line number in each line dict",
+                },
+                "include_fingerprint": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Compute SHA-256 fingerprint of extracted text",
+                },
+            },
+            "required": ["text", "start_line", "end_line"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "line_count_total": {"type": "integer", "description": "Total line count in input"},
+                "start_line": {"type": "integer"},
+                "end_line": {"type": "integer"},
+                "valid_range": {"type": "boolean", "description": "True if range is within bounds"},
+                "text": {"type": "string", "description": "Extracted text (lines joined by LF)"},
+                "lines": {"type": "array", "description": "Structured line list"},
+                "byte_start": {"type": "integer", "description": "UTF-8 byte offset of start"},
+                "byte_end": {"type": "integer", "description": "UTF-8 byte offset of end"},
+                "char_start": {"type": "integer", "description": "Codepoint index of start"},
+                "char_end": {"type": "integer", "description": "Codepoint index of end"},
+                "newline_style": {"type": "string"},
+                "ends_with_newline": {"type": "boolean"},
+                "fingerprint": {"type": "string"},
+                "findings": {"type": "array"},
+            },
+        },
+    },
+    "line_range_compare": {
+        "description": "Compare a line range from two text inputs with exact, trailing-whitespace-ignoring, or newline-normalizing comparison.",
+        "tier": 2,
+        "tags": ["text", "line", "range", "compare", "diff"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "left_text": {"type": "string", "description": "First text input"},
+                "right_text": {"type": "string", "description": "Second text input"},
+                "start_line": {"type": "integer", "description": "First line to compare"},
+                "end_line": {"type": "integer", "description": "Last line to compare (inclusive)"},
+                "line_base": {
+                    "type": "integer",
+                    "default": 1,
+                    "description": "Base for line numbers",
+                },
+                "comparison_mode": {
+                    "type": "string",
+                    "enum": ["exact", "ignore_trailing_whitespace", "normalize_newlines"],
+                    "default": "exact",
+                    "description": "Comparison mode",
+                },
+            },
+            "required": ["left_text", "right_text", "start_line", "end_line"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "equal": {"type": "boolean", "description": "True if ranges are equal under the chosen mode"},
+                "left_fingerprint": {"type": "string", "description": "SHA-256 fingerprint of left range"},
+                "right_fingerprint": {"type": "string", "description": "SHA-256 fingerprint of right range"},
+                "diff_summary": {"type": "string", "description": "Human-readable diff summary"},
+                "first_difference": {"type": "object", "description": "First differing line (if any)"},
+            },
+        },
+    },
+    "shell_split": {
+        "description": "Parse a shell-like command string into argv tokens and report risky lexical features (pipes, redirections, command substitution, variable expansion, globs, control operators). Lexical POSIX-like parsing only, not full shell evaluation.",
+        "tier": 2,
+        "tags": ["shell", "argv", "parsing", "security", "sanity"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command string to parse",
+                },
+                "shell": {
+                    "type": "string",
+                    "enum": ["posix"],
+                    "default": "posix",
+                    "description": "Shell dialect (only posix is supported)",
+                },
+                "detect_risky_features": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Whether to detect risky lexical features",
+                },
+            },
+            "required": ["command"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "parse_ok": {"type": "boolean", "description": "True if the command parsed successfully"},
+                "argv": {"type": "array", "items": {"type": "string"}, "description": "Parsed argument tokens"},
+                "argc": {"type": "integer", "description": "Number of arguments"},
+                "features": {
+                    "type": "object",
+                    "description": "Detected risky features",
+                    "properties": {
+                        "has_pipe": {"type": "boolean"},
+                        "has_redirection": {"type": "boolean"},
+                        "has_command_substitution": {"type": "boolean"},
+                        "has_variable_expansion": {"type": "boolean"},
+                        "has_glob_pattern": {"type": "boolean"},
+                        "has_control_operator": {"type": "boolean"},
+                        "has_unbalanced_quotes": {"type": "boolean"},
+                    },
+                },
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes and warnings"},
+            },
+        },
+    },
+    "shell_quote_join": {
+        "description": "Safely quote a list of argv tokens into a POSIX-like shell string. Verifies round-trip safety with shell_split.",
+        "tier": 2,
+        "tags": ["shell", "argv", "quoting", "safety"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of argument strings to join",
+                },
+                "shell": {
+                    "type": "string",
+                    "enum": ["posix"],
+                    "default": "posix",
+                    "description": "Shell dialect (only posix is supported)",
+                },
+            },
+            "required": ["argv"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Safely quoted command string"},
+                "roundtrip_ok": {"type": "boolean", "description": "True if shell_split(quote_join(argv)) produces equivalent argv"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes"},
+            },
+        },
+    },
+    "argv_compare": {
+        "description": "Compare two command strings or argv lists by parsed argv tokens rather than raw text. Supports command strings, pre-parsed argv lists, or both.",
+        "tier": 2,
+        "tags": ["shell", "argv", "comparison", "sanity"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "left_command": {
+                    "type": "string",
+                    "description": "Left command string to parse and compare",
+                },
+                "right_command": {
+                    "type": "string",
+                    "description": "Right command string to parse and compare",
+                },
+                "left_argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Left pre-parsed argv list",
+                },
+                "right_argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Right pre-parsed argv list",
+                },
+                "shell": {
+                    "type": "string",
+                    "enum": ["posix"],
+                    "default": "posix",
+                    "description": "Shell dialect (only posix is supported)",
+                },
+            },
+            "required": [],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "argv_equal": {"type": "boolean", "description": "True if parsed argv lists are identical"},
+                "left_argv": {"type": "array", "items": {"type": "string"}, "description": "Resolved left argv"},
+                "right_argv": {"type": "array", "items": {"type": "string"}, "description": "Resolved right argv"},
+                "first_difference": {"type": "integer", "description": "Index of first differing token, or null if equal"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes"},
+            },
+        },
+    },
+    "markdown_structure": {
+        "description": "Parse Markdown structure with a deterministic line scanner: headings (level, text, slug), code fences (language, open/close state), links (visible vs target mismatch), HTML comments, frontmatter detection, and table detection. Not a full CommonMark parser.",
+        "tier": 2,
+        "tags": ["markdown", "structure", "headings", "code-fences", "links", "frontmatter"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Markdown text to analyze"},
+                "include_sections": {"type": "boolean", "default": True, "description": "Include heading detection"},
+                "include_links": {"type": "boolean", "default": True, "description": "Include link detection"},
+                "include_code_fences": {"type": "boolean", "default": True, "description": "Include code fence detection"},
+                "include_html_comments": {"type": "boolean", "default": True, "description": "Include HTML comment detection"},
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "headings": {"type": "array", "description": "Headings with level, text, line, slug"},
+                "code_fences": {"type": "array", "description": "Code fences with language, lines, closed state"},
+                "links": {"type": "array", "description": "Links with visible text, target, mismatch flags"},
+                "html_comments": {"type": "array", "description": "HTML comments with text and position"},
+                "frontmatter": {"type": "object", "description": "Frontmatter detection (present, format, line range)"},
+                "tables_detected": {"type": "boolean", "description": "Whether Markdown tables were detected"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Warnings and findings"},
+            },
+        },
+    },
+    "code_fence_extract": {
+        "description": "Extract fenced code blocks from Markdown with exact line ranges, optional language filter, content, and SHA-256 fingerprints. Reports unclosed fences.",
+        "tier": 2,
+        "tags": ["markdown", "code-fences", "extraction", "fingerprint"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Markdown text to scan"},
+                "language": {"type": "string", "description": "Optional language filter (case-insensitive)"},
+                "include_content": {"type": "boolean", "default": True, "description": "Include block content in output"},
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "blocks": {"type": "array", "description": "Extracted code blocks with index, language, lines, content, fingerprint"},
+                "unclosed_fences": {"type": "array", "description": "Unclosed code fences found"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Warnings and findings"},
+            },
+        },
+    },
+    "dotenv_validate": {
+        "description": "Validate .env-style key=value configuration text. Detects invalid keys, duplicate keys, missing quotes, and variable expansion syntax. Line-by-line parser, no shell evaluation.",
+        "tier": 2,
+        "tags": ["validation", "config", "env", "dotenv"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": ".env file content to validate"},
+                "allow_export": {"type": "boolean", "default": True, "description": "Allow export KEY=VALUE syntax"},
+                "key_pattern": {"type": "string", "default": "^[A-Za-z_][A-Za-z0-9_]*$", "description": "Regex pattern keys must match"},
+                "duplicate_policy": {"type": "string", "enum": ["warn", "error", "allow"], "default": "warn", "description": "How to handle duplicate keys"},
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "parse_ok": {"type": "boolean", "description": "True if no parse errors found"},
+                "entries": {"type": "array", "description": "Parsed entries with key, value, quote_style, line"},
+                "duplicates": {"type": "array", "description": "Duplicate key entries with line numbers"},
+                "invalid_lines": {"type": "array", "description": "Lines that failed to parse"},
+                "requires_quoting": {"type": "array", "description": "Keys whose values contain spaces and should be quoted"},
+                "contains_expansion_syntax": {"type": "array", "description": "Keys with ${VAR} or $VAR expansion syntax"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Human-readable findings"},
+            },
+        },
+    },
+    "ini_validate": {
+        "description": "Validate simple INI-style configuration files. Supports [section] headers, key=value and key:value lines, comments. Detects duplicate sections, duplicate keys, and malformed lines.",
+        "tier": 2,
+        "tags": ["validation", "config", "ini"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "INI file content to validate"},
+                "duplicate_policy": {"type": "string", "enum": ["warn", "error", "allow"], "default": "warn", "description": "How to handle duplicate keys/sections"},
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "parse_ok": {"type": "boolean", "description": "True if no parse errors found"},
+                "sections": {"type": "array", "description": "Ordered list of section names"},
+                "keys_by_section": {"type": "object", "description": "Keys grouped by section"},
+                "duplicates": {"type": "array", "description": "Duplicate keys/sections with line numbers"},
+                "invalid_lines": {"type": "array", "description": "Lines that failed to parse"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Human-readable findings"},
+            },
+        },
+    },
+    "patch_apply_check": {
+        "description": "Validate and simulate a unified diff against provided in-memory files/text without touching the filesystem. Reports parse status, application success, failed hunks with context, and optional result fingerprint.",
+        "tier": 2,
+        "tags": ["patch", "diff", "unified", "validation", "apply"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "original_text": {
+                    "type": "string",
+                    "description": "The original source text to apply the patch to",
+                },
+                "patch_text": {
+                    "type": "string",
+                    "description": "The unified diff patch text",
+                },
+                "strict": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If True, context lines must match exactly",
+                },
+                "return_result_fingerprint": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If True, compute SHA-256 fingerprint of the result",
+                },
+                "return_result_text": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If True, include the resulting text (bounded to 50000 chars)",
+                },
+            },
+            "required": ["original_text", "patch_text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "patch_parse_ok": {"type": "boolean", "description": "True if patch parsed successfully"},
+                "applies": {"type": "boolean", "description": "True if all hunks applied cleanly"},
+                "hunks_total": {"type": "integer", "description": "Total number of hunks in patch"},
+                "hunks_applied": {"type": "integer", "description": "Number of hunks that applied successfully"},
+                "hunks_failed": {"type": "integer", "description": "Number of hunks that failed to apply"},
+                "failed_hunks": {
+                    "type": "array",
+                    "description": "Details of each failed hunk",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "hunk_index": {"type": "integer"},
+                            "old_start": {"type": "integer"},
+                            "old_count": {"type": "integer"},
+                            "expected_context": {"type": "array", "items": {"type": "string"}},
+                            "actual_context": {"type": "array", "items": {"type": "string"}},
+                            "reason": {"type": "string"},
+                        },
+                    },
+                },
+                "affected_line_ranges": {
+                    "type": "array",
+                    "description": "Line ranges affected by successful hunks",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "integer"},
+                            "end": {"type": "integer"},
+                        },
+                    },
+                },
+                "newline_style_before": {"type": "string", "description": "Newline style in original text"},
+                "newline_style_after": {"type": "string", "description": "Newline style in result text"},
+                "result_fingerprint": {"type": "string", "description": "SHA-256 of the result text"},
+                "result_text": {"type": ["string", "null"], "description": "Resulting text if requested"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes and warnings"},
+            },
+        },
+    },
+    "patch_summary": {
+        "description": "Summarize a unified diff without applying it. Reports file counts, hunk counts, additions, deletions, renames, and line ranges by file.",
+        "tier": 2,
+        "tags": ["patch", "diff", "unified", "summary", "statistics"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "patch_text": {
+                    "type": "string",
+                    "description": "The unified diff text to summarize",
+                },
+            },
+            "required": ["patch_text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "files_changed": {"type": "integer", "description": "Number of files changed"},
+                "hunks_total": {"type": "integer", "description": "Total number of hunks across all files"},
+                "additions": {"type": "integer", "description": "Total number of added lines"},
+                "deletions": {"type": "integer", "description": "Total number of deleted lines"},
+                "renames_detected": {
+                    "type": "array",
+                    "description": "Detected file renames",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "from": {"type": "string"},
+                            "to": {"type": "string"},
+                        },
+                    },
+                },
+                "binary_patch_detected": {"type": "boolean", "description": "True if binary patch content detected"},
+                "line_ranges_by_file": {
+                    "type": "object",
+                    "description": "Line ranges affected per file",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "start": {"type": "integer"},
+                                "end": {"type": "integer"},
+                            },
+                        },
+                    },
+                },
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes and warnings"},
+            },
+        },
+    },
+    "unicode_policy_check": {
+        "description": "Apply a named deterministic Unicode safety policy to input text. Policies include identifier_strict (mixed scripts, bidi, confusables), filename_safe (control chars, path separators, reserved names), source_code, human_text (warn-only), json_key, and domain_like.",
+        "tier": 2,
+        "tags": ["text", "unicode", "policy", "security", "validation"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input text to check"},
+                "policy": {
+                    "type": "string",
+                    "enum": ["identifier_strict", "filename_safe", "source_code", "human_text", "json_key", "domain_like"],
+                    "description": "Policy to apply",
+                },
+                "normalization": {
+                    "type": "string",
+                    "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"],
+                    "default": None,
+                    "description": "Normalization form (default: policy-specific)",
+                },
+            },
+            "required": ["text", "policy"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "pass": {"type": "boolean", "description": "True if text passes the policy (no errors)"},
+                "policy": {"type": "string", "description": "Policy name that was applied"},
+                "normalized_form": {"type": "string", "description": "Text after normalization"},
+                "findings": {
+                    "type": "array",
+                    "description": "Policy findings with rule, severity, and message",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "rule": {"type": "string"},
+                            "severity": {"type": "string"},
+                            "message": {"type": "string"},
+                        },
+                    },
+                },
+                "summary": {"type": "string", "description": "Human-readable summary"},
+            },
+        },
+    },
+    "canonicalize_text": {
+        "description": "Apply a named text canonicalization profile. Profiles include source_file_identity (NFC + LF + newline), identifier_compare (NFC + casefold), human_label_compare (NFC + casefold + whitespace collapse), json_key_compare (NFC + casefold), and path_segment_compare (NFC + lowercase + LF).",
+        "tier": 2,
+        "tags": ["text", "unicode", "canonicalization", "normalization", "identity"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input text to canonicalize"},
+                "profile": {
+                    "type": "string",
+                    "enum": ["source_file_identity", "identifier_compare", "human_label_compare", "json_key_compare", "path_segment_compare"],
+                    "description": "Canonicalization profile to apply",
+                },
+                "return_mapping": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "If True, include a character mapping of changes",
+                },
+            },
+            "required": ["text", "profile"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Canonicalized text"},
+                "changed": {"type": "boolean", "description": "True if text was modified"},
+                "operations_applied": {"type": "array", "description": "List of operations applied"},
+                "fingerprint_before": {"type": "string", "description": "SHA-256 of original text"},
+                "fingerprint_after": {"type": "string", "description": "SHA-256 of canonicalized text"},
+                "mapping": {"type": "array", "description": "Character mapping if return_mapping was True"},
+                "findings": {"type": "array", "items": {"type": "string"}, "description": "Analysis notes and warnings"},
             },
         },
     },

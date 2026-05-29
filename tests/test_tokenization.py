@@ -9,8 +9,9 @@ These tests ensure that the expression tokenizer correctly handles:
 """
 
 import pytest
-from nl_calc import evaluate, evaluate_raw, UnitValue
-from nl_calc.normalize import split_at_operators, NORMALIZE, PATTERNS
+
+from nl_calc import UnitValue, evaluate
+from nl_calc.normalize import NORMALIZE, PATTERNS, split_at_operators
 
 
 def get_value(result):

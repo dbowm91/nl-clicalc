@@ -124,26 +124,15 @@ calc regex "^\d+$" "12345"
 
 ### MCP Server Mode
 
-nl-clicalc can run as an MCP server, exposing exact text tools to AI agents:
+nl-clicalc can run as an MCP server, exposing deterministic text, JSON, validation, math, and path tools to AI agents:
 
 ```bash
 calc --mcp
 ```
 
-Available MCP tools:
+**39 tools** across 10 categories (math, text, json, validation, regex, list, path, identifier, version, toml). All results are deterministic - same input always produces the same output.
 
-| Tool | Description |
-|------|-------------|
-| `math_eval` | Evaluate math expressions |
-| `text_measure` | Text metrics (UTF-8 bytes, codepoints, words, lines) |
-| `text_equal` | String comparison with normalization options |
-| `text_diff_explain` | Explain differences between strings |
-| `text_inspect` | Hidden characters, confusables, mixed scripts |
-| `text_count` | Character counting and frequency |
-| `validate_brackets` | Bracket pair matching |
-| `validate_json` | JSON parsing validation |
-| `validate_regex` | Regex pattern testing |
-| `list_compare` | List comparison |
+For the full tool catalog with arguments, return values, and tiers, see [docs/mcp.md](docs/mcp.md).
 
 ### As a Python Module
 

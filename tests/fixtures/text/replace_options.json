@@ -1,0 +1,108 @@
+{
+  "description": "text_replace_check: preview, expected count, and allow_multiple options",
+  "tool": "text_replace_check",
+  "cases": [
+    {
+      "name": "preview_enabled",
+      "description": "Preview shows before and after text",
+      "input": {
+        "text": "hello world",
+        "old": "world",
+        "new": "earth",
+        "return_preview": true
+      },
+      "expected": {
+        "match_count": 1,
+        "preview_before": "hello world",
+        "preview_after": "hello earth"
+      }
+    },
+    {
+      "name": "preview_disabled",
+      "description": "Preview strings are empty when disabled",
+      "input": {
+        "text": "hello world",
+        "old": "world",
+        "new": "earth",
+        "return_preview": false
+      },
+      "expected": {
+        "match_count": 1,
+        "preview_before": "",
+        "preview_after": ""
+      }
+    },
+    {
+      "name": "preview_truncation",
+      "description": "Long text preview is truncated",
+      "input": {
+        "text": "a b c",
+        "old": "b",
+        "new": "x",
+        "return_preview": true,
+        "max_preview_chars": 3
+      },
+      "expected": {
+        "match_count": 1,
+        "preview_before_max_len": 3
+      }
+    },
+    {
+      "name": "expected_count_met",
+      "description": "expected_count matches actual count",
+      "input": {
+        "text": "aaa bbb aaa",
+        "old": "aaa",
+        "new": "xxx",
+        "expected_count": 2
+      },
+      "expected": {
+        "match_count": 2,
+        "expected_count_met": true
+      }
+    },
+    {
+      "name": "expected_count_not_met",
+      "description": "expected_count does not match actual count",
+      "input": {
+        "text": "aaa bbb aaa",
+        "old": "aaa",
+        "new": "xxx",
+        "expected_count": 3
+      },
+      "expected": {
+        "match_count": 2,
+        "expected_count_met": false,
+        "finding_kind": "count_mismatch"
+      }
+    },
+    {
+      "name": "allow_multiple_false_warning",
+      "description": "Multiple matches with allow_multiple=False produces warning",
+      "input": {
+        "text": "aaa bbb aaa",
+        "old": "aaa",
+        "new": "xxx",
+        "allow_multiple": false
+      },
+      "expected": {
+        "match_count": 2,
+        "finding_kind": "ambiguous_replacement"
+      }
+    },
+    {
+      "name": "allow_multiple_true_no_warning",
+      "description": "Multiple matches with allow_multiple=True no warning",
+      "input": {
+        "text": "aaa bbb aaa",
+        "old": "aaa",
+        "new": "xxx",
+        "allow_multiple": true
+      },
+      "expected": {
+        "match_count": 2,
+        "has_ambiguous_finding": false
+      }
+    }
+  ]
+}

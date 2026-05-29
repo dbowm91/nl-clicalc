@@ -1,0 +1,72 @@
+{
+  "description": "text_replace_check: newline style handling in replacements",
+  "tool": "text_replace_check",
+  "cases": [
+    {
+      "name": "lf_newlines_preserved",
+      "description": "LF newlines are preserved in replacement",
+      "input": {
+        "text": "hello\nworld",
+        "old": "world",
+        "new": "earth"
+      },
+      "expected": {
+        "match_count": 1,
+        "newline_style_before": "LF",
+        "newline_style_after": "LF"
+      }
+    },
+    {
+      "name": "crlf_newlines_detected",
+      "description": "CRLF newlines are detected",
+      "input": {
+        "text": "hello\r\nworld",
+        "old": "world",
+        "new": "earth"
+      },
+      "expected": {
+        "match_count": 1,
+        "newline_style_before": "CRLF"
+      }
+    },
+    {
+      "name": "normalize_lf_policy",
+      "description": "normalize_lf policy converts CRLF to LF",
+      "input": {
+        "text": "hello\r\nworld",
+        "old": "world",
+        "new": "earth",
+        "newline_policy": "normalize_lf"
+      },
+      "expected": {
+        "match_count": 1
+      }
+    },
+    {
+      "name": "replace_with_newlines",
+      "description": "Replacement text contains newlines",
+      "input": {
+        "text": "hello world",
+        "old": "world",
+        "new": "line1\nline2"
+      },
+      "expected": {
+        "match_count": 1,
+        "would_change": true
+      }
+    },
+    {
+      "name": "replace_newline_with_text",
+      "description": "Replacing a newline character",
+      "input": {
+        "text": "hello\nworld",
+        "old": "\n",
+        "new": " "
+      },
+      "expected": {
+        "match_count": 1,
+        "would_change": true
+      }
+    }
+  ]
+}

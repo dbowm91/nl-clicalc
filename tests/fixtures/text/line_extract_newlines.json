@@ -1,0 +1,110 @@
+{
+  "description": "line_range_extract: newline styles and offset computation",
+  "tool": "line_range_extract",
+  "cases": [
+    {
+      "name": "lf_newlines",
+      "description": "LF newlines detected correctly",
+      "input": {
+        "text": "abc\ndef\nghi",
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected": {
+        "newline_style": "LF",
+        "ends_with_newline": false
+      }
+    },
+    {
+      "name": "crlf_newlines",
+      "description": "CRLF newlines detected correctly",
+      "input": {
+        "text": "abc\r\ndef\r\nghi",
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected": {
+        "newline_style": "CRLF",
+        "ends_with_newline": false
+      }
+    },
+    {
+      "name": "ends_with_newline_lf",
+      "description": "Text ending with LF newline",
+      "input": {
+        "text": "line1\nline2\n",
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected": {
+        "ends_with_newline": true
+      }
+    },
+    {
+      "name": "byte_offsets_simple",
+      "description": "Byte offsets are computed correctly for ASCII",
+      "input": {
+        "text": "abc\ndef\nghi",
+        "start_line": 2,
+        "end_line": 2
+      },
+      "expected": {
+        "byte_start": 4,
+        "byte_end": 8
+      }
+    },
+    {
+      "name": "char_offsets_simple",
+      "description": "Char offsets match byte offsets for ASCII",
+      "input": {
+        "text": "abc\ndef\nghi",
+        "start_line": 2,
+        "end_line": 2
+      },
+      "expected": {
+        "char_start": 4,
+        "char_end": 8
+      }
+    },
+    {
+      "name": "multiline_byte_offsets",
+      "description": "Byte offsets for multi-line extraction",
+      "input": {
+        "text": "abc\ndef\nghi",
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected": {
+        "char_start": 0,
+        "char_end": 8
+      }
+    },
+    {
+      "name": "unicode_multibyte_offsets",
+      "description": "Byte offsets differ from char offsets for multi-byte UTF-8",
+      "input": {
+        "text": "日本語\nhello\nworld",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "expected": {
+        "char_start": 0,
+        "byte_start": 0,
+        "valid_range": true
+      }
+    },
+    {
+      "name": "crlf_multiline_offsets",
+      "description": "CRLF offsets account for two-byte line endings",
+      "input": {
+        "text": "abc\r\ndef\r\nghi",
+        "start_line": 2,
+        "end_line": 2
+      },
+      "expected": {
+        "byte_start": 5,
+        "byte_end": 10
+      }
+    }
+  ]
+}

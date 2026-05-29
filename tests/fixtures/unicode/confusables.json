@@ -1,0 +1,72 @@
+{
+  "description": "Confusable characters - visually similar characters from different scripts",
+  "tool": "inspect_text",
+  "cases": [
+    {
+      "name": "latin_a_vs_cyrillic_a",
+      "description": "Latin 'a' (U+0061) vs Cyrillic 'а' (U+0430) - look identical",
+      "input": {
+        "text": "a\u0430"
+      },
+      "expected": {
+        "has_confusables": true,
+        "confusable_count_min": 1
+      }
+    },
+    {
+      "name": "latin_o_vs_cyrillic_o",
+      "description": "Latin 'o' (U+006F) vs Cyrillic 'о' (U+043E)",
+      "input": {
+        "text": "o\u043e"
+      },
+      "expected": {
+        "has_confusables": true,
+        "confusable_count_min": 1
+      }
+    },
+    {
+      "name": "greek_alpha_vs_cyrillic_a",
+      "description": "Greek 'α' (U+03B1) vs Cyrillic 'а' (U+0430) - confusable",
+      "input": {
+        "text": "\u03b1\u0430"
+      },
+      "expected": {
+        "has_confusables": true,
+        "confusable_count_min": 1
+      }
+    },
+    {
+      "name": "digit_one_vs_latin_i",
+      "description": "Digit '1' (U+0031) vs Latin 'I' (U+0049) vs Cyrillic 'І' (U+0406)",
+      "input": {
+        "text": "1I\u0406"
+      },
+      "expected": {
+        "has_confusables": true,
+        "confusable_count_min": 1
+      }
+    },
+    {
+      "name": "hyphen_vs_minus",
+      "description": "Hyphen-minus (U+002D) vs minus sign (U+2212) vs en dash (U+2013)",
+      "input": {
+        "text": "-\u2212\u2013"
+      },
+      "expected": {
+        "has_confusables": true,
+        "confusable_count_min": 1
+      }
+    },
+    {
+      "name": "minimal_confusables_pure_ascii",
+      "description": "Pure ASCII may have minor confusables (e.g. digit 1 vs lowercase l)",
+      "input": {
+        "text": "hello world"
+      },
+      "expected": {
+        "has_confusables": false,
+        "confusable_count_min": 0
+      }
+    }
+  ]
+}

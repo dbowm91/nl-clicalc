@@ -6,8 +6,8 @@ Usage:
     python -m nl_calc --help
 """
 
-import sys
 import os
+import sys
 
 if __name__ == "__main__":
     nl_calc_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
