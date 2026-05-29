@@ -65,7 +65,7 @@ Consolidated from architecture review of all modules. Previous plan (2026-05-28)
 
 ---
 
-## Wave 3: Medium Priority Bugs (Parallel - 5 items)
+## Wave 2: Medium Priority Bugs (Parallel - 5 items)
 
 ### 5. validate.py - `toml_shape()` Wrong Exception Type
 **Severity:** MEDIUM
@@ -112,7 +112,7 @@ Int patterns use `[-|+]?` and `[-|+|*]?` allowing `|` and `*` as sign characters
 
 ---
 
-## Wave 4: Low Priority Bugs (Parallel - 8 items)
+## Wave 3: Low Priority Bugs (Parallel - 8 items)
 
 ### 10. synthesis.py - `text_window` Undefined `n` Variable
 **Severity:** LOW
@@ -162,7 +162,7 @@ LRU cached evaluation functions not documented.
 
 ---
 
-## Wave 5: Documentation Updates (Parallel - 15 items)
+## Wave 4: Documentation Updates (Parallel - 15 items)
 
 ### 18. exact/ Module Structure Documentation
 **Priority:** MEDIUM
@@ -249,7 +249,7 @@ Doc shows `dict[str, list[str]]`, actual is `dict[str, str]` with space-separate
 
 ---
 
-## Wave 6: Improvements (Parallel - 8 items)
+## Wave 5: Improvements (Parallel - 8 items)
 
 ### 33. exact/ - Add TomlShapeResult, VersionCompareResult Exports
 **Priority:** LOW
