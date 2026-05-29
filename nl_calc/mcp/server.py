@@ -12,33 +12,91 @@ import sys
 from typing import Any
 
 from .tools import (
+    escape_text,
+    path_analyze_mcp,
+    path_normalize,
+    unescape_text,
+    json_canonicalize,
+    json_compare,
+    json_extract,
+    json_query,
+    json_shape,
     list_compare,
+    list_dedupe_mcp,
+    list_sort_mcp,
     math_eval,
+    regex_finditer,
+    regex_safety_check,
     text_count,
     text_diff_explain,
     text_equal,
+    text_hash,
     text_inspect,
     text_measure,
+    text_position,
     text_truncate,
+    text_transform,
+    text_window,
+    toml_shape_mcp,
+    unit_convert,
+    unit_info,
+    constant_lookup,
     validate_brackets,
     validate_json,
     validate_regex,
+    validate_schema_light,
+    validate_toml,
+    version_compare_mcp,
+    identifier_analyze,
+    glob_match_mcp,
+    text_fingerprint_mcp,
+    identifier_inspect_mcp,
 )
 from .schemas import TOOL_SCHEMAS
 
 TOOL_HANDLERS: dict[str, Any] = {
+    "escape_text": escape_text,
+    "unescape_text": unescape_text,
+    "json_canonicalize": json_canonicalize,
+    "json_compare": json_compare,
+    "json_extract": json_extract,
+    "json_query": json_query,
+    "json_shape": json_shape,
+    "list_compare": list_compare,
+    "list_dedupe": list_dedupe_mcp,
+    "list_sort": list_sort_mcp,
     "math_eval": math_eval,
-    "text_measure": text_measure,
-    "text_equal": text_equal,
-    "text_diff_explain": text_diff_explain,
-    "text_inspect": text_inspect,
+    "path_analyze": path_analyze_mcp,
+    "path_normalize": path_normalize,
+    "regex_finditer": regex_finditer,
+    "regex_safety_check": regex_safety_check,
     "text_count": text_count,
+    "text_diff_explain": text_diff_explain,
+    "text_equal": text_equal,
+    "text_hash": text_hash,
+    "text_inspect": text_inspect,
+    "text_measure": text_measure,
+    "text_position": text_position,
     "text_truncate": text_truncate,
+    "text_transform": text_transform,
+    "text_window": text_window,
+    "toml_shape": toml_shape_mcp,
+    "unit_convert": unit_convert,
+    "unit_info": unit_info,
+    "constant_lookup": constant_lookup,
     "validate_brackets": validate_brackets,
     "validate_json": validate_json,
     "validate_regex": validate_regex,
-    "list_compare": list_compare,
+    "validate_schema_light": validate_schema_light,
+    "validate_toml": validate_toml,
+    "version_compare": version_compare_mcp,
+    "identifier_analyze": identifier_analyze,
+    "glob_match": glob_match_mcp,
+    "text_fingerprint": text_fingerprint_mcp,
+    "identifier_inspect": identifier_inspect_mcp,
 }
+
+MAX_REQUEST_BYTES = 1_000_000
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:
@@ -130,13 +188,34 @@ def _handle_call_tool(request: dict) -> dict:
 
 
 def _handle_list_tools(request: dict) -> dict:
-    """Handle a tools/list MCP request."""
+    """Handle a tools/list MCP request with optional filtering."""
+    params = request.get("params", {})
+
+    tier_filter: int | None = params.get("tier")
+    tags_filter: list[str] | None = params.get("tags")
+    names_filter: list[str] | None = params.get("names")
+
     tools = []
     for name, schema in TOOL_SCHEMAS.items():
+        if names_filter is not None:
+            if name not in names_filter:
+                continue
+
+        if tier_filter is not None:
+            if schema.get("tier") != tier_filter:
+                continue
+
+        if tags_filter is not None:
+            tool_tags = set(schema.get("tags", []))
+            if not all(tag in tool_tags for tag in tags_filter):
+                continue
+
         tools.append({
             "name": name,
             "description": schema["description"],
             "inputSchema": schema["inputSchema"],
+            "tier": schema.get("tier"),
+            "tags": schema.get("tags", []),
         })
 
     return {
@@ -198,6 +277,28 @@ def main() -> int:
     for line in sys.stdin:
         line = line.strip()
         if not line:
+            continue
+
+        if len(line.encode('utf-8')) > MAX_REQUEST_BYTES:
+            response = {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32700,
+                    "message": f"Request exceeds maximum size of {MAX_REQUEST_BYTES} bytes",
+                },
+            }
+            print(json.dumps(response), flush=True)
+            continue
+
+        if line.startswith('['):
+            response = {
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32600,
+                    "message": "Batch requests are not supported",
+                },
+            }
+            print(json.dumps(response), flush=True)
             continue
 
         try:

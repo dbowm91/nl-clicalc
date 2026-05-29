@@ -142,10 +142,16 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
             return True
         return False
 
-    def is_valid_single_line_import(stripped: str) -> bool:
-        """Check if this is a valid single-line import to collect."""
+    def is_valid_single_line_import(stripped: str, line: str) -> bool:
+        """Check if this is a valid single-line import to collect.
+        
+        Must be a top-level import (not indented inside a function/class).
+        """
         # Must start with "import " or "from "
         if not (stripped.startswith("import ") or stripped.startswith("from ")):
+            return False
+        # Must be at top level - no leading whitespace (indented lines are local imports)
+        if line and line[0] in " \t":
             return False
         # Skip __future__ imports
         if "__future__" in stripped:
@@ -167,7 +173,8 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
         stripped = line.strip()
 
         # Check if we're entering a multi-line import (skip until closed)
-        if ("from " in stripped or stripped.startswith("import ")) and "(" in stripped and ")" not in stripped:
+        # Need to check for "import (" without ")" on same line = multi-line import start
+        if (stripped.startswith("import ") or stripped.startswith("from ")) and "(" in stripped and ")" not in stripped:
             in_multiline_import = True
             continue
 
@@ -190,17 +197,19 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
         if "from __future__" in line:
             continue
 
-        # Handle simple "import X" statements - collect them
+        # Handle simple "import X" statements - collect them if top-level
         if stripped.startswith("import ") and not stripped.startswith("import nl_calc"):
-            if is_valid_single_line_import(stripped):
+            if is_valid_single_line_import(stripped, line):
                 imports.append(line)
-            continue
+                continue  # Skip - imported at top level
+            # Not a top-level import, fall through to include in code
 
         # Handle simple "from X import" statements that are NOT relative or inlined
         if stripped.startswith("from ") and " import " in stripped:
-            if is_valid_single_line_import(stripped):
+            if is_valid_single_line_import(stripped, line):
                 imports.append(line)
-            continue
+                continue  # Skip - imported at top level
+            # Not a top-level import, fall through to include in code
 
         # Skip if __name__ == "__main__" blocks
         if line.startswith("if __name__") and "__main__" in line:

@@ -42,10 +42,11 @@ class TestCLIInspect:
         assert "CONFUSABLE" in stdout
 
     def test_inspect_zero_width_space(self):
-        """Zero-width space should be detected with codepoint."""
+        """Zero-width space should be detected with name."""
         code, stdout, stderr = run_calc(["-e", f"inspect hello\u200bworld"])
         assert code == 0
-        assert "U+200B" in stdout
+        assert "ZERO WIDTH SPACE" in stdout
+        assert "U+200B" not in stdout
 
     def test_inspect_missing_text(self):
         """Missing text argument should error."""

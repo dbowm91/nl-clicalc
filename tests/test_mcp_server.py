@@ -4,6 +4,7 @@ import json
 import pytest
 from nl_calc.mcp.server import handle_request, main, TOOL_HANDLERS
 from nl_calc.mcp.tools import MAX_TEXT_LENGTH
+from nl_calc.exact.identifier import identifier_analyze
 
 
 class TestProtocolHandshake:
@@ -213,3 +214,4591 @@ class TestErrorHandling:
             "params": {},
         })
         assert response["id"] is None
+
+
+class TestValidateToml:
+    """Test validate_toml tool."""
+
+    def test_valid_simple_toml(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 100,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": "key = \"value\"\n"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["top_level_keys"] == ["key"]
+
+    def test_valid_cargo_toml_style(self):
+        cargo_toml = """[package]
+name = "my-project"
+version = "0.1.0"
+
+[dependencies]
+serde = "1.0"
+"""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 101,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": cargo_toml},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert "package" in content["result"]["top_level_keys"]
+        assert "dependencies" in content["result"]["top_level_keys"]
+        assert "package" in content["result"]["tables"]
+        assert "dependencies" in content["result"]["tables"]
+
+    def test_valid_pyproject_toml_style(self):
+        pyproject = """[project]
+name = "myproject"
+version = "1.0.0"
+
+[project.dependencies]
+requests = "^2.28"
+
+[build-system]
+requires = ["setuptools>=45"]
+"""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 102,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": pyproject},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert "project" in content["result"]["tables"]
+        assert "build-system" in content["result"]["tables"]
+
+    def test_invalid_missing_equals(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 103,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": "key \"value\"\n"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert content["result"]["error"] is not None
+
+    def test_invalid_unclosed_string(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 104,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": "key = \"unclosed\n"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+
+    def test_empty_document(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 105,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": ""},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+
+    def test_large_document_under_limit(self):
+        lines = [f"key{i} = \"value{i}\"" for i in range(4300)]
+        large_text = "\n".join(lines) + "\n"
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 106,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": large_text},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+
+    def test_input_over_limit(self):
+        oversized = "x" * (MAX_TEXT_LENGTH + 1)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 107,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": oversized},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+
+    def test_validate_toml_summary_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 108,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": "key = \"value\"", "detail": "summary"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "valid" in content["result"]
+        assert "error" in content["result"]
+        assert "tables" not in content["result"]
+
+    def test_validate_toml_invalid_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 109,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": "key = \"value\"", "detail": "invalid"},
+            },
+        })
+        assert "error" in response
+
+
+class TestJsonCompare:
+    """Test json_compare tool."""
+
+    def test_same_object_different_key_order_equals_true(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 200,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"x":1,"y":2}', "b": '{"y":2,"x":1}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is True
+        assert content["result"]["valid_json_a"] is True
+        assert content["result"]["valid_json_b"] is True
+
+    def test_same_array_different_order_equals_false_by_default(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 201,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '[1,2,3]', "b": '[3,2,1]'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is False
+
+    def test_same_array_different_order_equals_true_with_ignore_array_order(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 202,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '[1,2,3]', "b": '[3,2,1]', "ignore_array_order": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is True
+
+    def test_missing_key(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 203,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"x":1,"y":2}', "b": '{"x":1}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is False
+        diffs = content["result"]["diffs"]
+        assert any(d["kind"] == "key_missing_in_b" for d in diffs)
+
+    def test_type_mismatch(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 204,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"x":1}', "b": '{"x":"1"}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is False
+        diffs = content["result"]["diffs"]
+        assert any(d["kind"] == "type_changed" for d in diffs)
+
+    def test_numeric_string_equivalence(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 205,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"x":"5"}', "b": '{"x":5}', "numeric_string_equivalence": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is True
+
+    def test_missing_null_equivalence(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 206,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"x":null}', "b": '{}', "treat_missing_null_as_equal": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is True
+
+    def test_max_diff_truncation(self):
+        a = '{"a":1,"b":2,"c":3}'
+        b = '{"a":99,"b":99,"c":99}'
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 207,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": a, "b": b, "max_diffs": 2},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["truncated"] is True
+        assert len(content["result"]["diffs"]) == 2
+        assert content["result"]["diff_count"] == 2
+
+    def test_invalid_json_a(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 208,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"x":}', "b": '{"x":1}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_json_a"] is False
+
+    def test_invalid_json_b(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 209,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"x":1}', "b": '{"x":}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_json_b"] is False
+
+    def test_both_invalid_json(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 210,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{', "b": '['},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_json_a"] is False
+        assert content["result"]["valid_json_b"] is False
+
+    def test_ignore_object_order_false(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 211,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"x":1,"y":2}', "b": '{"y":2,"x":1}', "ignore_object_order": False},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is False
+
+    def test_casefold_keys(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 212,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"Key":1}', "b": '{"key":1}', "casefold_keys": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is True
+
+    def test_summary_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 213,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"x":1}', "b": '{"x":2}', "detail": "summary"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "equal" in content["result"]
+        assert "diff_count" in content["result"]
+        assert "summary" in content["result"]
+        assert "diffs" not in content["result"]
+
+
+class TestJsonExtract:
+    """Test json_extract tool."""
+
+    def test_extract_root_empty_pointer(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 200,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"foo": "bar"}', "pointer": ""},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["value_type"] == "object"
+        assert content["result"]["child_keys"] == ["foo"]
+
+    def test_extract_object_key(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 201,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"foo": "bar", "baz": 123}', "pointer": "/foo"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["value_type"] == "string"
+        assert content["result"]["value"] == "bar"
+
+    def test_extract_array_index(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 202,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"items": [10, 20, 30]}', "pointer": "/items/1"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["value_type"] == "number"
+        assert content["result"]["value"] == 20
+
+    def test_extract_escaped_slash_using_tilde1(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 203,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"a/b": "slash_value"}', "pointer": "/a~1b"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["value"] == "slash_value"
+
+    def test_extract_escaped_tilde_using_tilde0(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 204,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"a~b": "tilde_value"}', "pointer": "/a~0b"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["value"] == "tilde_value"
+
+    def test_missing_key(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 205,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"foo": "bar"}', "pointer": "/missing"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is False
+        assert content["result"]["reason"] == "key_not_found"
+        assert content["result"]["available_keys"] == ["foo"]
+        assert content["result"]["missing_at"] == "/missing"
+
+    def test_out_of_range_array_index(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 206,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"items": [1, 2]}', "pointer": "/items/10"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is False
+        assert content["result"]["reason"] == "index_out_of_range"
+        assert content["result"]["array_length"] == 2
+        assert content["result"]["missing_at"] == "/items/10"
+
+    def test_invalid_pointer_syntax(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 207,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"items": [1, 2]}', "pointer": "/items/abc"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is False
+        assert content["result"]["reason"] == "invalid_pointer_syntax"
+
+    def test_large_value_truncation(self):
+        large_value = "x" * 10000
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 208,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": f'{{"data": "{large_value}"}}', "pointer": "/data", "max_output_chars": 100},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["truncated"] is True
+        assert len(content["result"]["preview"]) == 100
+
+    def test_invalid_json(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 209,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"invalid": json}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_json"] is False
+        assert content["result"]["reason"] == "invalid_json"
+        assert content["result"]["error"] is not None
+
+    def test_nested_path(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 210,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"a": {"b": {"c": 42}}}', "pointer": "/a/b/c"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["value"] == 42
+
+    def test_boolean_and_null_types(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 211,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"bool": true, "nil": null}', "pointer": "/nil"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["value_type"] == "null"
+        assert content["result"]["value"] is None
+
+    def test_summary_detail_level(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 212,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"foo": "bar"}', "pointer": "/foo", "detail": "summary"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "valid_json" in content["result"]
+        assert "found" in content["result"]
+        assert "summary" in content["result"]
+        assert "value" not in content["result"]
+
+
+class TestTextTransform:
+    """Test text_transform tool."""
+
+    def test_normalize_nfc(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 300,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "cafe\u0301", "operations": ["normalize_nfc"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert "normalize_nfc" in content["result"]["operations_applied"]
+        assert content["result"]["text"] == "café"
+
+    def test_normalize_nfd(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 301,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "café", "operations": ["normalize_nfd"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert "normalize_nfd" in content["result"]["operations_applied"]
+
+    def test_casefold(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 302,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "Hello World", "operations": ["casefold"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["text"] == "hello world"
+
+    def test_trim(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 303,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "  hello  ", "operations": ["trim"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["text"] == "hello"
+
+    def test_trim_trailing_whitespace(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 304,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello   \nworld   ", "operations": ["trim_trailing_whitespace"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["text"] == "hello\nworld"
+
+    def test_normalize_newlines_lf(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 305,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello\r\nworld\r", "operations": ["normalize_newlines_lf"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["text"] == "hello\nworld\n"
+
+    def test_ensure_final_newline(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 306,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello", "operations": ["ensure_final_newline"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["text"] == "hello\n"
+
+    def test_strip_final_newline(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 307,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello\n", "operations": ["strip_final_newline"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["text"] == "hello"
+
+    def test_remove_zero_width(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 308,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello\u200bworld", "operations": ["remove_zero_width"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["text"] == "helloworld"
+        assert len(content["result"]["removed"]) == 1
+        assert content["result"]["removed"][0]["codepoint"] == "U+200B"
+
+    def test_remove_bidi_controls(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 309,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello\u202eworld", "operations": ["remove_bidi_controls"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["text"] == "helloworld"
+        assert len(content["result"]["removed"]) == 1
+        assert content["result"]["removed"][0]["codepoint"] == "U+202E"
+
+    def test_visible_repr(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 310,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello\u200bworld", "operations": ["visible_repr"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert "ZWSP" in content["result"]["text"]
+
+    def test_composed_operations(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 311,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "  hello\u200bworld  ", "operations": ["trim", "remove_zero_width"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["text"] == "helloworld"
+        assert "trim" in content["result"]["operations_applied"]
+        assert "remove_zero_width" in content["result"]["operations_applied"]
+
+    def test_unknown_operation_error(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 312,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello", "operations": ["unknown_op"]},
+            },
+        })
+        assert "error" in response
+
+    def test_empty_operations_list(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 313,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello", "operations": []},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is False
+        assert content["result"]["summary"] == "No operations requested"
+
+    def test_input_over_limit(self):
+        oversized = "x" * (MAX_TEXT_LENGTH + 1)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 314,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": oversized, "operations": ["trim"]},
+            },
+        })
+        assert "error" in response
+
+    def test_invalid_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 315,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello", "operations": ["trim"], "detail": "invalid"},
+            },
+        })
+        assert "error" in response
+
+    def test_summary_detail_level(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 316,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello\u200bworld", "operations": ["remove_zero_width"], "detail": "summary"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["removed"] == []
+
+    def test_full_detail_level(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 317,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello\u200bworld", "operations": ["remove_zero_width"], "detail": "full"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert len(content["result"]["removed"]) == 1
+
+
+class TestTextPosition:
+    """Test text_position tool."""
+
+    def test_byte_offset_ascii(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 400,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "hello", "byte_offset": 0},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["codepoint_index"] == 0
+        assert content["result"]["line"] == 1
+        assert content["result"]["column"] == 1
+
+    def test_byte_offset_multibyte_utf8(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 401,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "a\u00e9b", "byte_offset": 1},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["codepoint_index"] == 1
+
+    def test_byte_offset_emoji_outside_bmp(self):
+        text = "a👍b"
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 402,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": text, "byte_offset": 5},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["codepoint_index"] == 3
+
+    def test_invalid_byte_offset_inside_multibyte(self):
+        text = "\u00e9"
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 403,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": text, "byte_offset": 1},
+            },
+        })
+        assert "error" in response
+        content = response["error"]["data"]
+        assert content["ok"] is False
+        assert "multibyte" in content["error"].lower()
+
+    def test_codepoint_index_basic(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 404,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "hello", "codepoint_index": 2},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["codepoint_index"] == 2
+        assert content["result"]["line"] == 1
+        assert content["result"]["column"] == 3
+
+    def test_codepoint_index_out_of_bounds(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 405,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "hello", "codepoint_index": 100},
+            },
+        })
+        assert "error" in response
+        content = response["error"]["data"]
+        assert content["ok"] is False
+
+    def test_line_column_basic(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 406,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "line1\nline2\nline3", "line": 2, "column": 3},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["line"] == 2
+        assert content["result"]["column"] == 3
+        assert content["result"]["codepoint_index"] == 8
+
+    def test_line_column_crlf(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 407,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "line1\r\nline2\r\nline3", "line": 2, "column": 2},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["line"] == 2
+        assert content["result"]["column"] == 2
+        assert content["result"]["char"] == "i"
+
+    def test_line_column_zero_based(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 408,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "a\nb\nc", "line": 0, "column": 1, "line_base": 0, "column_base": 0},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["line"] == 0
+        assert content["result"]["column"] == 1
+
+    def test_utf16_offset_basic(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 409,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "hello", "utf16_offset": 2},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["codepoint_index"] == 2
+
+    def test_utf16_offset_emoji(self):
+        text = "a👍b"
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 410,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": text, "utf16_offset": 3},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["codepoint_index"] == 2
+
+    def test_end_of_text_position(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 411,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "hello", "byte_offset": 5},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["char"] is None
+
+    def test_multiple_locator_modes_error(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 412,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "hello", "byte_offset": 0, "codepoint_index": 1},
+            },
+        })
+        assert "error" in response
+        content = response["error"]["data"]
+        assert content["ok"] is False
+
+    def test_no_locator_mode_error(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 413,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "hello"},
+            },
+        })
+        assert "error" in response
+        content = response["error"]["data"]
+        assert content["ok"] is False
+
+    def test_empty_text(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 414,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "", "byte_offset": 0},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+
+    def test_combining_character_sequence(self):
+        text = "e\u0301"
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 415,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": text, "codepoint_index": 1},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+
+    def test_summary_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 416,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "hello", "byte_offset": 0, "detail": "summary"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "summary" in content["result"]
+
+    def test_invalid_line_out_of_range(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 417,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "hello\nworld", "line": 10, "column": 1},
+            },
+        })
+        assert "error" in response
+        content = response["error"]["data"]
+        assert content["ok"] is False
+
+    def test_invalid_column_out_of_range(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 418,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "hi", "line": 1, "column": 100},
+            },
+        })
+        assert "error" in response
+        content = response["error"]["data"]
+        assert content["ok"] is False
+
+
+class TestTextHash:
+    """Test text_hash tool."""
+
+    def test_empty_string(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 500,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": ""},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["codepoints"] == 0
+        assert content["result"]["bytes"] == 0
+        assert "sha256" in content["result"]["hashes"]
+
+    def test_ascii_text(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 501,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": "hello"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["codepoints"] == 5
+        assert content["result"]["bytes"] == 5
+        assert "sha256" in content["result"]["hashes"]
+
+    def test_unicode_text(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 502,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": "hello\u00e9world"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["codepoints"] == 11
+        assert content["result"]["bytes"] == 12
+
+    def test_different_normalization_forms_different_hashes(self):
+        cafe_nfc = "caf\u00e9"
+        cafe_nfd = "cafe\u0301"
+        response_nfc = handle_request({
+            "jsonrpc": "2.0",
+            "id": 503,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": cafe_nfc},
+            },
+        })
+        response_nfd = handle_request({
+            "jsonrpc": "2.0",
+            "id": 504,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": cafe_nfd},
+            },
+        })
+        assert "result" in response_nfc
+        assert "result" in response_nfd
+        content_nfc = json.loads(response_nfc["result"]["content"][0]["text"])
+        content_nfd = json.loads(response_nfd["result"]["content"][0]["text"])
+        assert content_nfc["ok"] is True
+        assert content_nfd["ok"] is True
+        assert content_nfc["result"]["hashes"]["sha256"] != content_nfd["result"]["hashes"]["sha256"]
+
+    def test_multiple_algorithms(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 505,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": "hello", "algorithms": ["sha256", "sha1", "md5", "crc32"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "sha256" in content["result"]["hashes"]
+        assert "sha1" in content["result"]["hashes"]
+        assert "md5" in content["result"]["hashes"]
+        assert "crc32" in content["result"]["hashes"]
+        assert len(content["result"]["warnings"]) == 1
+        assert "MD5 is non-cryptographic" in content["result"]["warnings"][0]
+
+    def test_md5_warning(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 506,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": "test", "algorithms": ["md5"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert len(content["result"]["warnings"]) == 1
+        assert "MD5 is non-cryptographic" in content["result"]["warnings"][0]
+
+    def test_unsupported_algorithm(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 507,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": "hello", "algorithms": ["sha256", "unknown_algo"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "sha256" in content["result"]["hashes"]
+        assert "unknown_algo" not in content["result"]["hashes"]
+        assert any("unknown_algo" in w for w in content["result"]["warnings"])
+
+    def test_summary_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 508,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": "hello", "detail": "summary"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "hashes" not in content["result"]
+        assert "summary" in content["result"]
+
+    def test_normal_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 509,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": "hello", "detail": "normal"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "hashes" in content["result"]
+        assert "sha256" in content["result"]["hashes"]
+
+    def test_input_over_limit(self):
+        oversized = "x" * (MAX_TEXT_LENGTH + 1)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 510,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": oversized},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+
+    def test_invalid_encoding(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 511,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": "hello", "encoding": "invalid-encoding"},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+        content = response["error"]["data"]
+        assert content["ok"] is False
+        assert content["error_type"] == "invalid_arguments"
+
+
+class TestEscapeText:
+    """Test escape_text tool."""
+
+    def test_escape_json_string_basic(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 600,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "hello\nworld", "mode": "json_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["mode"] == "json_string"
+        assert content["result"]["changed"] is True
+        assert '"' in content["result"]["escaped"]
+        assert "\\n" in content["result"]["escaped"]
+
+    def test_escape_python_string_quotes(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 601,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "hello'world", "mode": "python_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+
+    def test_escape_rust_string(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 602,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": 'hello"world\n', "mode": "rust_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["mode"] == "rust_string"
+
+    def test_escape_posix_shell_single_quotes(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 603,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "hello'world", "mode": "posix_shell_single"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["mode"] == "posix_shell_single"
+        assert content["result"]["changed"] is True
+        escaped = content["result"]["escaped"]
+        assert escaped.startswith("'")
+        assert escaped.endswith("'")
+        assert "\\''" in escaped
+
+    def test_escape_posix_shell_single_contains_single_quote(self):
+        text = "it's"
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 604,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": text, "mode": "posix_shell_single"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["escaped"] == "'it'\\''s'"
+
+    def test_escape_regex_metacharacters(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 605,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "file[1].txt", "mode": "regex_literal"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "file\\[1\\]\\.txt" == content["result"]["escaped"]
+
+    def test_escape_markdown_inline_code_backticks(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 606,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "code with `backtick`", "mode": "markdown_inline_code"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        escaped = content["result"]["escaped"]
+        assert escaped.startswith("`` ")
+        assert escaped.endswith(" ``")
+
+    def test_escape_markdown_code_block(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 607,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "hello\nworld", "mode": "markdown_code_block"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        escaped = content["result"]["escaped"]
+        assert escaped.startswith("```\n")
+        assert escaped.endswith("\n```")
+
+    def test_escape_html_text(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 608,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "<tag>&value</tag>", "mode": "html_text"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        escaped = content["result"]["escaped"]
+        assert "&lt;" in escaped
+        assert "&gt;" in escaped
+        assert "&amp;" in escaped
+
+    def test_escape_url_component(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 609,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "hello world", "mode": "url_component"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "%20" in content["result"]["escaped"]
+
+    def test_escape_unicode_characters(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 610,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "café", "mode": "json_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+
+    def test_escape_backslashes(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 611,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "path\\to\\file", "mode": "json_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "\\\\" in content["result"]["escaped"]
+
+    def test_escape_newlines(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 612,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "line1\nline2\r\nline3", "mode": "json_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+
+    def test_escape_invalid_mode(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 613,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "hello", "mode": "invalid_mode"},
+            },
+        })
+        assert "error" in response
+
+    def test_escape_input_over_limit(self):
+        oversized = "x" * (MAX_TEXT_LENGTH + 1)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 614,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": oversized, "mode": "json_string"},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+
+    def test_escape_summary_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 615,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "hello", "mode": "json_string", "detail": "summary"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "escaped" not in content["result"]
+        assert "summary" in content["result"]
+
+
+class TestUnescapeText:
+    """Test unescape_text tool."""
+
+    def test_unescape_json_string_basic(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 700,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": '"hello\\nworld"', "mode": "json_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["mode"] == "json_string"
+        assert content["result"]["changed"] is True
+        assert content["result"]["error"] is None
+
+    def test_unescape_python_string(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 701,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": "'hello\\'world'", "mode": "python_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["error"] is None
+
+    def test_unescape_unicode_escape(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 702,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": "\\u0048\\u0065\\u006c\\u006c\\u006f", "mode": "unicode_escape"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["unescaped"] == "Hello"
+
+    def test_unescape_unicode_escape_long(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 703,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": "\\U0001F600", "mode": "unicode_escape"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["unescaped"] == "😀"
+
+    def test_unescape_url_component(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 704,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": "hello%20world", "mode": "url_component"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["unescaped"] == "hello world"
+
+    def test_unescape_invalid_json_string(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 705,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": "not_a_json_string", "mode": "json_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["error"] is not None
+
+    def test_unescape_invalid_python_string(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 706,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": "'invalid\\x", "mode": "python_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["error"] is not None
+
+    def test_unescape_no_change(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 707,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": "hello", "mode": "json_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is False
+
+    def test_unescape_invalid_mode(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 708,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": "hello", "mode": "invalid_mode"},
+            },
+        })
+        assert "error" in response
+
+    def test_unescape_input_over_limit(self):
+        oversized = "x" * (MAX_TEXT_LENGTH + 1)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 709,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": oversized, "mode": "json_string"},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+
+    def test_unescape_summary_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 710,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": '"hello"', "mode": "json_string", "detail": "summary"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "unescaped" not in content["result"]
+        assert "summary" in content["result"]
+
+
+class TestIdentifierAnalyze:
+    """Test identifier_analyze tool."""
+
+    def test_snake_case_valid(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 800,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "my_variable_name"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["classification"] == "snake_case"
+        assert content["result"]["python_valid"] is True
+        assert content["result"]["python_keyword"] is False
+        assert content["result"]["env_valid"] is False
+
+    def test_camel_case_valid(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 801,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "myVariableName"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["classification"] == "camelCase"
+
+    def test_pascal_case_valid(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 802,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "MyVariableName"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["classification"] == "PascalCase"
+
+    def test_kebab_case_valid(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 803,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "my-variable-name"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["classification"] == "kebab-case"
+
+    def test_screaming_snake_case_valid(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 804,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "MY_CONSTANT_NAME"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["classification"] == "SCREAMING_SNAKE_CASE"
+        assert content["result"]["env_valid"] is True
+
+    def test_python_keyword_invalid(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 805,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "class"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["python_keyword"] is True
+        assert any("Python keyword" in w for w in content["result"]["warnings"])
+
+    def test_rust_keyword_invalid(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 806,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "fn"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["rust_valid"] is False
+
+    def test_env_var_valid(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 807,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "MY_APP_CONFIG"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["env_valid"] is True
+
+    def test_env_var_invalid_starts_with_number(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 808,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "123_CONFIG"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["env_valid"] is False
+
+    def test_invalid_identifier_with_space(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 809,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "my variable"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["classification"] == "invalid"
+        assert content["result"]["python_valid"] is False
+
+    def test_invalid_identifier_with_punctuation(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 810,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "my-var@name"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["classification"] == "invalid"
+
+    def test_suggestions_provided(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 811,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "MyVariableName"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        suggestions = content["result"]["suggestions"]
+        assert "snake_case" in suggestions
+        assert "kebab_case" in suggestions
+        assert "pascal_case" in suggestions
+        assert "camel_case" in suggestions
+        assert "screaming_snake_case" in suggestions
+
+    def test_limited_languages(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 812,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "my_var", "languages": ["python"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["python_valid"] is True
+
+    def test_invalid_language_error(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 813,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "my_var", "languages": ["invalid_lang"]},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+
+    def test_summary_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 814,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "my_var", "detail": "summary"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "summary" in content["result"]
+        assert "suggestions" not in content["result"]
+
+    def test_normal_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 815,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "my_var", "detail": "normal"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "suggestions" in content["result"]
+
+    def test_input_over_limit(self):
+        oversized = "x" * (MAX_TEXT_LENGTH + 1)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 816,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": oversized},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+
+    def test_invalid_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 817,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "my_var", "detail": "invalid"},
+            },
+        })
+        assert "error" in response
+
+    def test_unicode_identifier(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 818,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "mavariable"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["python_valid"] is True
+
+    def test_mixed_classification(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 819,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "myVar_Name"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["classification"] == "mixed"
+
+    def test_underscore_prefix_warning(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 820,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "_private_var"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert any("underscore" in w.lower() for w in content["result"]["warnings"])
+
+
+class TestIdentifierAnalyzeDirect:
+    """Test identifier_analyze function directly."""
+
+    def test_rust_crate_like_name(self):
+        result = identifier_analyze("my-crate-name")
+        assert result["classification"] == "kebab-case"
+        assert result["rust_valid"] is False
+
+    def test_python_package_like_name(self):
+        result = identifier_analyze("my_package")
+        assert result["classification"] == "snake_case"
+        assert result["python_valid"] is True
+
+    def test_env_var_name(self):
+        result = identifier_analyze("DATABASE_URL")
+        assert result["classification"] == "SCREAMING_SNAKE_CASE"
+        assert result["env_valid"] is True
+
+    def test_javascript_valid(self):
+        result = identifier_analyze("myVariable")
+        assert result["javascript_valid"] is True
+
+    def test_all_keywords_python(self):
+        for kw in ["if", "else", "for", "while", "return", "class", "def", "import"]:
+            result = identifier_analyze(kw)
+            assert result["python_keyword"] is True, f"Failed for keyword: {kw}"
+
+
+class TestPathAnalyze:
+    """Test path_analyze tool."""
+
+    def test_posix_relative_simple(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 800,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "foo/bar.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["style"] == "posix"
+        assert content["result"]["absolute"] is False
+        assert content["result"]["hidden"] is False
+        assert content["result"]["has_traversal"] is False
+        assert content["result"]["name"] == "bar.txt"
+        assert content["result"]["suffix"] == ".txt"
+        assert content["result"]["components"] == ["foo", "bar.txt"]
+
+    def test_posix_absolute_path(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 801,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/home/user/file.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["style"] == "posix"
+        assert content["result"]["absolute"] is True
+
+    def test_windows_drive_path(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 802,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "C:\\Users\\file.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["style"] == "windows"
+        assert content["result"]["absolute"] is True
+        assert content["result"]["name"] == "file.txt"
+
+    def test_windows_drive_letter_detection(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 803,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "D:/projects/file.py"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["style"] == "windows"
+
+    def test_windows_unc_path(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 804,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "\\\\server\\share\\file.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["style"] == "windows"
+
+    def test_hidden_file_dotfile(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 805,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/home/user/.bashrc"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["hidden"] is True
+        assert content["result"]["name"] == ".bashrc"
+
+    def test_hidden_file_not_hidden_for_dot_or_dotdot(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 806,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "./file.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["hidden"] is False
+
+    def test_multiple_suffixes_tar_gz(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 807,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "archive.tar.gz"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["suffix"] == ".gz"
+        assert content["result"]["suffixes"] == [".tar.gz", ".gz"]
+        assert content["result"]["stem"] == "archive"
+
+    def test_parent_traversal(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 808,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/foo/bar/../baz"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["has_traversal"] is True
+        assert content["result"]["name"] == "baz"
+        assert "foo" in content["result"]["components"]
+        assert ".." in content["result"]["components"]
+        assert len(content["result"]["warnings"]) > 0
+
+    def test_redundant_dot_segments(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 809,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/foo/./bar/./file.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert len(content["result"]["warnings"]) > 0
+
+    def test_unicode_path_segment(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 810,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/home/\u7528\u6237/file.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+
+    def test_confusable_path_warning(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 811,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/home/\u0430\u0432\u0442\u043e\u0440/file.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+
+    def test_explicit_posix_style(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 812,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "C:\\path\\file.txt", "style": "posix"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["style"] == "posix"
+
+    def test_explicit_windows_style(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 813,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/home/user/file.txt", "style": "windows"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["style"] == "windows"
+
+    def test_summary_detail_level(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 814,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/home/user/file.txt", "detail": "summary"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "summary" in content["result"]
+        assert "components" not in content["result"]
+
+    def test_full_detail_level(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 815,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/home/user/file.txt", "detail": "full"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "components" in content["result"]
+        assert "warnings" in content["result"]
+
+    def test_invalid_style(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 816,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/home/user/file.txt", "style": "invalid"},
+            },
+        })
+        assert "error" in response
+
+    def test_invalid_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 817,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "/home/user/file.txt", "detail": "invalid"},
+            },
+        })
+        assert "error" in response
+
+    def test_empty_path(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 818,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": ""},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["components"] == []
+        assert content["result"]["name"] is None
+
+    def test_single_component_file(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 819,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "file.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["components"] == ["file.txt"]
+        assert content["result"]["parent"] is None
+
+    def test_input_over_limit(self):
+        oversized = "x" * (MAX_TEXT_LENGTH + 1)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 820,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": oversized},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+
+
+class TestValidateSchemaLight:
+    """Test validate_schema_light tool."""
+
+    def test_valid_object(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 900,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"name": "test", "version": "1.0.0", "enabled": true, "tags": ["a", "b"]}',
+                    "schema": {
+                        "type": "object",
+                        "required": ["name", "version"],
+                        "properties": {
+                            "name": {"type": "string", "min_length": 1},
+                            "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+                            "enabled": {"type": "boolean"},
+                            "tags": {"type": "array", "items": {"type": "string"}}
+                        },
+                        "additional_properties": False,
+                    },
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["violations"] == []
+        assert content["result"]["truncated"] is False
+
+    def test_missing_required_key(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 901,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"name": "test"}',
+                    "schema": {
+                        "type": "object",
+                        "required": ["name", "version"],
+                        "properties": {
+                            "name": {"type": "string"},
+                            "version": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert len(content["result"]["violations"]) == 1
+        assert content["result"]["violations"][0]["path"] == "/version"
+        assert "required" in content["result"]["violations"][0]["message"]
+
+    def test_wrong_type(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 902,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"name": 123, "version": "1.0.0"}',
+                    "schema": {
+                        "type": "object",
+                        "required": ["name", "version"],
+                        "properties": {
+                            "name": {"type": "string"},
+                            "version": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert len(content["result"]["violations"]) == 1
+        assert content["result"]["violations"][0]["path"] == "/name"
+        assert "expected string" in content["result"]["violations"][0]["message"]
+
+    def test_additional_property(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 903,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"name": "test", "extra": "value"}',
+                    "schema": {
+                        "type": "object",
+                        "required": ["name"],
+                        "properties": {
+                            "name": {"type": "string"},
+                        },
+                        "additional_properties": False,
+                    },
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert len(content["result"]["violations"]) == 1
+        assert content["result"]["violations"][0]["path"] == "/extra"
+        assert "additional property" in content["result"]["violations"][0]["message"]
+
+    def test_enum_violation(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 904,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"status": "unknown"}',
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "status": {"type": "string", "enum": ["active", "inactive", "pending"]},
+                        },
+                    },
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert len(content["result"]["violations"]) == 1
+        assert "/status" in content["result"]["violations"][0]["path"]
+        assert "enum" in content["result"]["violations"][0]["message"]
+
+    def test_nested_array_item_violation(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 905,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"items": ["a", "b", 123]}',
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "items": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert len(content["result"]["violations"]) == 1
+        assert "/items/[2]" in content["result"]["violations"][0]["path"]
+        assert "expected string" in content["result"]["violations"][0]["message"]
+
+    def test_invalid_json_input(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 906,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"invalid": json}',
+                    "schema": {"type": "object"},
+                },
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+
+    def test_max_violations_limit_truncation(self):
+        schema = {
+            "type": "object",
+            "properties": {},
+            "additional_properties": False,
+        }
+        extra_fields = {f"field_{i}": i for i in range(150)}
+        text = json.dumps(extra_fields)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 907,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": text,
+                    "schema": schema,
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert content["result"]["truncated"] is True
+
+    def test_string_min_length_violation(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 908,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"name": ""}',
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "min_length": 1},
+                        },
+                    },
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert "/name" in content["result"]["violations"][0]["path"]
+
+    def test_array_min_max_items(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 909,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"items": [1, 2, 3, 4, 5]}',
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "items": {"type": "array", "min_items": 3, "max_items": 4},
+                        },
+                    },
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert "/items" in content["result"]["violations"][0]["path"]
+        assert "maximum" in content["result"]["violations"][0]["message"]
+
+    def test_pattern_mismatch(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 910,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"version": "invalid"}',
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+                        },
+                    },
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert "/version" in content["result"]["violations"][0]["path"]
+        assert "pattern" in content["result"]["violations"][0]["message"]
+
+    def test_invalid_detail_level(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 911,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"name": "test"}',
+                    "schema": {"type": "object"},
+                    "detail": "invalid",
+                },
+            },
+        })
+        assert "error" in response
+
+    def test_summary_detail_level(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 912,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"name": "test", "extra": 123}',
+                    "schema": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "additional_properties": False,
+                    },
+                    "detail": "summary",
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert "summary" in content["result"]
+        assert "violations" not in content["result"]
+
+    def test_nested_object_validation(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 913,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {
+                    "text": '{"outer": {"inner": 123}}',
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "outer": {
+                                "type": "object",
+                                "properties": {
+                                    "inner": {"type": "string"},
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert "/outer/inner" in content["result"]["violations"][0]["path"]
+
+
+class TestRegexFindIter:
+    """Test regex_finditer tool."""
+
+    def test_no_match(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1100,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "xyz", "text": "hello world"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is True
+        assert content["result"]["match_count"] == 0
+        assert content["result"]["matches"] == []
+        assert content["result"]["truncated"] is False
+
+    def test_one_match(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1101,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "hello", "text": "hello world"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is True
+        assert content["result"]["match_count"] == 1
+        assert content["result"]["matches"][0]["match"] == "hello"
+        assert content["result"]["matches"][0]["span"] == [0, 5]
+        assert content["result"]["matches"][0]["line"] == 1
+        assert content["result"]["matches"][0]["column"] == 1
+
+    def test_multiple_matches(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1102,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "\\d+", "text": "123 abc 456 def 789"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is True
+        assert content["result"]["match_count"] == 3
+        assert len(content["result"]["matches"]) == 3
+        assert content["result"]["matches"][0]["match"] == "123"
+        assert content["result"]["matches"][1]["match"] == "456"
+        assert content["result"]["matches"][2]["match"] == "789"
+
+    def test_named_groups(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1103,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "(?P<year>\\d{4})-(?P<month>\\d{2})", "text": "2024-01 and 2023-12"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is True
+        assert content["result"]["match_count"] == 2
+        assert content["result"]["matches"][0]["groupdict"]["year"] == "2024"
+        assert content["result"]["matches"][0]["groupdict"]["month"] == "01"
+
+    def test_multiline_mode(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1104,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "^line", "text": "line1\nline2\nline3", "flags": ["MULTILINE"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is True
+        assert content["result"]["match_count"] == 3
+
+    def test_invalid_regex(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1105,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "[invalid", "text": "hello"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is False
+        assert content["result"]["error"] is not None
+
+    def test_max_matches_truncation(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1106,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "a", "text": "aaaaaaaaaa", "max_matches": 3},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is True
+        assert content["result"]["match_count"] == 10
+        assert len(content["result"]["matches"]) == 3
+        assert content["result"]["truncated"] is True
+
+    def test_multiline_with_line_breaks(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1107,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "start", "text": "line1\nstart of line2\nend", "include_line_column": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["matches"][0]["line"] == 2
+        assert content["result"]["matches"][0]["column"] == 1
+
+    def test_no_groups(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1108,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "hello", "text": "hello world", "include_groups": False},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["matches"][0]["groups"] == []
+
+    def test_no_line_column(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1109,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "hello", "text": "hello", "include_line_column": False},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "line" not in content["result"]["matches"][0]
+        assert "column" not in content["result"]["matches"][0]
+
+    def test_input_over_limit(self):
+        oversized = "x" * (MAX_TEXT_LENGTH + 1)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1110,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "x", "text": oversized},
+            },
+        })
+        assert "error" in response
+
+    def test_invalid_max_matches(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1111,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_finditer",
+                "arguments": {"pattern": "x", "text": "hello", "max_matches": 0},
+            },
+        })
+        assert "error" in response
+
+
+class TestRegexSafetyCheck:
+    """Test regex_safety_check tool."""
+
+    def test_safe_literal(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1200,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_safety_check",
+                "arguments": {"pattern": "hello world"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is True
+        assert content["result"]["risk"] == "low"
+        assert content["result"]["findings"] == []
+
+    def test_anchored_pattern(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1201,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_safety_check",
+                "arguments": {"pattern": "^hello"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["risk"] == "low"
+
+    def test_nested_quantifier(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1202,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_safety_check",
+                "arguments": {"pattern": "(a+)+"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is True
+        assert content["result"]["risk"] == "high"
+        assert len(content["result"]["findings"]) > 0
+        assert content["result"]["findings"][0]["kind"] == "nested_quantifier"
+
+    def test_invalid_regex(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1203,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_safety_check",
+                "arguments": {"pattern": "[invalid"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is False
+
+    def test_backreference(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1204,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_safety_check",
+                "arguments": {"pattern": "(a+)\\1"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is True
+        assert content["result"]["risk"] == "medium"
+        assert any(f["kind"] == "backreference" for f in content["result"]["findings"])
+
+    def test_pattern_over_limit(self):
+        oversized = "x" * (MAX_TEXT_LENGTH + 1)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1205,
+            "method": "tools/call",
+            "params": {
+                "name": "regex_safety_check",
+                "arguments": {"pattern": oversized},
+            },
+        })
+        assert "error" in response
+
+
+class TestPathNormalize:
+    """Test path_normalize tool."""
+
+    def test_posix_relative(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1300,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": "foo/bar.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["normalized"] == "foo/bar.txt"
+        assert content["result"]["is_absolute"] is False
+        assert content["result"]["components"] == ["foo", "bar.txt"]
+
+    def test_posix_absolute(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1301,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": "/home/user/file.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["normalized"] == "/home/user/file.txt"
+        assert content["result"]["is_absolute"] is True
+
+    def test_windows_drive(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1302,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": "C:\\Users\\file.txt", "platform": "windows"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["is_absolute"] is True
+
+    def test_unc_path(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1303,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": "\\\\\\\\server\\\\share\\\\file.txt", "platform": "windows"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["is_absolute"] is True
+
+    def test_mixed_separators(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1304,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": "foo/bar\\baz.txt", "platform": "posix"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+
+    def test_dot_segments(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1305,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": "foo/./bar/../baz"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "dot-dot" in content["result"]["warnings"][1]
+        assert "foo" in content["result"]["components"]
+
+    def test_collapse_dot_segments(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1306,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": "foo/./bar/../baz", "collapse_dot_segments": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["normalized"] == "foo/baz"
+
+    def test_trailing_separator(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1307,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": "foo/bar/", "preserve_trailing_separator": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["normalized"] == "foo/bar/"
+
+    def test_no_collapse_dot_segments(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1308,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": "foo/./bar", "collapse_dot_segments": False},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "." in content["result"]["components"]
+
+    def test_invalid_platform(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1309,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": "foo/bar", "platform": "invalid"},
+            },
+        })
+        assert "error" in response
+
+    def test_input_over_limit(self):
+        oversized = "x" * (MAX_TEXT_LENGTH + 1)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1310,
+            "method": "tools/call",
+            "params": {
+                "name": "path_normalize",
+                "arguments": {"path": oversized},
+            },
+        })
+        assert "error" in response
+
+
+class TestToolListGolden:
+    """Golden tests for tools/list endpoint - verify all tools are registered."""
+
+    def test_all_handlers_have_schemas(self):
+        """Every tool in TOOL_HANDLERS must have a schema."""
+        from nl_calc.mcp.server import TOOL_HANDLERS
+        from nl_calc.mcp.schemas import TOOL_SCHEMAS
+        for name in TOOL_HANDLERS:
+            assert name in TOOL_SCHEMAS, f"Tool {name} has no schema"
+
+    def test_all_schemas_have_handlers(self):
+        """Every schema must have a corresponding handler."""
+        from nl_calc.mcp.server import TOOL_HANDLERS
+        from nl_calc.mcp.schemas import TOOL_SCHEMAS
+        for name in TOOL_SCHEMAS:
+            assert name in TOOL_HANDLERS, f"Schema {name} has no handler"
+
+    def test_list_tools_returns_all_registered_tools(self):
+        """tools/list must return exactly the tools in TOOL_HANDLERS."""
+        from nl_calc.mcp.server import TOOL_HANDLERS
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {},
+        })
+        assert "result" in response
+        tools = response["result"]["tools"]
+        tool_names = {t["name"] for t in tools}
+        assert tool_names == set(TOOL_HANDLERS.keys()), f"Mismatch: {tool_names} vs {set(TOOL_HANDLERS.keys())}"
+
+    def test_every_tool_has_description(self):
+        """Every tool must have a non-empty description."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {},
+        })
+        tools = response["result"]["tools"]
+        for tool in tools:
+            assert tool["description"], f"Tool {tool['name']} has empty description"
+            assert len(tool["description"]) > 10, f"Tool {tool['name']} has very short description"
+
+    def test_every_tool_has_input_schema(self):
+        """Every tool must have an inputSchema."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/list",
+            "params": {},
+        })
+        tools = response["result"]["tools"]
+        for tool in tools:
+            assert "inputSchema" in tool, f"Tool {tool['name']} missing inputSchema"
+            assert tool["inputSchema"].get("type") == "object", f"Tool {tool['name']} inputSchema must be type object"
+
+    def test_every_tool_has_required_fields(self):
+        """Every tool must specify required fields in inputSchema."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/list",
+            "params": {},
+        })
+        tools = response["result"]["tools"]
+        for tool in tools:
+            schema = tool["inputSchema"]
+            assert "required" in schema, f"Tool {tool['name']} missing required field list"
+
+    def test_text_truncate_in_tools_list(self):
+        """text_truncate must appear in tools/list (was missing/undocumented)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/list",
+            "params": {},
+        })
+        tools = response["result"]["tools"]
+        tool_names = [t["name"] for t in tools]
+        assert "text_truncate" in tool_names, "text_truncate not in tools/list"
+
+
+class TestDocExamples:
+    """Test examples from docs/mcp.md."""
+
+    def test_math_eval_natural_language(self):
+        """math_eval with natural language expression."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1000,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "five plus three"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["result"] == "8"
+
+    def test_text_measure_hello_world(self):
+        """text_measure with Hello, world! example."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1001,
+            "method": "tools/call",
+            "params": {
+                "name": "text_measure",
+                "arguments": {"text": "Hello, 世界!\n"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "bytes_utf8" in content["result"]
+        assert "codepoints" in content["result"]
+
+    def test_text_equal_nfc_equivalent(self):
+        """text_equal with NFC equivalent strings."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1002,
+            "method": "tools/call",
+            "params": {
+                "name": "text_equal",
+                "arguments": {"a": "café", "b": "cafe\u0301", "normalization": "NFC"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is True
+
+    def test_text_truncate_example(self):
+        """text_truncate example from docs."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1003,
+            "method": "tools/call",
+            "params": {
+                "name": "text_truncate",
+                "arguments": {"text": "Hello, world!", "max_graphemes": 5},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["text"] == "Hello"
+        assert content["result"]["truncated"] is True
+        assert content["result"]["original_graphemes"] == 13
+
+    def test_validate_brackets_balanced(self):
+        """validate_brackets with balanced brackets."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1004,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_brackets",
+                "arguments": {"text": "(a + b) * [c - d]"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["balanced"] is True
+
+    def test_validate_json_valid(self):
+        """validate_json with valid JSON."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1005,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_json",
+                "arguments": {"text": '{"name": "test"}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["top_level_keys"] == ["name"]
+
+    def test_validate_json_invalid(self):
+        """validate_json with invalid JSON."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1006,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_json",
+                "arguments": {"text": '{"name":}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert content["result"]["error"] is not None
+
+    def test_list_compare_with_ignore_order(self):
+        """list_compare with ignore_order - docs example shows equal=false."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1007,
+            "method": "tools/call",
+            "params": {
+                "name": "list_compare",
+                "arguments": {"a": ["apple", "banana"], "b": ["APPLE", "cherry"], "ignore_order": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is False
+        assert "banana" in content["result"]["missing_in_b"]
+        assert "cherry" in content["result"]["missing_in_a"]
+
+    def test_validate_toml_valid(self):
+        """validate_toml with valid TOML."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1008,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_toml",
+                "arguments": {"text": '[package]\nname = "demo"\nversion = "0.1.0"'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+
+    def test_json_extract_pointer(self):
+        """json_extract with pointer example."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1009,
+            "method": "tools/call",
+            "params": {
+                "name": "json_extract",
+                "arguments": {"text": '{"dependencies": {"tokio": {"version": "1.36"}}}', "pointer": "/dependencies/tokio"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_json"] is True
+        assert content["result"]["found"] is True
+
+    def test_json_compare_different_key_order(self):
+        """json_compare with different key order."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1010,
+            "method": "tools/call",
+            "params": {
+                "name": "json_compare",
+                "arguments": {"a": '{"x": 1, "y": 2}', "b": '{"y": 2, "x": 1}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_json_a"] is True
+        assert content["result"]["valid_json_b"] is True
+        assert content["result"]["equal"] is True
+
+    def test_text_position_byte_offset(self):
+        """text_position with byte_offset."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1011,
+            "method": "tools/call",
+            "params": {
+                "name": "text_position",
+                "arguments": {"text": "let x = 1;\nconst y = 2;", "byte_offset": 12},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+
+    def test_path_analyze_traversal(self):
+        """path_analyze with traversal example."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1012,
+            "method": "tools/call",
+            "params": {
+                "name": "path_analyze",
+                "arguments": {"path": "../src/lib.rs"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["has_traversal"] is True
+
+    def test_identifier_analyze_snake_case(self):
+        """identifier_analyze with snake_case example."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1013,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_analyze",
+                "arguments": {"text": "my_function_name"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["classification"] == "snake_case"
+
+    def test_validate_regex_example(self):
+        """validate_regex example from docs."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1014,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_regex",
+                "arguments": {"pattern": "(\\d+)-(\\d+)", "samples": ["123-4567", "hello"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid_pattern"] is True
+
+    def test_text_transform_trim(self):
+        """text_transform with trim example."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1015,
+            "method": "tools/call",
+            "params": {
+                "name": "text_transform",
+                "arguments": {"text": "hello  ", "operations": ["trim_trailing_whitespace"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["text"] == "hello"
+
+    def test_escape_text_json_string(self):
+        """escape_text with json_string example."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1016,
+            "method": "tools/call",
+            "params": {
+                "name": "escape_text",
+                "arguments": {"text": "hello\nworld", "mode": "json_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert '"' in content["result"]["escaped"]
+
+    def test_text_count_target(self):
+        """text_count with target character."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1017,
+            "method": "tools/call",
+            "params": {
+                "name": "text_count",
+                "arguments": {"text": "hello world", "target": "l"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["count"] == 3
+
+    def test_text_hash_multiple_algorithms(self):
+        """text_hash with multiple algorithms."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1018,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": "hello world", "algorithms": ["sha256", "md5"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "sha256" in content["result"]["hashes"]
+        assert "md5" in content["result"]["hashes"]
+
+    def test_unescape_text_json_string(self):
+        """unescape_text with json_string example."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1019,
+            "method": "tools/call",
+            "params": {
+                "name": "unescape_text",
+                "arguments": {"text": '"hello\\nworld"', "mode": "json_string"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["changed"] is True
+        assert content["result"]["error"] is None
+
+
+class TestGlobMatch:
+    """Test glob_match tool."""
+
+    def test_exact_match(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2000,
+            "method": "tools/call",
+            "params": {
+                "name": "glob_match",
+                "arguments": {"pattern": "src/main.rs", "path": "src/main.rs"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["matches"] is True
+
+    def test_single_star_match(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2001,
+            "method": "tools/call",
+            "params": {
+                "name": "glob_match",
+                "arguments": {"pattern": "*.txt", "path": "readme.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["matches"] is True
+
+    def test_double_star_match(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2002,
+            "method": "tools/call",
+            "params": {
+                "name": "glob_match",
+                "arguments": {"pattern": "src/**/*.rs", "path": "src/main.rs"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["matches"] is True
+
+    def test_double_star_zero_segments(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2003,
+            "method": "tools/call",
+            "params": {
+                "name": "glob_match",
+                "arguments": {"pattern": "src/**/file.txt", "path": "src/file.txt"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["matches"] is True
+
+    def test_non_match(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2004,
+            "method": "tools/call",
+            "params": {
+                "name": "glob_match",
+                "arguments": {"pattern": "src/*.rs", "path": "src/foo/bar.rs"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["matches"] is False
+
+    def test_case_insensitive_windows(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2005,
+            "method": "tools/call",
+            "params": {
+                "name": "glob_match",
+                "arguments": {"pattern": "Src/*.rs", "path": "src/main.rs", "platform": "windows", "case_sensitive": False},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["matches"] is True
+
+    def test_invalid_platform(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2006,
+            "method": "tools/call",
+            "params": {
+                "name": "glob_match",
+                "arguments": {"pattern": "*.txt", "path": "file.txt", "platform": "invalid"},
+            },
+        })
+        assert "error" in response
+
+
+class TestTextFingerprint:
+    """Test text_fingerprint tool."""
+
+    def test_raw_hash(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2010,
+            "method": "tools/call",
+            "params": {
+                "name": "text_fingerprint",
+                "arguments": {"text": "hello world"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "sha256" in content["result"]
+        assert len(content["result"]["sha256"]) == 64
+
+    def test_nfc_normalization_equivalence(self):
+        import unicodedata
+        nfc = unicodedata.normalize("NFC", "cafe\u0301")
+        nfd = unicodedata.normalize("NFD", "cafe\u0301")
+        response1 = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2011,
+            "method": "tools/call",
+            "params": {
+                "name": "text_fingerprint",
+                "arguments": {"text": nfc, "unicode": "NFC"},
+            },
+        })
+        response2 = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2012,
+            "method": "tools/call",
+            "params": {
+                "name": "text_fingerprint",
+                "arguments": {"text": nfd, "unicode": "NFC"},
+            },
+        })
+        c1 = json.loads(response1["result"]["content"][0]["text"])
+        c2 = json.loads(response2["result"]["content"][0]["text"])
+        assert c1["ok"] is True
+        assert c2["ok"] is True
+        assert c1["result"]["sha256"] == c2["result"]["sha256"]
+
+    def test_newline_normalization_lf(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2013,
+            "method": "tools/call",
+            "params": {
+                "name": "text_fingerprint",
+                "arguments": {"text": "line1\r\nline2", "newline": "LF"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["newline_style"] == "CRLF"
+
+    def test_casefold_equality(self):
+        r1 = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2014,
+            "method": "tools/call",
+            "params": {
+                "name": "text_fingerprint",
+                "arguments": {"text": "Hello World", "casefold": True},
+            },
+        })
+        r2 = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2015,
+            "method": "tools/call",
+            "params": {
+                "name": "text_fingerprint",
+                "arguments": {"text": "hello world", "casefold": True},
+            },
+        })
+        c1 = json.loads(r1["result"]["content"][0]["text"])
+        c2 = json.loads(r2["result"]["content"][0]["text"])
+        assert c1["ok"] is True
+        assert c2["ok"] is True
+        assert c1["result"]["sha256"] == c2["result"]["sha256"]
+
+    def test_trim_final_newline(self):
+        r1 = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2016,
+            "method": "tools/call",
+            "params": {
+                "name": "text_fingerprint",
+                "arguments": {"text": "hello", "trim_final_newline": True},
+            },
+        })
+        r2 = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2017,
+            "method": "tools/call",
+            "params": {
+                "name": "text_fingerprint",
+                "arguments": {"text": "hello\n", "trim_final_newline": True},
+            },
+        })
+        c1 = json.loads(r1["result"]["content"][0]["text"])
+        c2 = json.loads(r2["result"]["content"][0]["text"])
+        assert c1["ok"] is True
+        assert c2["ok"] is True
+        assert c1["result"]["sha256"] == c2["result"]["sha256"]
+
+    def test_invalid_unicode_normalization(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2018,
+            "method": "tools/call",
+            "params": {
+                "name": "text_fingerprint",
+                "arguments": {"text": "hello", "unicode": "invalid"},
+            },
+        })
+        assert "error" in response
+
+
+class TestIdentifierInspect:
+    """Test identifier_inspect tool."""
+
+    def test_ascii_identifiers(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2020,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_inspect",
+                "arguments": {"identifiers": ["foo", "bar", "baz"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert len(content["result"]["identifiers"]) == 3
+        assert all(info["scripts"] == ["Latin"] for info in content["result"]["identifiers"])
+        assert len(content["result"]["collisions"]) == 0
+
+    def test_python_keyword(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2021,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_inspect",
+                "arguments": {"identifiers": ["if", "else", "while"], "language": "python"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        for info in content["result"]["identifiers"]:
+            assert info["valid"] is False
+
+    def test_zero_width_char(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2022,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_inspect",
+                "arguments": {"identifiers": ["test\u200buser"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["identifiers"][0]["has_invisibles"] is True
+
+    def test_mixed_latin_cyrillic(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2023,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_inspect",
+                "arguments": {"identifiers": ["paypal", "pаypal"]},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["identifiers"][0]["scripts"] == ["Latin"]
+        assert content["result"]["identifiers"][1]["scripts"] == ["Cyrillic", "Latin"]
+        assert content["result"]["identifiers"][1]["has_confusables"] is True
+        assert len(content["result"]["collisions"]) > 0
+        assert any(c["kind"] == "confusable" for c in content["result"]["collisions"])
+
+    def test_normalization_collision(self):
+        import unicodedata
+        nfc = unicodedata.normalize("NFC", "cafe\u0301")
+        nfd = unicodedata.normalize("NFD", "cafe\u0301")
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2024,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_inspect",
+                "arguments": {"identifiers": [nfc, nfd], "normalization": "NFC"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+
+    def test_casefold_collision(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2025,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_inspect",
+                "arguments": {"identifiers": ["Foo", "foo"], "casefold": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert len(content["result"]["collisions"]) > 0
+        assert any(c["kind"] == "casefold" for c in content["result"]["collisions"])
+
+    def test_invalid_language(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2026,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_inspect",
+                "arguments": {"identifiers": ["test"], "language": "invalid"},
+            },
+        })
+        assert "error" in response
+
+    def test_confusable_collision(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2027,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_inspect",
+                "arguments": {"identifiers": ["paypal", "pаypal"], "check_confusables": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        confusable_collisions = [c for c in content["result"]["collisions"] if c["kind"] == "confusable"]
+        assert len(confusable_collisions) > 0
+
+
+class TestTextWindow:
+    """Test text_window tool."""
+
+    def test_codepoint_index_basic(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2000,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {"text": "hello\nworld", "position": {"kind": "codepoint_index", "value": 3}},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["position"]["codepoint_index"] == 3
+        assert content["result"]["position"]["line"] == 1
+        assert content["result"]["position"]["column"] == 4
+
+    def test_byte_offset_basic(self):
+        text = "hello"
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2001,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {"text": text, "position": {"kind": "byte_offset", "value": 2}},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["position"]["byte_offset"] == 2
+
+    def test_line_column_basic(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2002,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {"text": "line1\nline2\nline3", "position": {"kind": "line_column", "line": 2, "column": 3}},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["position"]["line"] == 2
+        assert content["result"]["position"]["column"] == 3
+
+    def test_context_lines(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2003,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {"text": "line1\nline2\nline3\nline4\nline5", "position": {"kind": "line_column", "line": 3, "column": 2}, "context_lines": 1},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert len(content["result"]["before"]) == 1
+        assert len(content["result"]["after"]) == 1
+        assert content["result"]["before"][0]["line"] == 2
+        assert content["result"]["after"][0]["line"] == 4
+
+    def test_at_codepoint_info(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2004,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {"text": "hello", "position": {"kind": "codepoint_index", "value": 0}},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["at_codepoint"]["char"] == "h"
+        assert content["result"]["at_codepoint"]["category"] == "Ll"
+
+    def test_newline_style_crlf(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2005,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {"text": "line1\r\nline2", "position": {"kind": "line_column", "line": 1, "column": 1}},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["newline_style"] == "CRLF"
+
+    def test_invalid_byte_offset_in_multibyte(self):
+        text = "é"
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2006,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {"text": text, "position": {"kind": "byte_offset", "value": 1}},
+            },
+        })
+        assert "error" in response
+        content = response["error"]["data"]
+        assert content["ok"] is False
+
+    def test_grapheme_index_emoji(self):
+        text = "a👍b"
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2007,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {"text": text, "position": {"kind": "grapheme_index", "value": 2}},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["position"]["grapheme_index"] == 2
+
+
+class TestJsonCanonicalize:
+    """Test json_canonicalize tool."""
+
+    def test_basic_object(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2100,
+            "method": "tools/call",
+            "params": {
+                "name": "json_canonicalize",
+                "arguments": {"text": '{"b": 2, "a": 1}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert '"a": 1' in content["result"]["canonical"]
+        assert content["result"]["top_level_type"] == "object"
+        assert content["result"]["top_level_keys"] == ["b", "a"]
+
+    def test_minified_output(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2101,
+            "method": "tools/call",
+            "params": {
+                "name": "json_canonicalize",
+                "arguments": {"text": '{"a": 1, "b": 2}', "sort_keys": False},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["minified"] == '{"a":1,"b":2}'
+
+    def test_sha256_hash(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2102,
+            "method": "tools/call",
+            "params": {
+                "name": "json_canonicalize",
+                "arguments": {"text": '{"a": 1}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["sha256"] is not None
+        assert len(content["result"]["sha256"]) == 64
+
+    def test_duplicate_keys_detected(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2103,
+            "method": "tools/call",
+            "params": {
+                "name": "json_canonicalize",
+                "arguments": {"text": '{"a": 1, "a": 2}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert "a" in content["result"]["duplicate_keys"]
+
+    def test_invalid_json(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2104,
+            "method": "tools/call",
+            "params": {
+                "name": "json_canonicalize",
+                "arguments": {"text": '{"invalid": json}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+        assert content["result"]["error"] is not None
+
+    def test_ensure_ascii(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2105,
+            "method": "tools/call",
+            "params": {
+                "name": "json_canonicalize",
+                "arguments": {"text": '{"emoji": "🎉"}', "ensure_ascii": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "\\u" in content["result"]["canonical"]
+
+    def test_indent_output(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2106,
+            "method": "tools/call",
+            "params": {
+                "name": "json_canonicalize",
+                "arguments": {"text": '{"a": 1}', "indent": 2},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "  " in content["result"]["canonical"]
+
+    def test_array_input(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2107,
+            "method": "tools/call",
+            "params": {
+                "name": "json_canonicalize",
+                "arguments": {"text": '[3, 1, 2]'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["top_level_type"] == "array"
+
+    def test_trailing_newline(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2108,
+            "method": "tools/call",
+            "params": {
+                "name": "json_canonicalize",
+                "arguments": {"text": '{"a": 1}', "trailing_newline": True},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["canonical"].endswith("\n")
+
+
+class TestJsonQuery:
+    """Test json_query tool."""
+
+    def test_root_pointer(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2200,
+            "method": "tools/call",
+            "params": {
+                "name": "json_query",
+                "arguments": {"text": '{"foo": "bar"}', "pointer": ""},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["type"] == "object"
+
+    def test_object_key(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2201,
+            "method": "tools/call",
+            "params": {
+                "name": "json_query",
+                "arguments": {"text": '{"foo": "bar", "baz": 123}', "pointer": "/foo"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["type"] == "string"
+        assert content["result"]["value"] == "bar"
+
+    def test_array_index(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2202,
+            "method": "tools/call",
+            "params": {
+                "name": "json_query",
+                "arguments": {"text": '{"items": [10, 20, 30]}', "pointer": "/items/1"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["type"] == "number"
+        assert content["result"]["value"] == 20
+
+    def test_escaped_tilde0(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2203,
+            "method": "tools/call",
+            "params": {
+                "name": "json_query",
+                "arguments": {"text": '{"a~b": "tilde_value"}', "pointer": "/a~0b"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["value"] == "tilde_value"
+
+    def test_escaped_slash_tilde1(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2204,
+            "method": "tools/call",
+            "params": {
+                "name": "json_query",
+                "arguments": {"text": '{"a/b": "slash_value"}', "pointer": "/a~1b"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["value"] == "slash_value"
+
+    def test_missing_key(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2205,
+            "method": "tools/call",
+            "params": {
+                "name": "json_query",
+                "arguments": {"text": '{"foo": "bar"}', "pointer": "/missing"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is False
+        assert content["result"]["reason"] == "key_not_found"
+
+    def test_index_out_of_range(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2206,
+            "method": "tools/call",
+            "params": {
+                "name": "json_query",
+                "arguments": {"text": '{"items": [1, 2]}', "pointer": "/items/10"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is False
+        assert content["result"]["reason"] == "index_out_of_range"
+
+    def test_invalid_pointer_syntax(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2207,
+            "method": "tools/call",
+            "params": {
+                "name": "json_query",
+                "arguments": {"text": '{"items": [1, 2]}', "pointer": "/items/abc"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is False
+        assert content["result"]["reason"] == "invalid_pointer_syntax"
+
+    def test_invalid_json(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2208,
+            "method": "tools/call",
+            "params": {
+                "name": "json_query",
+                "arguments": {"text": '{"invalid": json}'},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is False
+        assert content["result"]["reason"] == "invalid_json"
+
+    def test_nested_path(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2209,
+            "method": "tools/call",
+            "params": {
+                "name": "json_query",
+                "arguments": {"text": '{"a": {"b": {"c": 42}}}', "pointer": "/a/b/c"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["found"] is True
+        assert content["result"]["value"] == 42

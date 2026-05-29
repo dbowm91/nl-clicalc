@@ -417,29 +417,23 @@ def truncate_to_grapheme(s: str, max_graphemes: int) -> str:
         grapheme_count += 1
         i += 1  # Move past base character
 
-        # Process all Extend characters and ZWJ sequences
         while i < n:
             cp = ord(s[i])
 
-            # GB9: Extend characters
             if _is_extend_char(s[i]):
                 result.append(s[i])
                 i += 1
                 continue
 
-            # GB11: Emoji ZWJ sequences
-            if cp == 0x200D:  # ZWJ
+            if cp == 0x200D:
                 result.append(s[i])
-                i += 1  # Skip ZWJ
-                # If next is pictographic, consume it as part of this grapheme
+                i += 1
                 if i < n and _is_extended_pictographic(s[i]):
                     result.append(s[i])
                     i += 1
-                    # Continue checking for more extends/ZWJ
                     continue
                 break
 
-            # GB12/GB13: Regional Indicator pairs for flags
             if 0x1F1E6 <= cp <= 0x1F1FF:
                 if i + 1 < n and 0x1F1E6 <= ord(s[i + 1]) <= 0x1F1FF:
                     result.append(s[i])
@@ -450,7 +444,259 @@ def truncate_to_grapheme(s: str, max_graphemes: int) -> str:
                 i += 1
                 continue
 
-            # Not extend or ZWJ or RI, break to start next grapheme
             break
 
     return "".join(result)
+
+
+def byte_offset_to_codepoint_index(s: str, byte_offset: int) -> int:
+    """Convert a UTF-8 byte offset to a codepoint index.
+
+    Args:
+        s: Input string.
+        byte_offset: UTF-8 byte offset (0-based).
+
+    Returns:
+        Codepoint index (0-based).
+
+    Raises:
+        ValueError: If byte_offset is inside a multi-byte character.
+    """
+    encoded = s.encode("utf-8")
+    if byte_offset < 0 or byte_offset > len(encoded):
+        raise ValueError(f"Byte offset {byte_offset} out of range (0-{len(encoded)})")
+
+    if byte_offset == len(encoded):
+        return len(s)
+
+    decoded_pos = 0
+    byte_pos = 0
+    while byte_pos < byte_offset:
+        if byte_pos >= len(encoded):
+            break
+        b = encoded[byte_pos]
+        if b < 0x80:
+            byte_pos += 1
+        elif b < 0xE0:
+            if byte_pos + 1 >= len(encoded):
+                raise ValueError(f"Byte offset {byte_offset} falls inside multi-byte character")
+            byte_pos += 2
+        elif b < 0xF0:
+            if byte_pos + 2 >= len(encoded):
+                raise ValueError(f"Byte offset {byte_offset} falls inside multi-byte character")
+            byte_pos += 3
+        else:
+            if byte_pos + 3 >= len(encoded):
+                raise ValueError(f"Byte offset {byte_offset} falls inside multi-byte character")
+            byte_pos += 4
+        decoded_pos += 1
+
+    if byte_pos != byte_offset:
+        raise ValueError(f"Byte offset {byte_offset} falls inside multi-byte character")
+
+    return decoded_pos
+
+
+def codepoint_index_to_byte_offset(s: str, codepoint_index: int) -> int:
+    """Convert a codepoint index to a UTF-8 byte offset.
+
+    Args:
+        s: Input string.
+        codepoint_index: Codepoint index (0-based).
+
+    Returns:
+        UTF-8 byte offset (0-based).
+
+    Raises:
+        ValueError: If codepoint_index is out of range.
+    """
+    if codepoint_index < 0 or codepoint_index > len(s):
+        raise ValueError(f"Codepoint index {codepoint_index} out of range (0-{len(s)})")
+
+    encoded = s.encode("utf-8")
+    decoded_pos = 0
+    byte_pos = 0
+    for char in s:
+        if decoded_pos >= codepoint_index:
+            break
+        char_bytes = len(char.encode("utf-8"))
+        byte_pos += char_bytes
+        decoded_pos += 1
+
+    return byte_pos
+
+
+def codepoint_index_to_line_column(s: str, codepoint_index: int, line_base: int = 1, column_base: int = 1) -> tuple[int, int]:
+    """Convert a codepoint index to line and column (1-based by default).
+
+    Args:
+        s: Input string.
+        codepoint_index: Codepoint index (0-based).
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+        column_base: Base for column numbers (1 for 1-based, 0 for 0-based).
+
+    Returns:
+        Tuple of (line, column), both integers according to bases.
+
+    Raises:
+        ValueError: If codepoint_index is out of range.
+    """
+    if codepoint_index < 0 or codepoint_index > len(s):
+        raise ValueError(f"Codepoint index {codepoint_index} out of range (0-{len(s)})")
+
+    line = line_base
+    column = column_base
+
+    for i in range(codepoint_index):
+        if s[i] == "\n":
+            line += 1
+            column = column_base
+        else:
+            column += 1
+
+    return line, column
+
+
+def line_column_to_codepoint_index(s: str, line: int, column: int, line_base: int = 1, column_base: int = 1) -> int:
+    """Convert line and column to a codepoint index.
+
+    Args:
+        s: Input string.
+        line: Line number (1-based by default).
+        column: Column number (1-based by default).
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+        column_base: Base for column numbers (1 for 1-based, 0 for 0-based).
+
+    Returns:
+        Codepoint index (0-based).
+
+    Raises:
+        ValueError: If line or column is out of range.
+    """
+    target_line = line + (line_base - 1)
+    target_column = column + (column_base - 1)
+
+    current_line = 1
+    current_column = 1
+    codepoint_index = 0
+
+    for i, char in enumerate(s):
+        if current_line == target_line:
+            if current_column == target_column:
+                return i
+            if current_column > target_column:
+                raise ValueError(f"Column {column} out of range for line {line}")
+        elif current_line > target_line:
+            raise ValueError(f"Line {line} out of range ({current_line} lines in text)")
+
+        if char == "\n":
+            current_line += 1
+            current_column = 1
+        else:
+            current_column += 1
+
+    if current_line < target_line:
+        raise ValueError(f"Line {line} out of range ({current_line - 1} lines in text)")
+    if current_line == target_line and current_column < target_column:
+        raise ValueError(f"Column {column} out of range for line {line}")
+
+    return len(s)
+
+
+def get_line_text(s: str, line: int, line_base: int = 1) -> str:
+    """Extract the text of a specific line.
+
+    Args:
+        s: Input string.
+        line: Line number (1-based by default).
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+
+    Returns:
+        The text of the line (without newline), or empty string if line doesn't exist.
+    """
+    target_line = line + (line_base - 1)
+    current_line = 1
+    start = 0
+    i = 0
+
+    while i < len(s):
+        if current_line == target_line:
+            start = i
+            break
+        if s[i] == "\n":
+            current_line += 1
+        i += 1
+
+    if current_line < target_line:
+        return ""
+
+    end = start
+    while end < len(s) and s[end] != "\n":
+        end += 1
+
+    return s[start:end]
+
+
+def get_surrounding_lines(s: str, line: int, context_lines: int, line_base: int = 1) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
+    """Get lines before and after a given line.
+
+    Args:
+        s: Input string.
+        line: Target line number (1-based by default).
+        context_lines: Number of context lines to return.
+        line_base: Base for line numbers (1 for 1-based, 0 for 0-based).
+
+    Returns:
+        Tuple of (before_lines, after_lines), each a list of (line_number, text) tuples.
+    """
+    target_line = line + (line_base - 1)
+
+    lines_data: list[tuple[int, str]] = []
+    current_line = 1
+    line_start = 0
+
+    for i, char in enumerate(s):
+        if char == "\n":
+            lines_data.append((current_line, s[line_start:i]))
+            line_start = i + 1
+            current_line += 1
+
+    if line_start < len(s):
+        lines_data.append((current_line, s[line_start:]))
+
+    before: list[tuple[int, str]] = []
+    after: list[tuple[int, str]] = []
+
+    for ln, text in lines_data:
+        if ln < target_line:
+            if ln >= target_line - context_lines:
+                before.append((ln, text))
+        elif ln > target_line:
+            if ln <= target_line + context_lines:
+                after.append((ln, text))
+
+    return before, after
+
+
+def detect_newline_style(s: str) -> str:
+    """Detect the newline style of a string.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        "CRLF", "LF", "CR", or "mixed" if multiple styles found.
+    """
+    has_crlf = "\r\n" in s
+    has_lf = "\n" in s and not has_crlf
+    has_cr = "\r" in s and not has_crlf and not has_lf
+
+    if has_crlf and (has_lf or has_cr):
+        return "mixed"
+    if has_crlf:
+        return "CRLF"
+    if has_lf:
+        return "LF"
+    if has_cr:
+        return "CR"
+    return "LF"

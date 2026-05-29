@@ -672,9 +672,9 @@ class TestSynthesis:
         assert result["same_unordered"] is True
 
     def test_list_compare_near_matches(self):
-        result = list_compare(["Hello"], ["hello"], ignore_order=True)
+        result = list_compare(["Hello"], ["hello"], ignore_order=True, include_near_matches=True, near_match_threshold=2)
         assert len(result["near_matches"]) == 1
-        assert result["near_matches"][0]["classification"] == "case_only"
+        assert result["near_matches"][0]["classification"] == "fuzzy"
 
     def test_list_compare_duplicates(self):
         result = list_compare(["a", "a", "b"], ["a", "b", "b"])
