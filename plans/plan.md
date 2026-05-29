@@ -3,29 +3,33 @@
 ## Status: COMPLETED (2026-05-29)
 
 All 35 items from the original plan have been verified and implemented.
-All 8 deferred items (D1, D4, D5, D6, D7, D8) have been implemented.
+All 10 deferred items (D1, D2, D4, D5, D6, D7, D8) have been implemented.
 See git history for the detailed implementation.
 
 ---
 
-## Deferred Items (Design Review Needed)
+## Deferred Items
 
-These items were deferred during the implementation for design review:
-
-| Item | Description | Reason |
+| Item | Description | Status |
 |------|-------------|--------|
-| D2 | Type stubs | Could add more specific type annotations |
-| D3 | `load_user_config_extended` | Not exported by design |
+| D3 | `load_user_config_extended` | Not exported by design - thread-safety concerns |
 
 ---
 
-## Implementation Notes (2026-05-29)
+## Implementation Summary
 
-### Deferred items now implemented:
+### Original 35 Items - All Completed
+
+### Deferred Items - Implementation Complete:
 
 **D1: Return type consistency** - `evaluator.py:1181-1184`
 - Binary operations now return plain types (int/float) for dimensionless results
 - `evaluate("5 + 3")` returns `int 8` instead of `UnitValue(8, None)`
+
+**D2: Type stubs** - Implemented 2026-05-29
+- `normalize.py`: Added return types to `is_real()`, `is_compound_real()`, type annotation to `current_number_seq`
+- `evaluator.py`: Added return types to `_eval()` functions, `_polar()` return type, `factors` type
+- `units.py`: Added `Numeric` type alias, updated dunder methods to use `Numeric` instead of `Any`
 
 **D4/D5: Confusables metadata and reproducibility** - `scripts/generate_confusables.py`
 - Added `get_confusables_url()` for version-pinned downloads
