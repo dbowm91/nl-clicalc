@@ -106,7 +106,7 @@ Located in `nl_calc/mcp/` - Model Context Protocol server for AI agent tool acce
 - New tests must use the correct API:
   - For NL/unit functionality → use `run()` or test through CLI
   - For pure math expressions → use `evaluate()`
-- 629 tests currently pass (as of last run)
+- 631 tests currently pass (as of last run)
 
 ### Code Style
 - Follow existing patterns in the codebase
@@ -258,13 +258,20 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - `_classify_difference()` lines 337-338 - Branch IS reachable when NFC-equal strings have different byte representations after casefold (precomposed vs decomposed forms)
 - `_handle_negative_token()` - Bounds checking and regex guard prevent IndexError
 
-**Current Bugs - See plans/plan.md:**
-The current implementation plan with all bugs is at `plans/plan.md`. Active bugs include:
-- normalize.py double-minus concatenation bug (line 762-763)
-- mcp/tools.py list_units not exported (line 324)
-- normalize.py int regex patterns with erroneous `|` (lines 367, 369)
-- mcp/tools.py duplicate _VALID_TRANSFORM_OPERATIONS (lines 839, 1337)
-- units.py __eq__ returns NotImplemented for different units (lines 48-53)
+**All bugs from plan.md - FIXED (2026-05-29):**
+- normalize.py double-minus concatenation bug
+- mcp/tools.py list_units import issue
+- normalize.py int regex patterns with erroneous `|`
+- mcp/tools.py duplicate _VALID_TRANSFORM_OPERATIONS
+- units.py __eq__ returns False for different units (already fixed)
+- text_window undefined n variable
+- count_chars field inconsistency
+- ErrorEnvelope missing fields
+- normalize_expression return type documented
+- ln alias missing in evaluator
+- evaluate_async/evaluate_cached now documented
+
+All 35 items in plans/plan.md completed. See plan for details.
 
 ## Constants in Code (noted)
 - `g` / `standardgravity` = 9.80665 at evaluator.py:875-876
