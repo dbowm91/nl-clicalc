@@ -6,7 +6,7 @@ nl-clicalc includes an MCP (Model Context Protocol) server that exposes text ana
 
 The Model Context Protocol is a JSON-RPC 2.0 based protocol for exposing tools to AI agents. The calc MCP server provides:
 
-- **53 deterministic tools** for AI agent workflows
+- **59 deterministic tools** for AI agent workflows
 - **Deterministic results** - same input always produces same output
 - **No external dependencies** - pure Python standard library
 - **stdio-based communication** - operates over stdin/stdout
@@ -2048,6 +2048,48 @@ Apply a named text canonicalization profile. Profiles provide a single call to s
 {"name": "canonicalize_text", "arguments": {"text": "HELLO", "profile": "identifier_compare"}}
 // Returns: {"ok": true, "result": {"text": "hello", "changed": true, "operations_applied": ["casefold"], "fingerprint_before": "...", "fingerprint_after": "..."}}
 ```
+
+---
+
+### prompt_input_inspect
+
+Surface hidden or misleading content in user-pasted input, docs, or prompt-like text. Deterministic scanner for red flags that may influence agents or humans unexpectedly.
+
+**Arguments:**
+- `text` (string): Input text to inspect
+- `checks` (array, optional): List of checks to perform. Defaults to all checks. Options: `unicode_hidden`, `bidi`, `html_comments`, `markdown_links`, `ansi_escapes`, `terminal_controls`, `base64_like_blobs`, `instruction_phrases`, `long_minified_lines`
+- `phrase_patterns` (array, optional): Custom literal strings or safe regexes to flag as suspicious instruction phrases
+
+**Tier:** 2
+**Tags:** `text`, `security`, `inspection`, `prompt`, `hidden`
+
+**Returns:**
+- `ok`: Whether inspection succeeded
+- `summary`: Human-readable summary of findings
+- `risk_score`: Simple deterministic score (0-100, higher is riskier)
+- `findings`: Array of FindingInfo with code, severity, message, span (byte/char/line positions), and details
+- `recommended_next_tool`: Suggested follow-up tool based on findings
+
+**Checks performed:**
+| Check | What it detects |
+|-------|----------------|
+| `unicode_hidden` | Zero-width chars, BOM, invisible format chars |
+| `bidi` | Bidirectional control characters |
+| `html_comments` | HTML/XML comments that may hide content |
+| `markdown_links` | Links where visible text differs from href |
+| `ansi_escapes` | ANSI escape sequences (colors, cursor movement) |
+| `terminal_controls` | Terminal control sequences |
+| `base64_like_blobs` | Base64-encoded content >100 chars |
+| `instruction_phrases` | Phrases like "disregard", "ignore previous" |
+| `long_minified_lines` | Lines >500 chars that may hide content |
+
+**Example:**
+```json
+{"name": "prompt_input_inspect", "arguments": {"text": "Hello <!-- hidden --> world", "checks": ["html_comments"]}}
+// Returns: {"ok": true, "summary": "1 finding", "risk_score": 25, "findings": [{"code": "HTML_COMMENT", "severity": "warn", "message": "HTML comment found", "span": {"byte_start": 6, "byte_end": 23, "line": 1}}]}
+```
+
+**Note:** This is deterministic inspection, not semantic classification. It reports observable features only, not intent.
 
 ---
 
