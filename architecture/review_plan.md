@@ -1,22 +1,13 @@
 # Architecture Review Plan
 
-## Status: COMPLETE (2026-05-29)
+## Overview
 
-All 15 architecture reviews completed. Review outputs consolidated into `plans/plan.md`.
+This plan orchestrates a systematic, in-depth review of all architecture documentation modules in the `architecture/` directory. The goal is to verify documentation accuracy against code, identify bugs, and surface improvement opportunities without prescribing direct code changes.
 
-This plan orchestrates a systematic review of all architecture documentation modules in the `architecture/` directory. Each module document will be reviewed by a dedicated subagent who will:
+## Architecture Modules (15 total, excluding `review_plan.md`)
 
-1. Read the architecture document
-2. Verify all claims against the actual code
-3. Interrogate the code for bugs, improvements, and inconsistencies
-4. Write findings to `plans/<module>_review.md` at the repository root
-
-## Architecture Modules to Review
-
-The following architecture documents (15 total) will be reviewed, excluding `review_plan.md`:
-
-| Module | Document | Code Location |
-|--------|----------|---------------|
+| Module | Document | Primary Code Location |
+|--------|----------|----------------------|
 | API | `api.md` | `eggcalc/__init__.py`, `eggcalc/evaluator.py` |
 | CLI | `cli.md` | `eggcalc/__main__.py` |
 | Confusables | `confusables.md` | `eggcalc/exact/confusables.py` |
@@ -33,136 +24,138 @@ The following architecture documents (15 total) will be reviewed, excluding `rev
 | Units | `units.md` | `eggcalc/units.py` |
 | Validate | `validate.md` | `eggcalc/exact/validate.py` |
 
-## Subagent Tasks
+## Review Methodology
 
-Each subagent will perform the following steps for their assigned module:
+Each subagent will follow this methodology for their assigned module:
 
-### Step 1: Read Architecture Document
-- Read the corresponding `.md` file in `architecture/`
-- Note all claims about code structure, functions, constants, and behaviors
+### Phase 1: Document Analysis
+- Read the architecture document thoroughly
+- Extract all claims about code structure, functions, constants, behaviors, and relationships
+- Note any architectural decisions or design patterns described
 
-### Step 2: Locate Source Code
-- Map document claims to actual source files
-- Identify the relevant code module(s) to verify
+### Phase 2: Code Verification
+- Locate the corresponding source code(s)
+- Map each document claim to the actual implementation
+- Mark each claim as: **VERIFIED**, **MISMATCH**, or **MISSING**
+- Document any discrepancies between documentation and code
 
-### Step 3: Verify Claims Against Code
-For each claim in the document:
-- Find the corresponding code
-- Verify accuracy (MATCHES / MISMATCH / MISSING)
-- Document any discrepancies
+### Phase 3: Bug Interrogation
+- Scan for edge cases not handled
+- Identify potential exception sources (IndexError, KeyError, TypeError, etc.)
+- Verify error handling completeness
+- Check for thread-safety concerns where applicable
+- Look for input validation gaps
 
-### Step 4: Interrogate for Bugs
-- Check for edge cases not handled
-- Look for potential IndexError, KeyError, TypeError sources
-- Verify error handling is complete
-- Check for race conditions or thread-safety issues
+### Phase 4: Improvement Surface
+- Identify code complexity that could be reduced
+- Note missing or inadequate validation
+- Flag performance concerns
+- Check for consistency issues across the module
+- Surface technical debt observations
 
-### Step 5: Identify Improvements
-- Look for code that could be simplified
-- Identify missing validation
-- Note performance concerns
-- Check for consistency issues
+### Phase 5: Output Generation
+- Write findings to `plans/<module>_review.md` at repository root
+- Structure output to highlight verified claims, discrepancies, bugs, and improvements
+- Do NOT prescribe specific code changes; describe observations and their significance
 
-### Step 6: Write Review Output
-Write a `<module>_review.md` file to `plans/` at repository root with:
-- Verified claims (with MATCHES/MISMATCH status)
-- Discrepancies found
-- Bugs identified
-- Improvements suggested
-- Priority classification for each item
+## Subagent Dispatch
+
+Subagents will be dispatched in 4 groups, with parallel execution within each group:
+
+### Group 1: Independent Core Modules
+- `api` → Review `api.md` → Write to `plans/api_review.md`
+- `cli` → Review `cli.md` → Write to `plans/cli_review.md`
+- `validate` → Review `validate.md` → Write to `plans/validate_review.md`
+
+### Group 2: Exact/ Submodules
+- `primitives` → Review `primitives.md` → Write to `plans/primitives_review.md`
+- `confusables` → Review `confusables.md` → Write to `plans/confusables_review.md`
+- `unicode_tools` → Review `unicode_tools.md` → Write to `plans/unicode_tools_review.md`
+- `measure` → Review `measure.md` → Write to `plans/measure_review.md`
+- `diff` → Review `diff.md` → Write to `plans/diff_review.md`
+- `synthesis` → Review `synthesis.md` → Write to `plans/synthesis_review.md`
+
+### Group 3: Primary Calculation Modules
+- `normalize` → Review `normalize.md` → Write to `plans/normalize_review.md`
+- `evaluator` → Review `evaluator.md` → Write to `plans/evaluator_review.md`
+- `units` → Review `units.md` → Write to `plans/units_review.md`
+
+### Group 4: Meta and Integration Modules
+- `mcp` → Review `mcp.md` → Write to `plans/mcp_review.md`
+- `overview` → Review `overview.md` → Write to `plans/overview_review.md`
+- `exact` → Review `exact.md` → Write to `plans/exact_review.md`
 
 ## Review Output Format
 
-Each subagent should output a file named `plans/<module>_review.md`:
+Each subagent will write a structured review to `plans/<module>_review.md`:
 
 ```markdown
 # <Module> Architecture Review
 
+## Document:<module>.md
+
 ## Verified Claims
-1. [Claim description] - MATCHES/MISMATCH
-   - Evidence: [file:line]
+| Claim | Status | Evidence |
+|-------|--------|----------|
+| [Description] | VERIFIED/MISMATCH/MISSING | [file:line] |
 
 ## Discrepancies
-1. [Description of mismatch]
-   - Doc says: [what doc claims]
-   - Code has: [what code actually does]
+1. **[MISMATCH/MISSING]**: [Description]
+   - Document states: [what doc claims]
+   - Code actually: [what code does]
 
-## Bugs Found
-1. [Bug description]
-   - Location: [file:line]
-   - Severity: [High/Medium/Low]
+## Bugs Identified
+| Bug | Location | Severity | Description |
+|-----|----------|----------|-------------|
+| [Name] | [file:line] | High/Medium/Low | [Description] |
 
-## Improvements
-1. [Improvement suggestion]
-   - Priority: [High/Medium/Low]
+## Improvements Surface
+| Area | Priority | Description |
+|------|----------|-------------|
+| [Category] | High/Medium/Low | [Observation] |
 
-## Priority Summary
-- High: [list]
-- Medium: [list]
-- Low: [list]
+## Notes
+[Any additional observations, context, or recommendations]
 ```
-
-## Dispatch Order
-
-Subagents will be dispatched in the following order (grouped for parallel execution):
-
-**Group 1 (Independent modules):**
-- `api` → Review api.md
-- `cli` → Review cli.md
-- `validate` → Review validate.md
-
-**Group 2 (Exact/ submodules):**
-- `primitives` → Review primitives.md
-- `confusables` → Review confusables.md
-- `unicode_tools` → Review unicode_tools.md
-- `measure` → Review measure.md
-- `diff` → Review diff.md
-- `synthesis` → Review synthesis.md
-
-**Group 3 (Core modules):**
-- `normalize` → Review normalize.md
-- `evaluator` → Review evaluator.md
-- `units` → Review units.md
-
-**Group 4 (Meta modules):**
-- `mcp` → Review mcp.md
-- `overview` → Review overview.md
-- `exact` → Review exact.md
 
 ## Stale Item Detection
 
-After all reviews complete, the orchestrator will:
+After all subagent reviews complete, the orchestrator will:
 
-1. Compare `architecture/plans/` contents against the new `plans/` directory
-2. Identify stale review files (those in `architecture/plans/` that are older or superseded)
-3. Remove `architecture/plans/` stale items (these are outdated review artifacts)
+1. **Scan `architecture/` for stale content**:
+   - Check for module files that no longer correspond to actual code
+   - Identify documentation that describes removed or renamed modules
+   - Flag files with outdated architectural descriptions
 
-Files to evaluate for removal:
-- `architecture/plans/api_review.md`
-- `architecture/plans/cli_review.md`
-- `architecture/plans/confusables_review.md`
-- `architecture/plans/diff_review.md`
-- `architecture/plans/evaluator_review.md`
-- `architecture/plans/exact_review.md`
-- `architecture/plans/mcp_server_review.md`
-- `architecture/plans/measure_review.md`
-- `architecture/plans/normalize_review.md`
-- `architecture/plans/overview_review.md`
-- `architecture/plans/primitives_review.md`
-- `architecture/plans/synthesis_review.md`
-- `architecture/plans/unicode_tools_review.md`
-- `architecture/plans/units_review.md`
-- `architecture/plans/validate_review.md`
+2. **Scan `plans/` for stale review files**:
+   - Identify review outputs from prior runs that are now superseded
+   - Note any orphaned improvement files no longer referenced
 
-## Execution
+3. **Report findings**:
+   - List stale architecture files recommended for removal
+   - List stale review files recommended for removal
+   - Do NOT remove automatically; surface for human review
 
-After writing this plan:
-1. Dispatch all Group 1 subagents in parallel
-2. Wait for completion, then dispatch Group 2 (6 agents)
-3. Wait for completion, then dispatch Group 3 (3 agents)
-4. Wait for completion, then dispatch Group 4 (3 agents)
-5. Detect and remove stale items from `architecture/plans/`
-6. Commit this plan and all review outputs to main
+## Execution Order
+
+1. Write this plan to `architecture/review_plan.md`
+2. Dispatch Group 1 subagents (3 agents, parallel)
+3. Wait for Group 1 completion
+4. Dispatch Group 2 subagents (6 agents, parallel)
+5. Wait for Group 2 completion
+6. Dispatch Group 3 subagents (3 agents, parallel)
+7. Wait for Group 3 completion
+8. Dispatch Group 4 subagents (3 agents, parallel)
+9. Wait for Group 4 completion
+10. Perform stale item detection
+11. Report stale items found
+12. Commit plan and all review outputs to main
+
+## Subagent Instructions Template
+
+Each subagent receives this instruction pattern:
+
+> Review the architecture document at `architecture/<module>.md` and the corresponding code. Verify all claims in the document against the actual implementation. Identify any discrepancies, bugs, or improvement opportunities. Write a structured review to `plans/<module>_review.md` following the format specified in the parent plan. Work only within the repository at `/Users/davidbowman/projects/github/nl-clicalc/nl-clicalc`. Do not execute any code changes.
 
 ## Verification
 
@@ -171,4 +164,4 @@ After all reviews complete, run:
 python3 -m pytest tests/ -v
 ```
 
-Ensure all tests pass after any code changes identified in reviews.
+Ensure all tests pass. Review outputs inform future improvement planning but do not directly modify code.
