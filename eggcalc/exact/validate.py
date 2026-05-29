@@ -611,7 +611,8 @@ def list_sort(
         normalization: Unicode normalization form.
         casefold: Apply casefolding for sorting.
         reverse: Sort in descending order.
-        stable: If True, preserve original order for equal elements.
+        stable: Accepted for API compatibility. Python's sorted() is always stable,
+            so this parameter has no effect on the sort behavior.
 
     Returns:
         Sorted list.

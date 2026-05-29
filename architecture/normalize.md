@@ -58,7 +58,7 @@ Maps operator symbols to word variants:
     "-": ["minus", "negative"],
     "*": ["times", "multiplied by", "of"],  # "of" for "30% of 200"
     "/": ["divided by", "over", "per", "divide"],
-    "**": ["^", "raised to", "to the power of"],
+    "**": ["^", "raised to", "raised to the power", "to the power of"],
     "IN": ["in", "into"],  # Unit conversion
     "TO": ["to", "as"],
     ...
@@ -256,5 +256,7 @@ See [units.md](units.md) for unit conversion details.
 normalize.py
     ├── evaluator (EvaluationError, evaluate)
     ├── units (UnitValue, UNIT_ALIASES, is_unit, UNIT_CATEGORIES)
-    └── exact (inspect_text, count_chars, regex_test)
+    └── exact (inspect_text, count_chars, regex_test, text_replace_check,
+               line_range_extract, line_range_compare, markdown_structure,
+               shell_split, dotenv_validate, patch_apply_check)
 ```

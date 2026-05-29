@@ -57,12 +57,20 @@ UnitValue(value: float, unit: str | None = None)
 | `__repr__()` | str | Human-readable representation |
 | `__str__()` | str | String representation (same as `__repr__`) |
 | `__format__(format_spec)` | str | Formatted string with unit |
-| `__eq__(other)` | bool | Equality comparison |
+| `__eq__(other)` | bool | Equality comparison with FLOAT_EPSILON |
 | `__hash__()` | int | Hashable for use in sets/dicts |
 | `__add__ / __radd__` | UnitValue | Addition with unit conversion |
 | `__sub__ / __rsub__` | UnitValue | Subtraction with unit conversion |
 | `__mul__ / __rmul__` | UnitValue | Multiplication |
-| `__truediv__` | UnitValue | Division |
+| `__truediv__ / __rtruediv__` | UnitValue | Division |
+| `__pow__` | UnitValue | Power operation |
+| `__neg__` | UnitValue | Unary negation |
+| `__pos__` | UnitValue | Unary positive |
+| `__abs__` | UnitValue | Absolute value |
+| `__round__` | UnitValue | Rounding |
+| `__complex__` | complex | Complex conversion |
+| `__int__` | int | Integer conversion |
+| `__float__` | float | Float conversion |
 
 ### Arithmetic Operations
 
@@ -100,23 +108,25 @@ Units are organized by category (length, mass, time, etc.):
 
 | Category | Base Unit | Example Units |
 |----------|-----------|---------------|
-| Length | m | km, cm, mm, in, ft, yd, mi, ly |
+| Length | m | km, cm, mm, in, ft, yd, mi, ly, nm, μm, mi |
 | Time | s | ms, us, ns, min, h, d, wk, yr |
-| Mass | kg | g, mg, lb, oz, t |
-| Data | B | KB, MB, GB, TB, PB |
-| Volume | L | mL, gal, qt, pt, cup |
-| Pressure | Pa | kPa, bar, psi, atm |
-| Energy | J | kJ, cal, kcal, Wh, kWh, BTU, eV |
-| Power | W | kW, MW, hp |
-| Speed | m/s | km/h, mph, kn |
-| Temperature | K | C, F, R |
-| Frequency | Ry | Hz, kHz, MHz, GHz, THz |
-| Force | N | kN, dyne, lbf |
-| Voltage | V | mV, kV, μV |
-| Current | A | mA, μA |
-| Area | m2 | km2, cm2, mm2, ha, acre, ft2, sqft, in2, mi2, yd2 |
-| Angle | rad | deg, grad, arcmin, arcsec |
+| Mass | kg | g, mg, lb, oz, t, kt, Mt |
+| Data | B | KB, MB, GB, TB, PB, EB |
+| Volume | L | mL, gal, qt, pt, cup, fl oz, bbl |
+| Pressure | Pa | kPa, MPa, GPa, bar, mbar, psi, atm |
+| Energy | J | kJ, MJ, GJ, cal, kcal, Wh, kWh, BTU, eV |
+| Power | W | mW, kW, MW, GW, hp |
+| Speed | m/s | km/h, mph, kn, mach, kph, mps |
+| Temperature | K | C, F, R (uses offset-based conversion, not UNIT_BASE) |
+| Frequency | Hz | kHz, MHz, GHz, THz |
+| Force | N | mN, kN, MN, GN, dyne, lbf |
+| Voltage | V | mV, μV, kV, MV |
+| Current | A | mA, μA, kA |
+| Angle | rad | deg (grad, arcmin, arcsec not implemented) |
+| Area | m² | km², cm², mm², ha, acre, ft², sqft, in², mi², yd² |
 | Data Rate | bps | Kbps, Mbps, Gbps |
+
+**Note:** Temperature conversions use a separate offset-based mechanism via `TEMPERATURE_CONVERSIONS` rather than multiplicative factors in `UNIT_BASE`. This is a special case because temperature conversions require offset math (e.g., C = F × 5/9 - 32).
 
 ## Unit Definition Structure (UNIT_BASE)
 

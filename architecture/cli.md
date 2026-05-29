@@ -65,7 +65,7 @@ Enter interactive mode with `-i`:
 ```bash
 calc -i
 # >>> five plus two
-# 5+2 -> 7
+# 7
 # >>> quit
 ```
 
@@ -93,9 +93,11 @@ Or use -e flag:
 ### Plain (default)
 
 ```
-5+3 -> 8
-30*m+100*ft -> 60.48 m
+8
+60.48 m
 ```
+
+The CLI prints **only the result** — no echo of the input, no arrows, no extra characters.
 
 ### Quiet
 
@@ -103,6 +105,8 @@ Or use -e flag:
 8
 60.48 m
 ```
+
+Quiet mode (`-q`) suppresses expression in REPL history but produces identical output to plain mode for single expressions.
 
 ### JSON
 

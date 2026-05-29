@@ -47,53 +47,92 @@ class ErrorEnvelope(TypedDict):
     error_type: str             # Error category
     error: str                  # Error message (ASCII-safe)
     hints: list[str]           # Suggested fixes
+    tool: str | None            # Tool name that produced error
+    warnings: list[str]        # Warning messages
 ```
 
 ### TOOL_SCHEMAS
 
-Registry of all available tools (39 total):
+Registry of all available tools (56 total). Tools are organized by tier for selective exposure:
+
+#### Tier 0 — Ultra-common (minimal schema)
 
 | Tool Name | Description |
 |-----------|-------------|
 | `math_eval` | Evaluate arithmetic, unit conversions, constants |
-| `unit_convert` | Convert numeric value from one unit to another |
-| `unit_info` | Get information about a unit (canonical form, category) |
-| `constant_lookup` | Look up physical constant values and symbols |
-| `text_measure` | Measure text properties (bytes, codepoints, words, lines) |
 | `text_equal` | Compare strings with multiple equality modes |
+| `text_count` | Count characters or frequency table |
+| `text_fingerprint` | Compute deterministic SHA-256 fingerprint |
+| `validate_json` | Validate JSON syntax |
+| `path_normalize` | Normalize path using posixpath/ntpath semantics |
+
+#### Tier 1 — Default coding-agent sanity tools
+
+| Tool Name | Description |
+|-----------|-------------|
 | `text_diff_explain` | Explain string differences |
 | `text_inspect` | Inspect for hidden characters, confusables |
-| `text_count` | Count characters or frequency table |
-| `text_truncate` | Truncate to grapheme boundary |
-| `text_transform` | Apply text transformations (normalization, casefold, etc.) |
-| `text_position` | Convert between byte offsets, codepoint indices, line/column |
-| `validate_brackets` | Check balanced brackets |
-| `validate_json` | Validate JSON syntax |
-| `validate_regex` | Test regex against samples |
-| `validate_toml` | Validate TOML configuration files |
-| `list_compare` | Compare two lists |
-| `list_dedupe` | Remove duplicates from list preserving order |
-| `list_sort` | Sort list of strings |
+| `text_replace_check` | Check replacement before applying |
+| `line_range_extract` | Extract exact line ranges with fingerprints |
+| `line_range_compare` | Compare line ranges from two texts |
 | `json_compare` | Compare two JSON documents semantically |
 | `json_extract` | Extract value using RFC 6901 JSON Pointer |
 | `json_shape` | Analyze JSON structure without returning values |
-| `json_canonicalize` | Canonicalize JSON with deterministic formatting |
-| `json_query` | Query JSON using RFC 6901 JSON Pointer |
+| `validate_toml` | Validate TOML configuration files |
 | `regex_finditer` | Find all regex matches with positions |
-| `regex_safety_check` | Check regex for catastrophic backtracking risks |
-| `validate_schema_light` | Validate JSON against simple schema |
-| `path_normalize` | Normalize path using posixpath/ntpath semantics |
-| `path_analyze` | Analyze path components, extensions, hidden status |
-| `text_window` | Get window around position with context lines |
-| `text_hash` | Compute cryptographic hashes of text |
-| `text_fingerprint` | Compute deterministic SHA-256 fingerprint |
+| `regex_test` | Test regex against samples |
+| `identifier_inspect` | Inspect identifiers for validity and collisions |
+| `text_transform` | Apply text transformations (normalization, casefold, etc.) |
 | `escape_text` | Escape text for various output formats |
 | `unescape_text` | Unescape text from various formats |
+
+#### Tier 2 — Heavier analysis tools
+
+| Tool Name | Description |
+|-----------|-------------|
+| `text_measure` | Measure text properties (bytes, codepoints, words, lines) |
+| `text_truncate` | Truncate to grapheme boundary |
+| `text_position` | Convert between byte offsets, codepoint indices, line/column |
+| `text_window` | Get window around position with context lines |
+| `text_hash` | Compute cryptographic hashes of text |
+| `patch_apply_check` | Validate and simulate a unified diff against text |
+| `patch_summary` | Summarize a unified diff without applying |
+| `markdown_structure` | Parse markdown structure (headings, links, code fences) |
+| `code_fence_extract` | Extract fenced code blocks with exact ranges |
+| `identifier_table_inspect` | Analyze identifiers for collisions and suspicious near-collisions |
+| `shell_split` | Parse shell command into argv with feature detection |
+| `shell_quote_join` | Safely quote argv into shell string |
+| `argv_compare` | Compare two command strings by parsed argv |
+| `unicode_policy_check` | Apply named Unicode safety policy |
+| `canonicalize_text` | Apply canonicalization profile |
+| `dotenv_validate` | Validate .env-style key/value text |
+| `ini_validate` | Validate INI-style config |
+| `path_scope_check` | Determine if target path is lexically inside root |
+| `path_compare` | Compare paths under explicit normalization rules |
+
+#### Tier 3 — Domain-specific tools
+
+| Tool Name | Description |
+|-----------|-------------|
+| `unit_convert` | Convert numeric value from one unit to another |
+| `unit_info` | Get information about a unit (canonical form, category) |
+| `constant_lookup` | Look up physical constant values and symbols |
+| `validate_brackets` | Check balanced brackets |
+| `validate_regex` | Test regex against samples (legacy alias) |
+| `regex_safety_check` | Check regex for catastrophic backtracking risks |
+| `validate_schema_light` | Validate JSON against simple schema |
+| `json_canonicalize` | Canonicalize JSON with deterministic formatting |
+| `json_query` | Query JSON using RFC 6901 JSON Pointer |
+| `path_analyze` | Analyze path components, extensions, hidden status |
 | `identifier_analyze` | Classify and validate identifier naming conventions |
-| `identifier_inspect` | Inspect identifiers for validity and collisions |
 | `version_compare` | Compare two version strings (semver, loose) |
+| `version_constraint_check` | Check if version satisfies constraint (semver/cargo) |
 | `toml_shape` | Analyze TOML document structure |
+| `cargo_toml_inspect` | Inspect Cargo.toml structure |
 | `glob_match` | Match glob pattern against path |
+| `list_compare` | Compare two lists (ordered/set/multiset) |
+| `list_dedupe` | Remove duplicates from list preserving order |
+| `list_sort` | Sort list of strings with normalization |
 
 ### math_eval Schema
 
@@ -160,18 +199,42 @@ Wraps exact/ functions with error handling, sanitization, and response envelopes
 ### Response Helpers
 
 ```python
-def _error_response(error_type: str, error: str, hints: list[str] | None = None) -> dict:
+def _error_response(
+    error_type: str,
+    error: str,
+    hints: list[str] | None = None,
+    tool: str | None = None
+) -> dict:
     """Create standardized error envelope."""
     return ErrorEnvelope(
         ok=False,
         error_type=error_type,
         error=_sanitize_error(error),
-        hints=[_sanitize_error(h) for h in (hints or [])]
+        hints=[_sanitize_error(h) for h in (hints or [])],
+        tool=tool,
+        warnings=None
     )
 
-def _success_response(result: Any) -> dict:
+def _success_response(
+    result: Any,
+    tool: str | None = None,
+    warnings: list[str] | None = None,
+    limits_applied: list[str] | None = None,
+    findings: list[dict] | None = None,
+    machine_code: str | None = None,
+    recommended_next_tool: str | list[str] | None = None
+) -> dict:
     """Create standardized success envelope."""
-    return {"ok": True, "result": result}
+    return {
+        "ok": True,
+        "result": result,
+        "tool": tool,
+        "warnings": warnings,
+        "limits_applied": limits_applied,
+        "findings": findings,
+        "machine_code": machine_code,
+        "recommended_next_tool": recommended_next_tool
+    }
 ```
 
 ### Error Sanitization
@@ -267,45 +330,68 @@ Note: `_handle_initialize` is a separate function in `server.py` called directly
 
 ```python
 TOOL_HANDLERS: dict[str, Any] = {
+    # Tier 0
     "math_eval": math_eval,
-    "unit_convert": unit_convert,
-    "unit_info": unit_info,
-    "constant_lookup": constant_lookup,
-    "text_measure": text_measure,
     "text_equal": text_equal,
+    "text_count": text_count,
+    "text_fingerprint": text_fingerprint,
+    "validate_json": validate_json,
+    "path_normalize": path_normalize,
+    # Tier 1
     "text_diff_explain": text_diff_explain,
     "text_inspect": text_inspect,
-    "text_count": text_count,
-    "text_truncate": text_truncate,
-    "text_transform": text_transform,
-    "text_position": text_position,
-    "validate_brackets": validate_brackets,
-    "validate_json": validate_json,
-    "validate_regex": validate_regex,
-    "validate_toml": validate_toml,
-    "list_compare": list_compare,
-    "list_dedupe": list_dedupe,
-    "list_sort": list_sort,
+    "text_replace_check": text_replace_check,
+    "line_range_extract": line_range_extract,
+    "line_range_compare": line_range_compare,
     "json_compare": json_compare,
     "json_extract": json_extract,
     "json_shape": json_shape,
-    "json_canonicalize": json_canonicalize,
-    "json_query": json_query,
+    "validate_toml": validate_toml,
     "regex_finditer": regex_finditer,
-    "regex_safety_check": regex_safety_check,
-    "validate_schema_light": validate_schema_light,
-    "path_normalize": path_normalize,
-    "path_analyze": path_analyze,
-    "text_window": text_window,
-    "text_hash": text_hash,
-    "text_fingerprint": text_fingerprint,
+    "regex_test": regex_test,
+    "identifier_inspect": identifier_inspect,
+    "text_transform": text_transform,
     "escape_text": escape_text,
     "unescape_text": unescape_text,
+    # Tier 2
+    "text_measure": text_measure,
+    "text_truncate": text_truncate,
+    "text_position": text_position,
+    "text_window": text_window,
+    "text_hash": text_hash,
+    "patch_apply_check": patch_apply_check,
+    "patch_summary": patch_summary,
+    "markdown_structure": markdown_structure,
+    "code_fence_extract": code_fence_extract,
+    "identifier_table_inspect": identifier_table_inspect,
+    "shell_split": shell_split,
+    "shell_quote_join": shell_quote_join,
+    "argv_compare": argv_compare,
+    "unicode_policy_check": unicode_policy_check,
+    "canonicalize_text": canonicalize_text,
+    "dotenv_validate": dotenv_validate,
+    "ini_validate": ini_validate,
+    "path_scope_check": path_scope_check,
+    "path_compare": path_compare,
+    # Tier 3
+    "unit_convert": unit_convert,
+    "unit_info": unit_info,
+    "constant_lookup": constant_lookup,
+    "validate_brackets": validate_brackets,
+    "regex_safety_check": regex_safety_check,
+    "validate_schema_light": validate_schema_light,
+    "json_canonicalize": json_canonicalize,
+    "json_query": json_query,
+    "path_analyze": path_analyze,
     "identifier_analyze": identifier_analyze,
-    "identifier_inspect": identifier_inspect,
     "version_compare": version_compare,
+    "version_constraint_check": version_constraint_check,
     "toml_shape": toml_shape,
+    "cargo_toml_inspect": cargo_toml_inspect,
     "glob_match": glob_match,
+    "list_compare": list_compare,
+    "list_dedupe": list_dedupe,
+    "list_sort": list_sort,
 }
 ```
 
@@ -338,8 +424,24 @@ def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
     "jsonrpc": "2.0",
     "id": request_id,
     "result": {
+        "ok": True,
+        "result": <actual_result>,
+        "tool": "tool_name",           # Tool that produced result
+        "warnings": [],                # Warning messages
+        "limits_applied": [],          # Input limits that were applied
+        "findings": [],                # Structured findings/issues
+        "machine_code": None,          # Stable error/result code
+        "recommended_next_tool": None  # Suggested next tool(s)
+    }
+}
+
+# Success (transported via content wrapper)
+{
+    "jsonrpc": "2.0",
+    "id": request_id,
+    "result": {
         "content": [
-            {"type": "text", "text": json.dumps(result)}
+            {"type": "text", "text": json.dumps(<actual_result>)}
         ]
     }
 }
@@ -351,10 +453,19 @@ def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
     "error": {
         "code": -32000,
         "message": "Error description",
-        "data": error_envelope
+        "data": {
+            "ok": False,
+            "error_type": "...",
+            "error": "...",
+            "hints": [],
+            "tool": "tool_name",
+            "warnings": []
+        }
     }
 }
 ```
+
+The actual server implementation wraps success results in `{"content": [{"type": "text", "text": json.dumps(result)}]}` while the internal success response has richer metadata fields.
 
 ---
 

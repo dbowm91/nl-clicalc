@@ -143,11 +143,13 @@ User-defined variables:
 
 ### `normalize_expression(expression: str) -> tuple[str, int]`
 
-Normalize a natural language or mathematical expression into a canonical form.
+Normalize a natural language or mathematical expression into a canonical form. Returns a tuple of (normalized_expression, exit_code) where exit_code is 0 on success.
 
 ```python
-normalize_expression("five plus three")  # "5+3"
-normalize_expression("30m + 100ft")      # "30 m+100 ft"
+normalized, exit_code = normalize_expression("five plus three")
+# normalized = "5+3", exit_code = 0
+normalized, exit_code = normalize_expression("30m + 100ft")
+# normalized = "30 m+100 ft", exit_code = 0
 ```
 
 ## Utility Functions

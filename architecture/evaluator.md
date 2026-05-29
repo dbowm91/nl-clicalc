@@ -117,18 +117,48 @@ Built-in functions available in expressions:
 ### Bitwise
 - `bitand(a, b)`, `bitor(a, b)`, `bitxor(a, b)`
 - `bitnot(a)`
-- `lshift(a, b)`, `rshift(a, b)`
+- `bitlshift(a, b)`, `bitrshift(a, b)` (also available as `lshift`/`rshift` aliases)
 
 ### Random
 - `random()` — [0, 1)
 - `randint(a, b)` — [a, b]
+- `randrange(start, stop, step)` — range with step
+- `uniform(a, b)` — uniform float in [a, b]
 - `randn()` — standard normal
 - `gauss(mu, sigma)`
 - `seed(n)` — seed RNG
 
 ### Number Theory
-- `isprime(n)`, `primefactors(n)`
-- `nextprime(n)`, `prevprime(n)`
+- `isprime(n)` / `is_prime(n)` — primality test
+- `primefactors(n)` / `prime_factors(n)` — prime factorization
+- `nextprime(n)` / `next_prime(n)` — next prime
+- `prevprime(n)` / `prev_prime(n)` — previous prime
+
+### Trigonometric
+- `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
+- `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`
+
+### Logarithmic/Exponential
+- `log(x)` / `ln(x)` — natural log
+- `log10(x)` — base 10
+- `log2(x)` — base 2
+- `exp(x)` — e^x
+- `log1p(x)` — log(1+x) for small x
+- `expm1(x)` — exp(x)-1 for small x
+
+### Power/Root
+- `sqrt(x)` — square root
+- `cbrt(x)` — cube root
+- `pow(x, y)` — x^y
+
+### Other Math
+- `floor(x)` — floor
+- `ceil(x)` — ceiling
+- `trunc(x)` — truncation
+- `degrees(rad)` — radians to degrees
+- `radians(deg)` — degrees to radians
+- `hypot(x, y)` — sqrt(x² + y²)
+- `clamp(val, min, max)` — clamp value
 
 ### Format Conversion
 - `bin(x)`, `hex(x)`, `oct(x)` — to string
@@ -278,7 +308,7 @@ Functions automatically use `cmath` when:
 Webapp wrapper with caching:
 
 ```python
-from eggcalc import PyCalcApp
+from eggcalc.evaluator import PyCalcApp
 
 app = PyCalcApp(cache_size=1024, enable_cache=True)
 result = app.calculate("five plus two")

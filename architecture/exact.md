@@ -12,14 +12,22 @@ exact/
 ├── confusables.py         # Homoglyph identification (auto-generated data)
 ├── measure.py             # Text metrics (words, lines, categories)
 ├── diff.py                # String diffing algorithms
-├── validate.py            # JSON/bracket/regex validation
+├── validate.py            # JSON/bracket/regex/TOML validation, version comparison
 ├── synthesis.py           # Higher-level text analysis
 ├── glob.py                # Glob pattern matching
 ├── transform.py           # Text escaping, hashing, fingerprinting
 ├── identifier.py          # Identifier analysis
 ├── identifier_inspect.py  # Identifier inspection and collision detection
 ├── path_tools.py          # Path analysis and normalization
-└── position.py            # Text position operations
+├── position.py            # Text position operations
+├── config.py              # .env and INI validation
+├── patch.py               # Unified diff parsing and application
+├── inspect_prompt.py      # Hidden char/ANSI/instruction detection
+├── markdown.py            # Markdown structure analysis
+├── shell.py               # Shell command parsing and argv comparison
+├── unicode_policy.py      # Named Unicode safety policies
+├── cargo.py               # Cargo.toml inspection
+└── version.py             # Semver/PEP440 parsing and comparison
 ```
 
 ## exact/__init__.py — Public API
@@ -42,10 +50,10 @@ from eggcalc.exact import (
     diff_spans, longest_common_subsequence,
 
     # Validate
-    check_brackets, validate_json, validate_toml_text, validate_schema_light,
-    regex_test, regex_finditer, regex_safety_check,
-    json_extract, json_compare, json_shape, version_compare,
-    list_dedupe, list_sort,
+    check_brackets, validate_json, validate_toml_text, toml_shape,
+    validate_schema_light, regex_test, regex_finditer, regex_safety_check,
+    regex_replace_preview, json_extract, json_compare, json_shape,
+    json_canonicalize, json_query, version_compare, list_dedupe, list_sort,
 
     # Measure
     line_metrics, word_metrics, char_category_metrics,
@@ -58,16 +66,41 @@ from eggcalc.exact import (
 
     # Synthesis
     measure_text, text_equal, inspect_text, explain_diff,
-    count_chars, list_compare,
+    count_chars, list_compare, text_replace_check,
+    line_range_extract, line_range_compare, text_window,
 
     # Glob
     glob_match,
 
     # Identifier
-    identifier_analyze, identifier_inspect,
+    identifier_analyze, identifier_inspect, identifier_table_inspect,
 
     # Path
-    path_analyze, path_normalize,
+    path_analyze, path_normalize, path_compare, path_scope_check,
+
+    # Config
+    dotenv_validate, ini_validate,
+
+    # Patch
+    patch_apply_check, patch_summary,
+
+    # Inspect Prompt
+    prompt_input_inspect,
+
+    # Markdown
+    markdown_structure, code_fence_extract,
+
+    # Shell
+    shell_split, shell_quote_join, argv_compare,
+
+    # Unicode Policy
+    unicode_policy_check, canonicalize_text,
+
+    # Cargo
+    cargo_toml_inspect,
+
+    # Version
+    parse_version, check_version_constraint,
 )
 ```
 
@@ -300,16 +333,20 @@ common_prefix_suffix("abc123", "abc456")
 | `check_brackets(s)` | CheckBracketsResult | Balanced bracket check |
 | `validate_json(s)` | ValidateJsonResult | JSON syntax validation |
 | `validate_toml_text(s)` | ValidateTomlResult | TOML syntax validation |
+| `toml_shape(s)` | TomlShapeResult | Analyze TOML structure |
 | `validate_schema_light(s)` | ValidateSchemaLightResult | JSON schema lightweight validation |
 | `regex_test(pattern, samples)` | RegexTestResult | Test regex against samples |
 | `regex_finditer(pattern, text)` | RegexFindIterResult | Find all regex matches with positions |
 | `regex_safety_check(pattern)` | RegexSafetyResult | Check regex for catastrophic backtracking |
+| `regex_replace_preview(pattern, replacement, text)` | RegexReplaceResult | Preview regex replacement |
 | `json_extract(json_str, path)` | JsonExtractResult | Extract data from JSON using path |
 | `json_compare(a, b)` | JsonCompareResult | Compare two JSON documents |
 | `json_shape(s)` | JsonShapeResult | Analyze JSON structure |
-| `version_compare(v1, v2)` | int | Compare version strings (-1, 0, 1) |
+| `json_canonicalize(s)` | JsonCanonicalizeResult | Canonicalize JSON with duplicate key detection |
+| `json_query(json_str, pointer)` | JsonQueryResult | RFC 6901 JSON Pointer query |
+| `version_compare(v1, v2)` | VersionCompareResult | Compare version strings |
 | `list_dedupe(lst)` | list | Remove duplicate items preserving order |
-| `list_sort(lst, key, reverse)` | list | Sort list with stable ordering |
+| `list_sort(lst, normalization, casefold, reverse, stable)` | list | Sort list with normalization |
 
 ### CheckBracketsResult
 
@@ -348,6 +385,64 @@ RegexMatch(
 )
 ```
 
+### RegexFindIterResult
+
+```python
+RegexFindIterResult(
+    valid_pattern=bool,
+    matches=list[RegexFindIterMatch],  # index, char_start, char_end, matched_text, groups, named_groups
+    error=str | None,
+)
+```
+
+### RegexSafetyResult
+
+```python
+RegexSafetyResult(
+    is_safe=bool,
+    warnings=list[RegexSafetyFinding],  # code, message, position
+    pattern_category=str,  # "simple", "moderate", "complex", "potentially_unsafe"
+    has_backreferences=bool,
+    has_capture_counts=bool,
+)
+```
+
+### JsonExtractResult
+
+```python
+JsonExtractResult(
+    found=bool,
+    value=Any,           # The extracted value (unbounded - caution with large JSON)
+    value_type=str,      # "null", "bool", "number", "string", "array", "object"
+    preview=str,         # Truncated preview (max_output_chars limit)
+    path=str,            # The JSON pointer path used
+)
+```
+
+### JsonShapeResult
+
+```python
+JsonShapeResult(
+    parse_ok=bool,
+    type=str,           # "null", "bool", "number", "string", "array", "object"
+    top_level_keys=list[str],  # Only populated for objects
+    array_length=int | None,
+    string_length=int | None,
+    nesting_depth=int,
+    error=str | None,
+)
+```
+
+### VersionCompareResult
+
+```python
+VersionCompareResult(
+    equal=bool,
+    comparison=int,  # -1, 0, or 1
+    loose=bool,     # Whether version strings were parsed in loose mode
+)
+```
+
 ---
 
 ## synthesis.py — Higher-Level Analysis
@@ -363,7 +458,11 @@ Combines primitives into higher-level tools.
 | `inspect_text(s, ...)` | InspectTextResult | Hidden char inspection |
 | `explain_diff(a, b, ...)` | ExplainDiffResult | Detailed diff explanation |
 | `count_chars(s, ...)` | CountCharsResult | Character counting |
-| `list_compare(a, b)` | dict | Compare two lists |
+| `list_compare(a, b, ...)` | ListCompareResult | Compare two lists (ordered/set/multiset) |
+| `text_replace_check(text, old, new, ...)` | TextReplaceResult | Check replacement before applying |
+| `line_range_extract(text, start, end, ...)` | LineRangeResult | Extract exact line ranges |
+| `line_range_compare(left, right, ...)` | LineRangeCompareResult | Compare line ranges from two texts |
+| `text_window(text, position, ...)` | TextWindowResult | Get window around a position |
 
 ### MeasureTextResult
 
@@ -410,6 +509,77 @@ InspectTextResult(
 )
 ```
 
+### ListCompareResult
+
+```python
+ListCompareResult(
+    equal=bool,
+    ordered=bool,
+    left_only=list[str],
+    right_only=list[str],
+    common=list[str],
+    first_difference=dict,  # index, left, right
+    ...
+)
+```
+
+### NormalizationState TypedDict
+
+```python
+NormalizationState(
+    form=str,           # NFC, NFD, NFKC, NFKD, or "raw"
+    casefolded=bool,
+    trimmed=bool,
+)
+```
+
+### UnicodeRisks TypedDict
+
+```python
+UnicodeRisks(
+    has_zwsp=bool,      # Zero-width space
+    has_zwnj=bool,      # Zero-width non-joiner
+    has_zwj=bool,       # Zero-width joiner
+    has_bidi=bool,      # Bidirectional controls
+    has_confusables=bool,
+    mixed_scripts=bool,
+)
+```
+
+### TextReplaceResult TypedDict
+
+```python
+TextReplaceResult(
+    match_count=int,
+    unique_match=bool,
+    expected_count_met=bool,
+    would_change=bool,
+    positions=list[dict],  # byte_start, char_start, line, column
+    preview_before=str,
+    preview_after=str,
+    findings=list[dict],
+)
+```
+
+### LineRangeResult TypedDict
+
+```python
+LineRangeResult(
+    line_count_total=int,
+    start_line=int,
+    end_line=int,
+    valid_range=bool,
+    text=str,
+    byte_start=int,
+    byte_end=int,
+    char_start=int,
+    char_end=int,
+    newline_style=str,
+    ends_with_newline=bool,
+    fingerprint=str,
+)
+```
+
 ---
 
 ## confusables.py — Homoglyph Data
@@ -429,6 +599,213 @@ CONFUSABLES: dict[str, list[str]] = {
     "a": ["а", "ɑ", "α", "а"],
     ...
 }
+```
+
+---
+
+## config.py — Config File Validation
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `dotenv_validate(text)` | DotenvValidateResult | Validate .env-style key/value text |
+| `ini_validate(text)` | IniValidateResult | Validate INI-style config |
+
+### DotenvValidateResult
+
+```python
+DotenvValidateResult(
+    parse_ok=bool,
+    entries=list[DotenvEntry],  # key, value_present, quote_style, line
+    duplicates=list[dict],     # key, lines
+    invalid_lines=list[dict],   # line, error
+    requires_quoting=bool,
+    contains_expansion_syntax=bool,
+)
+```
+
+### IniValidateResult
+
+```python
+IniValidateResult(
+    parse_ok=bool,
+    sections=list[str],
+    keys_by_section=dict[str, list[str]],
+    duplicates=list[dict],     # section, key, lines
+    invalid_lines=list[dict],   # line, error
+)
+```
+
+---
+
+## patch.py — Unified Diff Parsing
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `patch_apply_check(original_text, patch_text)` | PatchApplyResult | Validate and simulate a patch |
+| `patch_summary(patch_text)` | PatchSummaryResult | Summarize a patch without applying |
+
+### PatchApplyResult
+
+```python
+PatchApplyResult(
+    patch_parse_ok=bool,
+    applies=bool,
+    hunks_total=int,
+    hunks_applied=int,
+    hunks_failed=int,
+    failed_hunks=list[dict],
+    affected_line_ranges=list[dict],
+    result_fingerprint=str,
+)
+```
+
+### PatchSummaryResult
+
+```python
+PatchSummaryResult(
+    files_changed=int,
+    hunks_total=int,
+    additions=int,
+    deletions=int,
+    binary_patch_detected=bool,
+)
+```
+
+---
+
+## inspect_prompt.py — Prompt Injection Detection
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `prompt_input_inspect(text, checks)` | PromptInspectResult | Scan for hidden prompt content |
+
+### PromptInspectResult
+
+```python
+PromptInspectResult(
+    findings=list[PromptFinding],
+    summary=str,
+    risk_level=str,  # "none", "low", "medium", "high"
+)
+```
+
+Detects: unicode hidden chars, bidi controls, HTML comments, markdown link mismatch, ANSI escapes, base64 blobs, instruction phrases.
+
+---
+
+## markdown.py — Markdown Structure Analysis
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `markdown_structure(text)` | MarkdownStructureResult | Parse markdown structure |
+| `code_fence_extract(text, language)` | CodeFenceResult | Extract fenced code blocks |
+
+### MarkdownStructureResult
+
+```python
+MarkdownStructureResult(
+    headings=list[dict],     # level, text, line, slug
+    code_fences=list[dict], # language, start_line, end_line, closed
+    links=list[dict],        # visible_text, target, line, mismatch_flags
+    html_comments=list[int], # line numbers
+    frontmatter=dict,        # present, format, line_range
+    tables_detected=int,
+)
+```
+
+---
+
+## shell.py — Shell Command Parsing
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `shell_split(command)` | ShellSplitResult | Parse shell command into argv |
+| `shell_quote_join(argv)` | ShellQuoteResult | Safely quote argv into shell string |
+| `argv_compare(left, right)` | ArgvCompareResult | Compare two command strings |
+
+### ShellSplitResult
+
+```python
+ShellSplitResult(
+    parse_ok=bool,
+    argv=list[str],
+    argc=int,
+    features=dict,  # has_pipe, has_redirection, etc.
+)
+```
+
+---
+
+## unicode_policy.py — Unicode Safety Policies
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `unicode_policy_check(text, policy)` | UnicodePolicyResult | Apply named Unicode safety policy |
+| `canonicalize_text(text, profile)` | CanonicalizeResult | Apply canonicalization profile |
+
+### Policies
+
+- `identifier_strict` — Warn on mixed scripts, bidi, zero-width, confusables
+- `filename_safe` — Control chars, path separators, bidi, zero-width
+- `source_code` — Strict for code identifiers
+- `human_text` — Less strict, primarily warnings
+
+---
+
+## cargo.py — Cargo.toml Inspection
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `cargo_toml_inspect(text)` | CargoInspectResult | Analyze Cargo.toml structure |
+
+### CargoInspectResult
+
+```python
+CargoInspectResult(
+    parse_ok=bool,
+    package=dict,       # name, version, edition, license, repository
+    workspace=dict,     # present, members, exclude
+    dependencies=dict,  # by section
+    path_dependencies=list[str],
+    suspicious_dependency_names=list[str],
+)
+```
+
+---
+
+## version.py — Semver/Version Comparison
+
+### Functions
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `parse_version(version)` | VersionInfo | Parse a version string |
+| `check_version_constraint(version, constraint, scheme)` | VersionConstraintResult | Check if version satisfies constraint |
+
+### VersionConstraintResult
+
+```python
+VersionConstraintResult(
+    satisfies=bool,
+    parsed_version=VersionInfo,
+    parsed_constraint=dict,
+    scheme=str,
+    explanation=str,
+)
 ```
 
 ---
