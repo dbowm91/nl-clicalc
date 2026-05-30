@@ -20,7 +20,7 @@ class TestProtocolHandshake:
         assert response["result"]["protocolVersion"] == "2024-11-05"
         assert "capabilities" in response["result"]
         assert "serverInfo" in response["result"]
-        assert response["result"]["serverInfo"]["name"] == "nl-calc-exact"
+        assert response["result"]["serverInfo"]["name"] == "eggsact-exact"
 
     def test_initialize_with_wrong_id_returns_error(self):
         response = handle_request({

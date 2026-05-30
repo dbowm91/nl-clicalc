@@ -1,6 +1,6 @@
 # mcp/ — Model Context Protocol Server
 
-MCP server providing AI agent tool access to nl-calc's exact text analysis functions via a stdio-based JSON-RPC interface.
+MCP server providing AI agent tool access to eggsact's exact text analysis functions via a stdio-based JSON-RPC interface.
 
 ## Module Structure
 
@@ -25,7 +25,7 @@ The MCP server exposes exact text analysis tools to AI agents. It provides:
 ## Architecture
 
 ```
-AI Agent <--JSON-RPC--> MCP Server <---> nl-calc exact tools
+AI Agent <--JSON-RPC--> MCP Server <---> eggsact exact tools
                               |
                               +-- primitives
                               +-- unicode_tools

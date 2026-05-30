@@ -1,5 +1,5 @@
 """
-Safe AST-based expression evaluator for nl-calc.
+Safe AST-based expression evaluator for eggsact.
 
 Provides a secure way to evaluate mathematical expressions without
 using the unsafe eval() function. Supports arithmetic operations,

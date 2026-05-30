@@ -99,7 +99,7 @@ When entering interactive mode, a welcome message is displayed:
 
 ```bash
 calc -i
-# nl-calc interactive mode. Type 'help' for available commands, 'quit' or 'exit' to exit.
+# eggsact interactive mode. Type 'help' for available commands, 'quit' or 'exit' to exit.
 >>> 5 + 3
 8
 >>> sin(pi/2)

@@ -1213,7 +1213,7 @@ def run(
 def _run_repl(show_expression: bool = True) -> int:
     """Run interactive REPL mode."""
 
-    print("nl-calc interactive mode. Type 'help' for available commands, 'quit' or 'exit' to exit.")
+    print("eggsact interactive mode. Type 'help' for available commands, 'quit' or 'exit' to exit.")
     print()
 
     history: list[tuple[str, Any]] = []

@@ -658,7 +658,7 @@ For untrusted input, use \fBevaluate_with_timeout()\fR from the Python API to pr
 
 .PP
 .nf
-  from egg_calc import evaluate_raw, evaluate
+  from eggsact import evaluate_raw, evaluate
 
   # Natural language and units (use this for user input)
   result = evaluate_raw("five plus three")    # 8
@@ -668,11 +668,11 @@ For untrusted input, use \fBevaluate_with_timeout()\fR from the Python API to pr
   result = evaluate("5+3")                   # 8
 
   # With caching for repeated queries
-  from egg_calc import evaluate_cached
+  from eggsact import evaluate_cached
   result = evaluate_cached("five plus three")
 
   # Thread-safe webapp wrapper
-  from egg_calc import PyCalcApp
+  from eggsact import PyCalcApp
   app = PyCalcApp(cache_size=1000)
   result = app.calculate("five plus three")
 .fi

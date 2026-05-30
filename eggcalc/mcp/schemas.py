@@ -1,5 +1,5 @@
 """
-MCP tool schemas for nl-calc exact tools.
+MCP tool schemas for eggsact exact tools.
 
 Defines input/output schemas for each MCP tool following the
 consistency requirements in the plan.

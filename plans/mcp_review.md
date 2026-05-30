@@ -19,7 +19,7 @@
 | `_sanitize_error` uses ascii replace | VERIFIED | tools.py:191-193 |
 | `handle_request` returns `dict \| None` | VERIFIED | server.py:286 |
 | `initialize` handler returns protocolVersion "2024-11-05" | VERIFIED | server.py:274 |
-| Server name "nl-calc-exact", version "1.0.0" | VERIFIED | server.py:279-280 |
+| Server name "eggsact-exact", version "1.0.0" | VERIFIED | server.py:279-280 |
 | Success response wraps result in `{"content": [{"type": "text", "text": json.dumps(result)}]}` | VERIFIED | server.py:206-217 |
 | Error response uses code -32000 with `data` field containing error envelope | VERIFIED | server.py:196-204 |
 
@@ -118,4 +118,4 @@
 - The `_success_response` documentation is particularly misleading — it shows a 2-field response but actual success envelopes contain 6+ fields including `tool`, `warnings`, `limits_applied`, `findings`, `machine_code`, and `recommended_next_tool`
 - All security claims (input length limits, error sanitization via ASCII replacement) are verified correct
 - The tool discovery via `tools/list` returning filtered results based on tier/tags is correctly implemented (server.py:230-265) but not documented in the architecture
-- The MCP protocol version "2024-11-05" and server identity "nl-calc-exact" are correctly documented
+- The MCP protocol version "2024-11-05" and server identity "eggsact-exact" are correctly documented

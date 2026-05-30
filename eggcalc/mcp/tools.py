@@ -1,5 +1,5 @@
 """
-MCP tools implementation for nl-calc exact functions.
+MCP tools implementation for eggsact exact functions.
 
 Maps MCP tool names to their corresponding synthesis functions
 and handles input validation and error wrapping.

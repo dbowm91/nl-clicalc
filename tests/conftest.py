@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for nl-calc tests."""
+"""Shared pytest fixtures for eggsact tests."""
 
 import pytest
 

@@ -1,5 +1,5 @@
 """
-Unit definitions and conversions for nl-calc.
+Unit definitions and conversions for eggsact.
 
 Provides comprehensive unit conversion support including:
 - Length (meters, feet, inches, miles, lightyears, etc.)
