@@ -18,23 +18,23 @@ calc "2 + 3 * 4"
 
 ```bash
 calc "five plus three"
-# 5+3 -> 8
+# 8
 
 calc "twenty times five"
-# 20*5 -> 100
+# 100
 
 calc "one hundred divided by four"
-# 100/4 -> 25
+# 25
 
 calc "what is five plus three"
-# 5+3 -> 8 (conversational phrases stripped)
+# 8 (conversational phrases stripped)
 ```
 
 ### Unit Conversions
 
 ```bash
 calc "30m + 100ft"
-# 30*m+100*ft -> 60.48 m (auto-converts)
+# 60.48 m (auto-converts)
 
 calc "60mi / h"
 # 60 mi/h (compound units)
@@ -80,7 +80,7 @@ calc "5 * planck"
 | Option | Description |
 |--------|-------------|
 | `-e` | Quiet mode, output result only |
-| `-s` | Show expression in output |
+| `-s` | Show expression in output (reserved for future use) |
 | `-q` | Suppress expression in output |
 | `--json` | Output as JSON |
 | `-i` | Interactive REPL mode |
@@ -90,9 +90,9 @@ calc "5 * planck"
 ```bash
 calc -i
 >>> five plus three
-5+3 -> 8
+8
 >>> 30m + 100ft
-30*m+100*ft -> 60.48 m
+60.48 m
 >>> quit
 ```
 

@@ -36,21 +36,16 @@ When you pipe input, the same full pipeline is used.
 | `-v`, `--version` | Show version information |
 | `-e`, `--expression` | Evaluate a single expression (quiet mode by default) |
 | `-q`, `--quiet` | Suppress expression in output (alias for `-e`) |
-| `-s`, `--show` | Show expression in output (useful with `-e`) |
+| `-s`, `--show` | Show expression in output (reserved for future use) |
 | `--json` | Output result as JSON with `result` and `expression` fields |
 | `-i`, `--interactive` | Start interactive REPL mode |
-| `--mcp` | Run as MCP server for exact text tools |
+| `--mcp` | Run as MCP server for math, text, and validation tools |
 
 ### Option Details
 
 **`-e` vs `-q`**: Both produce quiet output, but `-e` explicitly marks the input as an expression to evaluate. Use `-e` when piping or providing a single expression.
 
-**`-s` (show)**: By default, `calc -e "5 + 3"` outputs only `8`. Adding `-s` shows the parsed expression:
-
-```bash
-calc -e -s "five plus three"
-# 5+3 -> 8
-```
+**`-s` (show)**: Reserved for future use. Currently, output is always the result only.
 
 **`--json`**: Useful for programmatic consumption:
 
@@ -65,7 +60,7 @@ calc --json "30m + 100ft"
 
 ```bash
 calc "5 + 3"
-# 5+3 -> 8
+# 8
 ```
 
 ### Quiet Mode
@@ -79,12 +74,7 @@ calc -e "5 + 3"
 
 ### Show Expression
 
-Use `-s` with `-e` to show the expression:
-
-```bash
-calc -e -s "five plus three"
-# 5+3 -> 8
-```
+The `-s` flag is reserved for future use. Currently, output is always the result only.
 
 ### JSON Output
 
@@ -99,13 +89,13 @@ When entering interactive mode, a welcome message is displayed:
 
 ```bash
 calc -i
-# eggsact interactive mode. Type 'help' for available commands, 'quit' or 'exit' to exit.
+# eggcalc interactive mode. Type 'help' for available commands, 'quit' or 'exit' to exit.
 >>> 5 + 3
 8
 >>> sin(pi/2)
 1.0
 >>> 30m + 100ft
-30*m+100*ft -> 60.48 m
+60.48 m
 >>> quit
 ```
 
@@ -114,11 +104,11 @@ In interactive mode, you can enter expressions directly. Natural language works:
 ```bash
 calc -i
 >>> five plus three times two
-5+3*2 -> 11
+11
 >>> what's the square root of one hundred
-sqrt(100) -> 10.0
+10.0
 >>> thirty meters plus hundred feet
-30*m+100*ft -> 60.48 m
+60.48 m
 ```
 
 ### Pipe Input
@@ -136,10 +126,10 @@ Expressions can be chained with semicolons:
 
 ```bash
 calc "seed(42); random()"
-# seed(42);random() -> 0.639...
+# 0.639...
 
 calc "x = 5; x * 2"
-# x=5;x*2 -> 10
+# 10
 ```
 
 ## Exit Codes
@@ -177,10 +167,10 @@ calc "100 % 7"         # 2 (modulo)
 
 ```bash
 calc "5 + 3 * 2"
-# 5+3*2 -> 11 (NOT 16 - multiplication before addition)
+# 11 (NOT 16 - multiplication before addition)
 
 calc "(5 + 3) * 2"
-# (5+3)*2 -> 16 (parentheses override)
+# 16 (parentheses override)
 ```
 
 ### Natural Language
@@ -196,13 +186,13 @@ calc "one million"     # 1000000
 
 ```bash
 calc "what is five plus three"
-# 5+3 -> 8
+# 8
 
 calc "calculate the square root of one hundred"
-# sqrt(100) -> 10.0
+# 10.0
 
 calc "tell me the result of ten divided by four"
-# 10/4 -> 2.5
+# 2.5
 ```
 
 ### Units
@@ -395,13 +385,13 @@ calc regex "[invalid" "test"
 
 ## MCP Server Mode
 
-eggcalc can run as an MCP server, exposing exact text tools to AI agents:
+eggcalc can run as an MCP server, exposing deterministic math, text analysis, and validation tools to AI agents:
 
 ```bash
 calc --mcp
 ```
 
-See [MCP Server](mcp.md) for full documentation on all 10 available tools.
+See [MCP Server](mcp.md) for full documentation on all 59 available tools.
 
 ### Quick Reference
 

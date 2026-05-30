@@ -1,4 +1,4 @@
-# eggsact Architecture Overview
+# eggcalc Architecture Overview
 
 A natural language math expression calculator that parses expressions in English (like "five plus three") and converts them to numeric results, with support for unit conversions. The system also includes a comprehensive suite of Unicode text analysis tools exposed via an MCP (Model Context Protocol) server.
 
@@ -24,7 +24,7 @@ A natural language math expression calculator that parses expressions in English
 
 ## System Overview
 
-eggsact is a dual-purpose tool:
+eggcalc is a dual-purpose tool:
 
 1. **Natural Language Calculator** — Accepts math expressions in plain English ("five plus three") and evaluates them with full unit conversion support
 2. **Unicode Text Analysis Suite** — A collection of deterministic text processing tools for AI safety, security auditing, and text manipulation

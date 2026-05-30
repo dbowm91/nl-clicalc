@@ -1,5 +1,5 @@
 """
-Unit definitions and conversions for eggsact.
+Unit definitions and conversions for eggcalc.
 
 Provides comprehensive unit conversion support including:
 - Length (meters, feet, inches, miles, lightyears, etc.)

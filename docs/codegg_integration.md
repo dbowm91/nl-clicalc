@@ -1,6 +1,6 @@
 # Codegg Integration Guidance
 
-How `codegg` should use `eggsact`/`eggcalc` as deterministic middleware for agent workflows.
+How `codegg` should use `eggcalc` as deterministic middleware for agent workflows.
 
 ## Why Harness-Level Checks
 

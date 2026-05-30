@@ -1070,7 +1070,7 @@ When a tool call fails, the response includes an error envelope:
 
 ## Response Envelope
 
-All tool responses follow a standard envelope. Callers (e.g., `codegg`, `eggsact`) can consume results predictably by checking the envelope fields.
+All tool responses follow a standard envelope. Callers (e.g., `codegg`) can consume results predictably by checking the envelope fields.
 
 ### Success Envelope
 

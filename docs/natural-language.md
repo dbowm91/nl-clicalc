@@ -6,7 +6,7 @@ eggcalc converts natural language expressions into mathematical operations. Unde
 
 The parser splits input by operator boundaries, then converts each segment:
 
-1. **Split by operators** (`+`, `-`, `*`, `/`, `^`, spaces) into tokens
+1. **Split by operators** (`+`, `-`, `*`, `/`, `**`, `^`, `%`, `&`, `|`, `~`, `<<`, `>>`, `(`, `)`, spaces) into tokens
 2. **Convert number words** to digits ("twenty five" → "20+5")
 3. **Convert operator words** to symbols ("plus" → "+")
 4. **Strip filler phrases** ("what is", "calculate the")
@@ -25,7 +25,7 @@ zero, one, two, three, four, five, six, seven, eight, nine
 Example:
 ```bash
 calc "five plus three"
-# 5+3 -> 8
+# 8
 ```
 
 ### Teens (10-19)
@@ -90,7 +90,7 @@ calc "million billion"       # 1e+15
 
 ```bash
 calc "three million two hundred thousand"
-# 3000000+200000 -> 3200000
+# 3200000
 ```
 
 **Important:** The parser treats consecutive number words as either addition or multiplication based on the scale. "twenty five" = 20 + 5, but "five million" = 5 × 1,000,000.
@@ -105,12 +105,12 @@ calc "a thousand"           # 1000
 
 **"half" as 0.5:**
 ```bash
-calc "half of ten"          # 0.5*10 -> 5
+calc "half of ten"          # 5
 ```
 
 **"quarter" as 0.25:**
 ```bash
-calc "quarter of twenty"    # 0.25*20 -> 5
+calc "quarter of twenty"    # 5
 ```
 
 ## Decimals with "point"
@@ -118,9 +118,9 @@ calc "quarter of twenty"    # 0.25*20 -> 5
 Use "point" to indicate decimal values:
 
 ```bash
-calc "three point one four"  # 3.1.4 -> 3.14
-calc "one point five"        # 1.1.5 -> 1.5
-calc "twenty point seven five"  # 20.1.7.5 -> 20.175
+calc "three point one four"  # 3.14
+calc "one point five"        # 1.5
+calc "twenty point seven five"  # 20.175
 ```
 
 **How it works:** "point" creates a decimal point in the current accumulated number. "three point one four" becomes "3.1.4" which evaluates to 3.14.
@@ -140,9 +140,9 @@ Certain conversational phrases and filler words are automatically removed before
 These work because stripping happens before tokenization:
 
 ```bash
-calc "what is five plus three"       # 5+3 -> 8
-calc "calculate the square root of 16"  # sqrt(16) -> 4
-calc "convert 100 meters to feet"   # 100*m -> 328.084 ft
+calc "what is five plus three"       # 8
+calc "calculate the square root of 16"  # 4
+calc "convert 100 meters to feet"   # 328.084 ft
 ```
 
 ## Operators
@@ -151,14 +151,25 @@ calc "convert 100 meters to feet"   # 100*m -> 328.084 ft
 |-----------------|----------|---------|
 | `plus`, `positive` | `+` | "five plus three" → 5+3 |
 | `minus`, `negative` | `-` | "ten minus three" → 10-3 |
-| `times`, `multiplied by` | `*` | "five times three" → 5*3 |
-| `of` | `*` | "half of ten" → 0.5*10 |
+| `times`, `multiplied by`, `of` | `*` | "five times three" → 5*3 |
 | `divided by`, `over`, `per`, `divide` | `/` | "ten divided by two" → 10/2 |
-| `to the power of`, `raised to`, `to the` | `**` | "two to the power of ten" → 2**10 |
+| `raised to`, `raised to the power`, `to the power of`, `^` | `**` | "two to the power of ten" → 2**10 |
 | `mod`, `modulo`, `percent`, `remainder` | `%` | "ten mod three" → 10%3 |
 | `point` | `.` | "three point one four" → 3.14 |
+| `AND`, `and`, `bitand`, `bit and` | `&` | "five and three" → 5&3 |
+| `OR`, `or`, `bitor`, `bit or` | `\|` | "five or three" → 5\|3 |
+| `XOR`, `xor`, `bitxor`, `bit xor` | `^` | "five xor three" → 5^3 |
+| `NOT`, `not`, `bitnot`, `bit not` | `~` | "bitnot five" → ~5 |
+| `left shift`, `shift left`, `lshift` | `<<` | "five left shift two" → 5<<2 |
+| `right shift`, `shift right`, `rshift` | `>>` | "five right shift two" → 5>>2 |
+| `in`, `into` | `in` | "five kilometers in meters" → unit conversion |
+| `to`, `as` | `to` | "five kilometers to meters" → unit conversion |
 
-**Note on "of":** "of" maps to multiplication because that's how English works—"half of a pie" means "half times a pie". This allows natural expressions like "quarter of twenty".
+**Notes:**
+- **"of"** maps to multiplication because that's how English works—"half of a pie" means "half times a pie". This allows natural expressions like "quarter of twenty".
+- **Bitwise operators** (`&`, `|`, `^`, `~`, `<<`, `>>`) work on integer bit patterns.
+- **`^` has dual meaning:** `^` as a word maps to XOR, while `^` as a symbol maps to exponentiation (`**`). The parser disambiguates by context.
+- **Unit conversion operators** (`in`/`into`, `to`/`as`) are not regular math operators—they trigger unit conversion between compatible measurements (e.g., "5 kilometers in meters").
 
 ## Functions
 
@@ -192,9 +203,9 @@ calc "abs(-5)"            # 5
 **"of" pattern:** The "of" pattern works for some functions:
 
 ```bash
-calc "square root of 16"  # sqrt(16) -> 4
-calc "logarithm of e"     # log(e) -> 1
-calc "sine of pi"         # sin(pi) -> ~0
+calc "square root of 16"  # 4
+calc "logarithm of e"     # 1
+calc "sine of pi"         # ~0
 ```
 
 However, for complex expressions, parentheses are more reliable:
@@ -213,13 +224,13 @@ Use "open" and "close" or actual parentheses:
 
 ```bash
 calc "open five plus three close times two"
-# (5+3)*2 -> 16
+# 16
 
 calc "(five plus three) times two"
-# (5+3)*2 -> 16
+# 16
 
 calc "open two close to the power of open three plus one close close"
-# 2**(3+1) -> 16
+# 16
 ```
 
 **Why "open/close":** In interactive mode, you might want to type natural language. "open" and "close" map to `(` and `)`.
@@ -229,8 +240,8 @@ calc "open two close to the power of open three plus one close close"
 ```bash
 calc "negative five"              # -5
 calc "minus twenty"               # -20
-calc "five minus negative three"  # 5-(-3) -> 8
-calc "negative three times four"  # -3*4 -> -12
+calc "five minus negative three"  # 8
+calc "negative three times four"  # -12
 ```
 
 **How negative works:** "negative five" parses as `-5` (unary minus). "minus twenty" also parses as `-20`.
@@ -241,20 +252,20 @@ eggcalc follows standard mathematical precedence:
 
 ```bash
 calc "five plus three times two"
-# 5+3*2 -> 11 (NOT 16 - multiplication before addition)
+# 11
 
 calc "ten minus two plus three"
-# 10-2+3 -> 11 (left-to-right for same precedence)
+# 11
 
 calc "twenty divided by four times two"
-# 20/4*2 -> 10 (left-to-right)
+# 10
 ```
 
 **Use parentheses to override:**
 
 ```bash
 calc "(five plus three) times two"
-# (5+3)*2 -> 16
+# 16
 ```
 
 ## Variable Assignment
@@ -263,9 +274,9 @@ Set and use variables:
 
 ```bash
 calc 'setvar("x", 10)'        # x = 10
-calc "x + 5"                  # x+5 -> 15
+calc "x + 5"                  # 15
 calc 'setvar("y", 20)'        # y = 20
-calc "x * y"                  # x*y -> 200
+calc "x * y"                  # 200
 ```
 
 See [API Reference](api.md) for variable functions (`setvar`, `getvar`, `delvar`, `listvars`, `clearvars`).
@@ -286,18 +297,18 @@ calc "fifteen"               # 15
 
 ```bash
 # "of" becomes multiplication - may be unexpected
-calc "half of quarter"        # 0.5*0.25 -> 0.125
+calc "half of quarter"        # 0.125
 ```
 
 ### Parentheses with Nested Expressions
 
 ```bash
 # Complex nested parentheses
-calc "(5 + 3) * (2 + 1)"     # (5+3)*(2+1) -> 24
+calc "(5 + 3) * (2 + 1)"     # 24
 
 # Same using natural language
 calc "open five plus three close times open two plus one close"
-# (5+3)*(2+1) -> 24
+# 24
 ```
 
 ## Examples
@@ -315,13 +326,13 @@ calc "twenty divided by four" # 5
 
 ```bash
 calc "twenty five times four plus ten"
-# 25*4+10 -> 110
+# 110
 
 calc "one hundred divided by five plus three"
-# 100/5+3 -> 23
+# 23
 
 calc "square root of one hundred forty four"
-# sqrt(100+44) -> 12 (parsed as 100+44, not 144!)
+# 12
 ```
 
 **Warning:** "one hundred forty four" parses as "100 + 44" = 144, not as the number 144. For the number 144, say "one hundred forty-four" (hyphenated) or just "one forty four".
@@ -330,26 +341,26 @@ calc "square root of one hundred forty four"
 
 ```bash
 calc "thirty meters plus one hundred feet"
-# 30*m+100*ft -> 60.48 m
+# 60.48 m
 
 calc "five kilometers in miles"
-# 5*km -> 3.107 mi
+# 3.107 mi
 
 calc "one hundred pounds minus ten ounces"
-# 100*lb-10*oz -> 99.375 lb
+# 99.375 lb
 ```
 
 ### With Functions
 
 ```bash
 calc "sine of thirty degrees"
-# sin(30) -> 0.5 (note: uses radians by default in expressions)
+# 0.5
 
 calc "sqrt of (two to the power of six)"
-# sqrt(2**6) -> 8.0
+# 8.0
 
 calc "log of (one hundred times ten)"
-# log(100*10) -> 6.0 (natural log)
+# 6.0
 ```
 
 ## See Also

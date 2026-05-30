@@ -1,5 +1,5 @@
 """
-MCP tools implementation for eggsact exact functions.
+MCP tools implementation for eggcalc.
 
 Maps MCP tool names to their corresponding synthesis functions
 and handles input validation and error wrapping.

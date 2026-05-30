@@ -20,7 +20,7 @@ evaluate_raw("what is pi times two")  # 6.283...
 
 ### `evaluate()` - Pre-Normalized Math Only
 
-Use this when you control the input format and want maximum performance (~15x faster):
+Use this when you control the input format and want maximum performance (~17x faster):
 
 ```python
 from eggcalc import evaluate
@@ -39,13 +39,13 @@ Write math expressions in plain English:
 
 ```bash
 calc "five plus three times two"
-# 5+3*2 -> 11 (follows order of operations, not 16)
+# 11 (follows order of operations, not 16)
 
 calc "twenty five"
-# 20+5 -> 25
+# 25
 
 calc "what is the square root of one hundred"
-# sqrt(100) -> 10.0
+# 10.0
 ```
 
 ### Unit Conversions
@@ -54,13 +54,13 @@ Mix metric and imperial units seamlessly:
 
 ```bash
 calc "30m + 100ft"
-# 30*m+100*ft -> 60.48 m (auto-converts feet to meters)
+# 60.48 m (auto-converts feet to meters)
 
 calc "60mi / h"
-# 60*mi/h -> 60 mi/h (compound units)
+# 60 mi/h (compound units)
 
 calc "5km in miles"
-# 5*km -> 3.107 mi
+# 3.107 mi
 ```
 
 See [Units](units.md) for all supported units and conversion patterns.
@@ -124,7 +124,7 @@ AI agent integration via Model Context Protocol:
 
 ```bash
 calc --mcp
-# Exposes 10 text and math tools to AI agents
+# Exposes 59 deterministic tools to AI agents
 ```
 
 See [MCP Server](mcp.md) for detailed tool documentation.
@@ -151,13 +151,13 @@ No external dependencies - uses only Python's standard library. Works everywhere
 calc "5 + 3"           # 8
 
 # Natural language
-calc "five plus three"  # 5+3 -> 8
+calc "five plus three"  # 8
 
 # Unit conversions
-calc "30m + 100ft"     # 30*m+100*ft -> 60.48 m
+calc "30m + 100ft"     # 60.48 m
 
 # Functions and constants
-calc "sin(pi/2)"       # math.sin(pi/2) -> 1.0
+calc "sin(pi/2)"       # 1.0
 calc "sqrt(144)"       # 12.0
 
 # Pipe input (quiet mode)
@@ -173,7 +173,7 @@ pip install eggcalc
 Or install CLI directly:
 
 ```bash
-git clone https://github.com/dbowman91/eggcalc.git
+git clone https://github.com/eggcalc/eggcalc.git
 cd eggcalc
 python install.py --install
 ```

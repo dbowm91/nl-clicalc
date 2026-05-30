@@ -1,5 +1,5 @@
 """
-MCP server implementation for eggsact exact tools.
+MCP server implementation for eggcalc.
 
 Provides a stdio-based MCP server that exposes exact text, Unicode,
 and measurement tools to agents.
@@ -276,7 +276,7 @@ def _handle_initialize(request: dict) -> dict:
                 "tools": {"listChanged": False},
             },
             "serverInfo": {
-                "name": "eggsact-exact",
+                "name": "eggcalc",
                 "version": "1.0.0",
             },
         },

@@ -255,7 +255,7 @@ calc "30m"                 # 30*m (30 meters)
 calc "5km"                 # 5*km (5 kilometers)
 
 # During arithmetic, incompatible units are converted to match
-calc "30m + 100ft"         # 30*m + 100*ft -> 60.48 m
+calc "30m + 100ft"         # 60.48 m
 ```
 
 ### Unit Categories

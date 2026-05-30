@@ -31,7 +31,7 @@ calc "e^(i*pi)"       # -1+0j
 | `hbar` | ℏ | 1.055e-34 | J·s |
 | `planckbar` | ℏ | 1.055e-34 | J·s |
 | `c` | c | 299792458 | m/s |
-| `echarge` | e | 1.602e-19 | C |
+| `elementarycharge` | e | 1.602e-19 | C |
 | `amu` | u | 1.661e-27 | kg |
 | `epsilon0` | ε₀ | 8.854e-12 | F/m |
 | `mu0` | μ₀ | 1.257e-6 | H/m |
@@ -56,7 +56,7 @@ calc "e^(i*pi)"       # -1+0j
 | `boltzmann` | k, boltzmann constant |
 | `planck` | h, planck constant, planckconstant |
 | `c` | speed of light, speed of light in vacuum, c zero |
-| `echarge` | elementary charge, e charge |
+| `elementarycharge` | echarge, elementary charge, e charge |
 | `amu` | u, atomic mass, atomic mass unit, atomicmassunit |
 | `epsilon0` | vacuum permittivity, permittivity of free space |
 | `mu0` | vacuum permeability, permeability of free space, magnetic constant |
@@ -64,7 +64,7 @@ calc "e^(i*pi)"       # -1+0j
 | `g` | gravity, standard gravity, earth gravity |
 | `r` | gas constant, ideal gas constant, molar gas constant, gasconstant, idealgasconstant |
 | `faraday` | f, faraday constant, faradayconstant |
-| `hbar` | reducedplanck |
+| `hbar` | planckbar, reducedplanck |
 | `me` | electron mass |
 | `mp` | proton mass |
 | `mn` | neutron mass |

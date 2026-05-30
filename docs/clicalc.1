@@ -19,11 +19,11 @@ Unlike traditional calculators, \fBcalc\fR understands plain English:
 .PP
 .nf
   $ calc \e"five plus three\e"
-  5+3 -> 8
+  8
   $ calc \e"30 meters plus 100 feet\e"
-  30*m+100*ft -> 60.48 m
+  60.48 m
   $ calc \e"sin of pi over two\e"
-  math.sin(pi/2) -> 1.0
+  1.0
 .fi
 
 .SH OPTIONS
@@ -46,12 +46,7 @@ Suppress the expression in output, showing only the numeric result.
 
 .TP
 \fB\-s\fR, \fB--show\fR
-Show the expression in output. Useful with \fB\-e\fR to see what was parsed:
-.PP
-.nf
-  $ calc -e -s \e"five plus three\e"
-  5+3 -> 8
-.fi
+Reserved for future use.
 
 .TP
 \fB--json\fR
@@ -69,11 +64,11 @@ Start interactive REPL mode. Enter expressions directly, type \fBquit\fR or \fBe
 .nf
   $ calc -i
   >>> five plus three
-  5+3 -> 8
+  8
   >>> sqrt(144)
   12.0
   >>> 30m + 100ft
-  30*m+100*ft -> 60.48 m
+  60.48 m
   >>> quit
 .fi
 
@@ -226,13 +221,13 @@ The server uses JSON-RPC 2.0 over stdin/stdout:
 .PP
 .nf
   $ calc \e"2 + 2\e"
-  2+2 -> 4
+  4
 
   $ calc \e"10 / 3\e"
-  10/3 -> 3.3333333333333335
+  3.3333333333333335
 
   $ calc \e"2 ** 10\e"
-  2**10 -> 1024
+  1024
 .fi
 
 .SS Natural Language
@@ -240,16 +235,16 @@ The server uses JSON-RPC 2.0 over stdin/stdout:
 .PP
 .nf
   $ calc \e"five plus three\e"
-  5+3 -> 8
+  8
 
   $ calc \e"twenty times five\fR"
-  20*5 -> 100
+  100
 
   $ calc \e"what is the square root of one hundred\fR"
-  sqrt(100) -> 10.0
+  10.0
 
   $ calc \e"one hundred fifty times three\fR"
-  100*50*3 -> 15000
+  15000
 .fi
 
 .SS Order of Operations
@@ -258,10 +253,10 @@ The server uses JSON-RPC 2.0 over stdin/stdout:
 .PP
 .nf
   $ calc \e"five plus three times two\fR"
-  5+3*2 -> 11   # NOT 16 (multiplication before addition)
+  11   # NOT 16 (multiplication before addition)
 
   $ calc \e"(five plus three) times two\fR"
-  (5+3)*2 -> 16  # Parentheses override precedence
+  16  # Parentheses override precedence
 .fi
 
 .SS Unit Conversions
@@ -270,13 +265,13 @@ Use the \fBin\fR keyword to convert between units:
 .PP
 .nf
   $ calc \e"100ft in meters\fR"
-  100*ft -> 30.48 m
+  30.48 m
 
   $ calc \e"5km in miles\fR"
-  5*km -> 3.107 mi
+  3.107 mi
 
   $ calc \e"1GB in MB\fR"
-  1*GB -> 1024 MB
+  1024 MB
 .fi
 
 .SS Unit Arithmetic
@@ -285,13 +280,13 @@ Add, subtract, multiply units directly:
 .PP
 .nf
   $ calc \e"30m + 100ft\fR"
-  30*m+100*ft -> 60.48 m
+  60.48 m
 
   $ calc \e"2h + 30min\fR"
-  2*h+30*min -> 2.5 h
+  2.5 h
 
   $ calc \e"60mi / h\fR"
-  60*mi/h -> 60 mi/h
+  60 mi/h
 .fi
 
 .SS Temperature Conversions
@@ -300,13 +295,13 @@ Use the \fBtemp()\fR function for temperature:
 .PP
 .nf
   $ calc \e"temp(100, C, F)\fR"
-  temp(100,C,F) -> 212.0
+  212.0
 
   $ calc \e"temp(32, F, C)\fR"
-  temp(32,F,C) -> 0.0
+  0.0
 
   $ calc \e"temp(0, C, K)\fR"
-  temp(0,C,K) -> 273.15
+  273.15
 .fi
 
 .SS Scientific Functions
@@ -314,19 +309,19 @@ Use the \fBtemp()\fR function for temperature:
 .PP
 .nf
   $ calc \e"sin(pi/2)\fR"
-  math.sin(pi/2) -> 1.0
+  1.0
 
   $ calc \e"sqrt(144)\fR"
-  sqrt(144) -> 12.0
+  12.0
 
   $ calc \e"log(e)\fR"
-  log(e) -> 1.0
+  1.0
 
   $ calc \e"factorial(5)\fR"
-  factorial(5) -> 120
+  120
 
   $ calc \e"gcd(12, 18)\fR"
-  gcd(12,18) -> 6
+  6
 .fi
 
 .SS Complex Numbers
@@ -334,16 +329,16 @@ Use the \fBtemp()\fR function for temperature:
 .PP
 .nf
   $ calc \e"sqrt(-1)\fR"
-  sqrt(-1) -> 1j
+  1j
 
   $ calc \e"3+4i\fR"
-  3+4i -> (3+4j)
+  (3+4j)
 
   $ calc \e"abs(3+4i)\fR"
-  abs(3+4i) -> 5.0
+  5.0
 
   $ calc \e"log(-1)\fR"
-  log(-1) -> 3.141592653589793j
+  3.141592653589793j
 .fi
 
 .SS Physical Constants
@@ -351,19 +346,19 @@ Use the \fBtemp()\fR function for temperature:
 .PP
 .nf
   $ calc \e"pi\fR"
-  pi -> 3.141592653589793
+  3.141592653589793
 
   $ calc \e"avogadro\fR"
-  na -> 6.02214076e+23
+  6.02214076e+23
 
   $ calc \e"speed of light\fR"
-  c -> 299792458
+  299792458
 
   $ calc \e"5 * planck\fR"
-  5*h -> 3.313e-33
+  3.313e-33
 
   $ calc \e"h * c / 500nm\fR"  # Photon energy
-  h*c/500*nm -> 3.972e-19
+  3.972e-19
 .fi
 
 .SS Pipe Input
@@ -382,13 +377,13 @@ Use the \fBtemp()\fR function for temperature:
 .PP
 .nf
   $ calc \e"5 AND 3\fR"
-  5&3 -> 1
+  1
 
   $ calc \e"0xFF & 0x0F\fR"
-  0xFF&0x0F -> 15
+  15
 
   $ calc \e"bin(255)\fR"
-  bin(255) -> '0xff'
+  '0xff'
 .fi
 
 .SH NATURAL LANGUAGE REFERENCE
@@ -409,11 +404,11 @@ Tens (20-90):
 
 .TP
 Scales:
-\fBhundred\fR, \fBthousand\fR, \fBmillion\fR, \fBbillion\fR, \fBtrillion\fR
+\fBhundred\fR, \fBthousand\fR, \fBmillion\fR, \fBbillion\fR, \fBtrillion\fR, \fBquadrillion\fR, \fBquintillion\fR
 
 .TP
 Fractions:
-\fBhalf\fR, \fBquarter\fR, \fBthousandth\fR, \fBmillionth\fR
+\fBhalf\fR, \fBquarter\fR, \fBthousandth\fR, \fBmillionth\fR, \fBbillionth\fR
 
 .SS Number Combinations
 
@@ -422,15 +417,15 @@ Numbers combine according to these rules:
 .nf
   # Ones + Tens: "twenty five" -> 25
   $ calc \e"twenty five\fR"
-  20+5 -> 25
+  25
 
   # Scale + Scale: "million billion" -> 1,000,000,000,000
   $ calc \e"million billion\fR"
-  1000000*1000000000 -> 1e+15
+  1e+15
 
   # "point" for decimals: "three point one four" -> 3.14
   $ calc \e"three point one four\fR"
-  3.1.4 -> 3.14
+  3.14
 .fi
 
 .SS Operator Words
@@ -454,13 +449,13 @@ Certain conversational phrases are automatically removed:
 .PP
 .nf
   $ calc \e"what is five plus three\fR"
-  5+3 -> 8
+  8
 
   $ calc \e"calculate the square root of 16\fR"
-  sqrt(16) -> 4.0
+  4.0
 
   $ calc \e"convert 100 meters to feet\fR"
-  100*m -> 328.084 ft
+  328.084 ft
 .fi
 .PP
 Stripped phrases: \fBwhat's\fR, \fBwhat is\fR, \fBcalculate\fR, \fBcompute\fR, \fBconvert\fR, \fBtell me\fR, \fBgive me\fR, \fBthe\fR, \fBa\fR, \fBof\fR
@@ -658,7 +653,7 @@ For untrusted input, use \fBevaluate_with_timeout()\fR from the Python API to pr
 
 .PP
 .nf
-  from eggsact import evaluate_raw, evaluate
+  from eggcalc import evaluate_raw, evaluate
 
   # Natural language and units (use this for user input)
   result = evaluate_raw("five plus three")    # 8
@@ -668,11 +663,11 @@ For untrusted input, use \fBevaluate_with_timeout()\fR from the Python API to pr
   result = evaluate("5+3")                   # 8
 
   # With caching for repeated queries
-  from eggsact import evaluate_cached
+  from eggcalc import evaluate_cached
   result = evaluate_cached("five plus three")
 
   # Thread-safe webapp wrapper
-  from eggsact import PyCalcApp
+  from eggcalc import PyCalcApp
   app = PyCalcApp(cache_size=1000)
   result = app.calculate("five plus three")
 .fi

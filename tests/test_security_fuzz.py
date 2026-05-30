@@ -1,5 +1,5 @@
 """
-Fuzz tests for eggsact security.
+Fuzz tests for eggcalc security.
 
 Tests for:
 - Invalid inputs (random strings, special characters)

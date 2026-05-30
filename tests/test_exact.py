@@ -1,4 +1,4 @@
-"""Tests for eggsact exact text primitives.
+"""Tests for eggcalc exact text primitives.
 
 Tests for:
 - Low-level Unicode primitives (primitives.py)

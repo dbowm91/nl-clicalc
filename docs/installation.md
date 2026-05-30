@@ -56,7 +56,7 @@ Run `python install.py` without arguments for an interactive menu:
 
 ```bash
 python install.py
-# eggsact Installer
+# eggcalc Installer
 # Status: Not installed
 #
 # 1. Install calc
@@ -74,7 +74,7 @@ calc --version
 # calc 1.1.0
 
 calc "one plus one"
-# 1+1 -> 2
+# 2
 ```
 
 ## Shell Completions

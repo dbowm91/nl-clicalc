@@ -1,5 +1,5 @@
 """
-MCP server for eggsact exact tools.
+MCP server for eggcalc.
 
 Provides stdio-based MCP server for text, Unicode, and measurement tools.
 """

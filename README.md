@@ -4,7 +4,7 @@ CLI calculator accepting natural language and unit conversion. Standard library 
 
 For install as a CLI tool, clone the repo, cd into it, and run `python install.py --install`. It will combine everything into one file and add it to your $path. Then you can run it like `calc 2 meters plus 2ft`. It ignores spacing and relies on spliting the input by operator. 
 
-Basic things work well, but some functionality is lightly tested. There might be edge cases with syntax parsing or conversion I haven't hit yet, though error handling is good. It can be chained into another script and used in webapps. It's passed all tests and it should be handling unexpected inputs well, but I have not tried this in a real environment. 
+Written in pure Python with no external dependencies, it can be used as a CLI tool, a Python library, or an MCP server for AI agents.
 
 ## Features
 
@@ -55,26 +55,26 @@ python -m eggcalc "five plus two"
 ```bash
 # Basic arithmetic
 calc "five plus two"
-# Output: 5+2 -> 7
+# 7
 
 # Complex expressions
 calc "(twenty + five) * 3"
-# Output: (20+5)*3 -> 75
+# 75
 
 # Unit conversions
 calc "30m + 100ft"
-# Output: 30*m+100*ft -> 60.48 m
+# 60.48 m
 
 calc "(30m + 100ft) / 2"
-# Output: (30*m+100*ft)/2 -> 30.24 m
+# 30.24 m
 
 # Trigonometric functions
 calc "sin of 3.14159"
-# Output: math.sin(3.14159) -> 2.65e-06
+# 2.653e-06
 
 # Physical constants
 calc "5 times avogadro"
-# Output: 5*na -> 3.01e+24
+# 3.011e+24
 
 # Piping (quiet mode by default with -e)
 echo "5 + 3" | calc -e
@@ -83,7 +83,7 @@ echo "5 + 3" | calc -e
 # Interactive REPL mode
 calc -i
 # >>> five plus two
-# 5+2 -> 7
+# 7
 # >>> quit
 ```
 
@@ -96,10 +96,10 @@ calc -i
 | `-v`, `--version` | Show version information |
 | `-e`, `--expression` | Evaluate a single expression (quiet mode by default) |
 | `-q`, `--quiet` | Suppress expression in output |
-| `-s`, `--show` | Show expression in output (useful with `-e`) |
+| `-s`, `--show` | Show expression in output (currently unused, reserved for future use) |
 | `--json` | Output result as JSON |
 | `-i`, `--interactive` | Start interactive REPL mode |
-| `--mcp` | Run as MCP server for exact text tools |
+| `--mcp` | Run as MCP server for math, text, and validation tools |
 
 ### CLI Text Tools
 
@@ -194,7 +194,7 @@ from eggcalc import (
     # Configuration
     register_constant,    # Add custom constants (thread-safe)
     register_function,   # Add custom functions (thread-safe)
-    load_user_config,    # Load config from eggcalc_config.py (or eggcalc_config.py)
+    load_user_config,    # Load config from eggcalc_config.py
     
     # Webapp wrapper
     PyCalcApp,            # Thread-safe wrapper with caching
@@ -224,17 +224,17 @@ register_function("mysquare", my_func)
 result = evaluate_raw("mysquare(3, 4)")  # 25
 ```
 
-### Performance (benchmarked on Python 3.14, M2 Pro)
+### Performance (benchmarked on Python 3.14, M4 Pro)
 
 | Method | Input Type | Typical Speed |
 |--------|------------|---------------|
-| `evaluate()` | Pre-normalized (e.g., `5+3`) | ~10 μs/eval |
+| `evaluate()` | Pre-normalized (e.g., `5+3`) | ~9 μs/eval |
 | `evaluate_raw()` | Natural language (e.g., `"five plus three"`) | ~155 μs/eval |
 | `evaluate_cached()` | Repeated NL expressions | ~0.1 μs/eval (after first call) |
 | `PyCalcApp.calculate()` | NL with instance caching | ~0.3 μs/eval (after first call) |
 | `evaluate_async()` | Async frameworks | Same as evaluate_raw in thread pool |
 
-**Key insight**: `evaluate()` is ~15x faster than `evaluate_raw()` because it skips the normalization pipeline. Use `evaluate()` when you control input format, `evaluate_raw()` for user input.
+**Key insight**: `evaluate()` is ~17x faster than `evaluate_raw()` because it skips the normalization pipeline. Use `evaluate()` when you control input format, `evaluate_raw()` for user input.
 
 The library includes optimizations:
 - Pre-computed unit lookups (sorted by length for fast matching)
@@ -423,7 +423,8 @@ is_unit("xyz") # False
 - 0-9: zero, one, two, three, four, five, six, seven, eight, nine
 - Teens: ten, eleven, twelve... nineteen
 - Tens: twenty, thirty, forty... ninety
-- Scales: hundred, thousand, million, billion, trillion
+- Scales: hundred, thousand, million, billion, trillion, quadrillion, quintillion
+- Fractions: half, quarter, thousandth, millionth, billionth
 
 ### Functions
 - Trig: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`
@@ -478,9 +479,33 @@ Joules (J), kilojoules (kJ), calories (cal), kilocalories (kcal), watt-hours (Wh
 #### Power
 Watts (W), kilowatts (kW), megawatts (MW), gigawatts (GW), horsepower (hp)
 
+#### Data Transfer Rate
+bits per second (bps), kilobits per second (Kbps), megabits per second (Mbps), gigabits per second (Gbps)
+
+#### Force
+Newtons (N), kilonewtons (kN), millinewtons (mN), dynes, pounds-force (lbf)
+
+#### Voltage
+volts (V), kilovolts (kV), millivolts (mV), microvolts (μV)
+
+#### Current
+amperes (A), milliamperes (mA), microamperes (μA)
+
+#### Angle
+radians (rad), degrees (deg)
+
+#### Speed
+meters per second (m/s), kilometers per hour (km/h), miles per hour (mph), knots (kn), mach
+
+#### Area
+square meters (m2), square kilometers (km2), hectares (ha), acres, square feet (ft2), square inches (in2), square miles (mi2), square yards (yd2)
+
+#### Frequency
+hertz (Hz), kilohertz (kHz), megahertz (MHz), gigahertz (GHz), terahertz (THz)
+
 ### Constants
 - Mathematical: pi, e, tau, i (imaginary unit)
-- Physical: avogadro, gas constant, planck, boltzmann, speed of light (c), echarge (elementary charge), faraday, atomic mass unit (amu), vacuum permittivity
+- Physical: avogadro, gas constant, planck, boltzmann, speed of light (c), elementary charge, faraday, atomic mass unit (amu), vacuum permittivity
 
 ## Advanced Features
 

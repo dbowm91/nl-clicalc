@@ -2,7 +2,7 @@
 
 All notable changes to eggcalc are documented here.
 
-## [1.1.0] - 2025-02-21
+## [1.1.0] - 2026-02-20
 
 ### Added
 
@@ -26,7 +26,7 @@ All notable changes to eggcalc are documented here.
 - Timeout protection
 - Blocked dangerous operations
 
-## [1.0.0] - 2025-01-15
+## [1.0.0] - 2026-01-15
 
 ### Added
 
@@ -60,7 +60,7 @@ All notable changes to eggcalc are documented here.
 - Input length limits
 - Nesting depth limits
 
-## [0.1.0] - 2024-12-01
+## [0.1.0] - 2025-12-01
 
 ### Added
 

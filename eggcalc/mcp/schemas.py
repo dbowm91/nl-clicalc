@@ -1,5 +1,5 @@
 """
-MCP tool schemas for eggsact exact tools.
+MCP tool schemas for eggcalc.
 
 Defines input/output schemas for each MCP tool following the
 consistency requirements in the plan.

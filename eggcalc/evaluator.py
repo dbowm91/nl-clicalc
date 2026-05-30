@@ -1,5 +1,5 @@
 """
-Safe AST-based expression evaluator for eggsact.
+Safe AST-based expression evaluator for eggcalc.
 
 Provides a secure way to evaluate mathematical expressions without
 using the unsafe eval() function. Supports arithmetic operations,
@@ -79,6 +79,7 @@ def register_function(name: str, func: Any) -> None:
 
 def load_user_config() -> None:
     """Load user-defined configuration from eggcalc_config.py (thread-safe)."""
+    global _config_loaded
     try:
         import eggcalc.normalize as normalize_mod
         import eggcalc_config as config
