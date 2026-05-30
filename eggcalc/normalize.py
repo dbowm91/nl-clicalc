@@ -226,6 +226,7 @@ FUNCTION_MAPPINGS: dict[str, str] = {
     "delvar": "delvar",
     "listvars": "listvars",
     "clearvars": "clearvars",
+    "convert": "convert",
 }
 
 # Number words
@@ -538,6 +539,9 @@ def combine_number_parts(
             elif _is_tens(part) and next_part < 10:
                 result.append(str(part + next_part))
                 skip_next = True
+            elif part < 10 and next_part >= 100:
+                result.append(f"{part}*{next_part}")
+                skip_next = True
             elif part != 10:
                 result.append(str(part))
             else:
@@ -607,6 +611,7 @@ def apply_math_functions(
     - sin40 + 2 -> math.sin(40) + 2 (no paren means only first number is args)
     - sin(40+2) -> math.sin(40+2) (user's parens preserved)
     - sin of 40 -> math.sin(40)
+    - sqrt * 100 -> math.sqrt(100) (skip * from "of" replacement)
     """
     output_tokens = []
     i = 0
@@ -621,6 +626,11 @@ def apply_math_functions(
                 pass
             else:
                 output_tokens.append("(")
+
+                # Skip * that came from "of" replacement (e.g., "sqrt * 100")
+                if next_token == "*" and i + 2 < len(tokens):
+                    i += 1
+                    next_token = tokens[i + 1] if i + 1 < len(tokens) else None
 
                 while i + 1 < len(tokens):
                     next_token = tokens[i + 1]
@@ -914,6 +924,54 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # This must come first so we get "0.2 of 150" then word_to_all converts "of" to "*"
     expression = re.sub(r"(\d+(?:\.\d+)?)\s+percent\b", lambda m: str(float(m.group(1)) / 100), expression, flags=re.IGNORECASE)
 
+    # Replace multi-word function names before whitespace removal collapses them
+    # e.g., "square root" -> "sqrt", "cube root" -> "cbrt"
+    _MULTI_WORD_FUNCTIONS = {
+        "square root": "sqrt",
+        "cube root": "cbrt",
+        "inverse sine": "asin",
+        "inverse cosine": "acos",
+        "inverse tangent": "atan",
+    }
+    for phrase, replacement in sorted(_MULTI_WORD_FUNCTIONS.items(), key=lambda x: len(x[0]), reverse=True):
+        expression = re.sub(r"\b" + re.escape(phrase) + r"\b", replacement, expression, flags=re.IGNORECASE)
+
+    # Replace multi-word number phrases to prevent incorrect joining
+    # e.g., "one hundred" -> "100", "two thousand" -> "2000"
+    _NUMBER_SCALES = {
+        "100": ["hundred"],
+        "1000": ["thousand"],
+        "1000000": ["million"],
+        "1000000000": ["billion"],
+        "1000000000000": ["trillion"],
+        "1000000000000000": ["quadrillion"],
+        "1000000000000000000": ["quintillion"],
+    }
+    _NUMBER_WORDS_SINGLE = {
+        "1": ["one"], "2": ["two"], "3": ["three"], "4": ["four"], "5": ["five"],
+        "6": ["six"], "7": ["seven"], "8": ["eight"], "9": ["nine"],
+    }
+    _NUMBER_WORDS_TEENS = {
+        "10": ["ten"], "11": ["eleven"], "12": ["twelve"], "13": ["thirteen"],
+        "14": ["fourteen"], "15": ["fifteen"], "16": ["sixteen"], "17": ["seventeen"],
+        "18": ["eighteen"], "19": ["nineteen"],
+    }
+    _NUMBER_WORDS_TENS = {
+        "20": ["twenty"], "30": ["thirty"], "40": ["forty"], "50": ["fifty"],
+        "60": ["sixty"], "70": ["seventy"], "80": ["eighty"], "90": ["ninety"],
+    }
+    # Build multi-word number phrases: "one hundred" -> "100", "twenty thousand" -> "20000"
+    _MULTI_WORD_NUMBERS: dict[str, str] = {}
+    all_small = {**_NUMBER_WORDS_SINGLE, **_NUMBER_WORDS_TEENS, **_NUMBER_WORDS_TENS}
+    for num_val, words in all_small.items():
+        for scale_val, scale_words in _NUMBER_SCALES.items():
+            for word in words:
+                for scale_word in scale_words:
+                    key = f"{word} {scale_word}"
+                    _MULTI_WORD_NUMBERS[key] = str(int(num_val) * int(scale_val))
+    for phrase, replacement in sorted(_MULTI_WORD_NUMBERS.items(), key=lambda x: len(x[0]), reverse=True):
+        expression = re.sub(r"\b" + re.escape(phrase) + r"\b", replacement, expression, flags=re.IGNORECASE)
+
     # Use combined word replacement for efficiency (single pass)
     # Use word boundaries to avoid replacing parts of words
     word_to_all = operators.get("word_to_all", {})
@@ -923,6 +981,17 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     # Strip phrases
     expression = patterns["stripped_chars"].sub("", expression)
+
+    # Handle compound unit conversions after stripping
+    # e.g., "60mi/h in m/s" -> "convert(60*mi/h,m/s)"
+    # The / in unit names would be tokenized as division, so we must handle this first
+    _COMPOUND_UNITS = ["km/h", "mi/h", "m/s", "km/s", "mi/s"]
+    for from_unit in _COMPOUND_UNITS:
+        for to_unit in _COMPOUND_UNITS:
+            if from_unit != to_unit:
+                pattern = rf"(\d+(?:\.\d+)?)\s*{re.escape(from_unit)}\s+(?:in|to)\s+{re.escape(to_unit)}"
+                replacement_fn = lambda m, fu=from_unit, tu=to_unit: f"convert({m.group(1)}*{fu},{tu})"
+                expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
 
     # Convert percentages (e.g., 50% -> 0.5)
     expression = re.sub(r"(\d+(?:\.\d+)?)%", lambda m: str(float(m.group(1)) / 100), expression)

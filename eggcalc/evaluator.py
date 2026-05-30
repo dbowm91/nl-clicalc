@@ -1136,6 +1136,11 @@ class Evaluator(ast.NodeVisitor):
         right = self.visit(node.right)
         op_class = type(node.op)
 
+        # Get the name of the right operand if it's a Name node (for compound unit detection)
+        right_name: str | None = None
+        if isinstance(node.right, ast.Name):
+            right_name = node.right.id
+
         # Extract values and units
         left_val = left.value if isinstance(left, UnitValue) else left
         left_unit = normalize_unit(left.unit) if isinstance(left, UnitValue) and left.unit else None
@@ -1175,6 +1180,31 @@ class Evaluator(ast.NodeVisitor):
             raise EvaluationError(f"Unsupported binary operator: '{node.op.__class__.__name__}'")
 
         result = self.BINOPS[op_class](left_val, right_val)
+
+        # Compound unit detection for division:
+        # 1. UnitValue / UnitValue with different units -> "left_unit/right_unit"
+        # 2. UnitValue / number whose AST name is a unit -> "left_unit/name" (e.g., km/h, mi/h)
+        if op_class is ast.Div and isinstance(left, UnitValue) and left.unit:
+            if isinstance(right, UnitValue) and right.unit and left.unit != right.unit:
+                compound = f"{left.unit}/{right.unit}"
+                return UnitValue(left_val / right_val, compound)
+            if not isinstance(right, UnitValue) and right_name and right_name in UNIT_ALIASES:
+                unit_name = UNIT_ALIASES[right_name]
+                compound = f"{left.unit}/{unit_name}"
+                return UnitValue(left_val, compound)
+
+        # Compound unit detection for multiplication:
+        # UnitValue * UnitValue with different units -> "left_unit*right_unit"
+        # UnitValue * number whose AST name is a unit -> "left_unit*name"
+        if op_class is ast.Mult and isinstance(left, UnitValue) and left.unit:
+            if isinstance(right, UnitValue) and right.unit and left.unit != right.unit:
+                compound = f"{left.unit}*{right.unit}"
+                return UnitValue(left_val * right_val, compound)
+            if not isinstance(right, UnitValue) and right_name and right_name in UNIT_ALIASES:
+                unit_name = UNIT_ALIASES[right_name]
+                compound = f"{left.unit}*{unit_name}"
+                return UnitValue(left_val * right_val, compound)
+
         if result_unit is None:
             return result
         return UnitValue(result, result_unit)

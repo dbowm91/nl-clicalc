@@ -17,8 +17,9 @@ eggcalc converts natural language math expressions into numerical results. Key c
 
 - **Unit Conversions**: Mix metric and imperial units seamlessly
   - `"30m + 100ft"` → `60.48 m` (auto-converts feet to meters)
-  - `"60mi / h"` → `60 mi/h` (compound units)
-  - `"100C in F"` → `212 F` (temperature with `temp()` function)
+  - `"60mph"` → `60 mph` (speed units with conversions)
+  - `"60km/h in m/s"` → `16.667 m/s` (compound unit conversions)
+  - `"100C in F"` → `212 F` (temperature conversions)
 
 - **Complex Numbers**: Full support for imaginary numbers
   - `"sqrt(-1)"` → `1j`
@@ -76,8 +77,8 @@ calc "sin of 3.14159"
 calc "5 times avogadro"
 # 3.011e+24
 
-# Piping (quiet mode by default with -e)
-echo "5 + 3" | calc -e
+# Quiet mode with -e (suppresses expression echo)
+calc -e "5 + 3"
 # Output: 8
 
 # Interactive REPL mode
@@ -111,11 +112,14 @@ calc inspect "hello"
 # ✓ No hidden characters
 
 calc inspect "pаypal"  # Cyrillic 'а' (U+0430) looks like Latin 'a'
-# ✗ CONFUSABLE: Text contains confusable character 'а' (looks like 'a') at index 1.
+# ✗ MIXED_SCRIPTS: Text contains mixed scripts: Cyrillic, Latin
+# ✗ CONFUSABLE: Text contains confusable character 'а' (looks like 'a')
+# Confusables found: 1
+#   'а' (looks like 'a') at 1
 
 # Count character frequency
 calc count "hello" l
-# 'l' appears 3 time(s) in "hello"
+# 'l' appears 2 time(s) in "hello"
 
 # Test regex patterns
 calc regex "^\d+$" "12345"
@@ -151,8 +155,8 @@ print(result)  # 8
 result = evaluate_raw("30m + 100ft")
 print(result)  # 60.48 m
 
-# Use evaluate() for pre-normalized expressions (no spaces)
-result = evaluate("5+3")  # Must have no spaces
+# Use evaluate() for pre-normalized expressions (fastest path, skips NL pipeline)
+result = evaluate("5+3")  # No spaces or NL words
 print(result)  # 8
 ```
 
@@ -529,7 +533,7 @@ evaluate_raw("real(3+4j)")  # 3.0
 evaluate_raw("imag(3+4j)")  # 4.0
 
 # Euler's identity
-evaluate_raw("e^(i*pi)")    # (-1+0j)
+evaluate_raw("e**(i*pi)")   # (-1+1.2246467991473532e-16j)
 ```
 
 ### Bitwise Operations
