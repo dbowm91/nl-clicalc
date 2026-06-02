@@ -10,6 +10,8 @@ from __future__ import annotations
 import inspect
 import json
 import sys
+import time
+from collections import deque
 from typing import Any
 
 from .. import __version__
@@ -139,6 +141,8 @@ TOOL_HANDLERS: dict[str, Any] = {
 }
 
 MAX_REQUEST_BYTES = 1_000_000
+MAX_OUTPUT_BYTES = 1_000_000
+MAX_REQUESTS_PER_SECOND = 10
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:
@@ -239,6 +243,49 @@ def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
     return None
 
 
+def _validate_arguments_schema(name: str, arguments: dict[str, Any]) -> str | None:
+    """Validate arguments against the tool's inputSchema from TOOL_SCHEMAS.
+
+    Returns None if valid, or an error message string if invalid.
+    """
+    schema = TOOL_SCHEMAS.get(name, {}).get("inputSchema")
+    if not schema:
+        return None
+
+    props = schema.get("properties", {})
+    required = schema.get("required", [])
+
+    for field in required:
+        if field not in arguments:
+            return f"Missing required argument: {field}"
+
+    for key, value in arguments.items():
+        if key not in props:
+            continue
+        prop = props[key]
+        expected_type = prop.get("type")
+        if expected_type is None:
+            continue
+
+        type_map = {
+            "string": str,
+            "number": (int, float),
+            "integer": int,
+            "boolean": bool,
+            "array": list,
+            "object": dict,
+        }
+        python_type = type_map.get(expected_type)
+        if python_type is not None and not isinstance(value, python_type):
+            return f"Argument '{key}' must be {expected_type}, got {type(value).__name__}"
+
+        enum_values = prop.get("enum")
+        if enum_values is not None and value not in enum_values:
+            return f"Argument '{key}' must be one of: {', '.join(str(v) for v in enum_values)}"
+
+    return None
+
+
 def _handle_call_tool(request: dict) -> dict:
     """Handle a tools/call MCP request."""
     params = request.get("params", {})
@@ -277,6 +324,17 @@ def _handle_call_tool(request: dict) -> dict:
             },
         }
 
+    schema_error = _validate_arguments_schema(name, arguments)
+    if schema_error is not None:
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32602,
+                "message": f"Invalid arguments for tool '{name}': {schema_error}",
+            },
+        }
+
     try:
         result = handler(**arguments)
 
@@ -292,6 +350,29 @@ def _handle_call_tool(request: dict) -> dict:
                 },
             }
 
+        serialized = json.dumps(result)
+        if len(serialized.encode("utf-8")) > MAX_OUTPUT_BYTES:
+            truncated = {
+                "ok": False,
+                "tool": name,
+                "error_type": "output_too_large",
+                "error": f"Output exceeds {MAX_OUTPUT_BYTES} bytes and was truncated",
+                "hints": ["Try reducing input size or using a summary/detail option"],
+                "warnings": ["Output was truncated due to size limit"],
+            }
+            return {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(truncated),
+                        }
+                    ]
+                },
+            }
+
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
@@ -299,7 +380,7 @@ def _handle_call_tool(request: dict) -> dict:
                 "content": [
                     {
                         "type": "text",
-                        "text": json.dumps(result),
+                        "text": serialized,
                     }
                 ]
             },
@@ -320,10 +401,18 @@ def _handle_call_tool(request: dict) -> dict:
 def _handle_list_tools(request: dict) -> dict:
     """Handle a tools/list MCP request with optional filtering."""
     params = request.get("params", {})
+    request_id = request.get("id")
 
-    tier_filter: int | None = params.get("tier")
-    tags_filter: list[str] | None = params.get("tags")
-    names_filter: list[str] | None = params.get("names")
+    tier_filter = params.get("tier")
+    tags_filter = params.get("tags")
+    names_filter = params.get("names")
+
+    if tier_filter is not None and not isinstance(tier_filter, int):
+        return _invalid_request(request_id, "Invalid 'tier' parameter: expected integer")
+    if tags_filter is not None and not isinstance(tags_filter, list):
+        return _invalid_request(request_id, "Invalid 'tags' parameter: expected array")
+    if names_filter is not None and not isinstance(names_filter, list):
+        return _invalid_request(request_id, "Invalid 'names' parameter: expected array")
 
     tools = []
     for name, schema in TOOL_SCHEMAS.items():
@@ -378,7 +467,10 @@ def handle_request(request: Any) -> dict | None:
     if not isinstance(request, dict):
         return _invalid_request(None, "Invalid Request: expected JSON object")
 
-    method = request.get("method", "")
+    if "method" not in request:
+        return _invalid_request(request.get("id"), "Invalid Request: missing 'method'")
+
+    method = request["method"]
 
     if method == "tools/list":
         return _handle_list_tools(request)
@@ -404,6 +496,9 @@ def main() -> int:
 
     Reads JSON-RPC requests from stdin and writes responses to stdout.
     """
+    request_times: deque[float] = deque()
+    window = 1.0  # sliding window in seconds
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -446,6 +541,24 @@ def main() -> int:
             }
             print(json.dumps(response), flush=True)
             continue
+
+        now = time.monotonic()
+        while request_times and request_times[0] < now - window:
+            request_times.popleft()
+
+        if len(request_times) >= MAX_REQUESTS_PER_SECOND:
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id") if isinstance(request, dict) else None,
+                "error": {
+                    "code": -32600,
+                    "message": f"Rate limit exceeded: max {MAX_REQUESTS_PER_SECOND} requests per second",
+                },
+            }
+            print(json.dumps(response), flush=True)
+            continue
+
+        request_times.append(now)
 
         try:
             response = handle_request(request)

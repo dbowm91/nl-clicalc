@@ -8,6 +8,7 @@ and handles input validation and error wrapping.
 from __future__ import annotations
 
 import json
+import multiprocessing
 import re
 from typing import Any
 
@@ -21,9 +22,6 @@ from ..exact import (
 )
 from ..exact import (
     prompt_input_inspect as _prompt_input_inspect,
-)
-from ..exact import (
-    cargo_toml_inspect as _cargo_toml_inspect,
 )
 from ..exact import (
     identifier_inspect as _identifier_inspect,
@@ -54,9 +52,6 @@ from ..exact import (
 )
 from ..exact import (
     regex_test as _regex_test,
-)
-from ..exact import (
-    text_fingerprint as _text_fingerprint,
 )
 from ..exact import (
     text_position as _text_position,
@@ -187,11 +182,94 @@ MAX_TEXT_LENGTH = 100_000
 MAX_EXPRESSION_LENGTH = 10_000
 MAX_LIST_ITEMS = 10_000
 MAX_REGEX_SAMPLES = 100
+REGEX_TIMEOUT_SECONDS = 5
+
+PHYSICAL_CONSTANTS = {
+    "na": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
+    "avogadro": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
+    "avogadros": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
+    "r": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
+    "gasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
+    "idealgasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
+    "h": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
+    "planck": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
+    "planckconstant": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
+    "k": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
+    "boltzmann": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
+    "boltzmannconstant": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
+    "c": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+    "c0": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+    "speedoflight": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+    "speedoflightvacuum": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+    "elementarycharge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
+    "echarge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
+    "f": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
+    "faraday": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
+    "faradayconstant": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
+    "u": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
+    "amu": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
+    "atomicmassunit": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
+    "epsilon0": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
+    "vacuumpermittivity": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
+    "mu0": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
+    "vacuumpermeability": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
+    "g": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
+    "standardgravity": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
+    "G": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
+    "gravitationalconstant": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
+    "rydberg": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
+    "rydbergconstant": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
+    "stefan": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
+    "stefanboltzmann": {"value": 5.670374419e-8, "symbol": "σ-", "name": "Stefan-Boltzmann constant"},
+    "planckbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
+    "hbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
+    "reducedplanck": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
+    "me": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
+    "electronmass": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
+    "mp": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
+    "protonmass": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
+    "mn": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
+    "neutronmass": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
+    "re": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
+    "electronradius": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
+    "alpha": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
+    "finestructure": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
+    "wien": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
+    "wienconstant": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
+}
+
+
+def _regex_test_worker(
+    pattern: str,
+    samples: list[str],
+    flags: list[str] | None,
+    ignore_case: bool,
+    multiline: bool,
+    dotall: bool,
+    ascii: bool,
+    result_queue: multiprocessing.Queue,
+) -> None:
+    """Run regex test in a child process. Must be top-level for pickling."""
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+    except (ImportError, ValueError, OSError):
+        pass
+    try:
+        result = _regex_test(pattern, samples, flags, ignore_case, multiline, dotall, ascii)
+        result_queue.put(("ok", result))
+    except Exception as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
 
 
 def _sanitize_error(message: str) -> str:
-    """Remove non-ASCII characters from error messages."""
-    return message.encode("ascii", "replace").decode("ascii")
+    """Sanitize error messages by removing non-ASCII, file paths, and Python internals."""
+    text = message.encode("ascii", "replace").decode("ascii")
+    text = re.sub(r'File\s+"[^"]*"', 'File "<redacted>"', text)
+    text = re.sub(r'line\s+\d+', 'line <redacted>', text)
+    text = re.sub(r'(?:in\s+)<[^>]+>', 'in <module>', text)
+    text = re.sub(r'[A-Za-z_][\w.]*\s*=\s*"[^"]*"', '<var>=<redacted>', text)
+    return text
 
 
 def _get_tool_tier(name: str) -> int:
@@ -371,6 +449,13 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
     Returns:
         Success response with conversion result.
     """
+    import math
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return _error_response(
+            "invalid_arguments",
+            f"Value must be a finite number, got {value}",
+            tool="unit_convert",
+        )
     try:
         from ..units import (
             get_conversion_factor,
@@ -448,69 +533,15 @@ def constant_lookup(name: str) -> dict:
         if len(name) > MAX_TEXT_LENGTH:
             return _error_response("input_too_large", f"Name length {len(name)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}", tool="constant_lookup")
 
-        constants = {
-            "na": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-            "avogadro": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-            "avogadros": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-            "r": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-            "gasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-            "idealgasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-            "h": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-            "planck": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-            "planckconstant": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-            "k": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-            "boltzmann": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-            "boltzmannconstant": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-            "c": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-            "c0": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-            "speedoflight": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-            "speedoflightvacuum": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-            "elementarycharge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
-            "echarge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
-            "f": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-            "faraday": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-            "faradayconstant": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-            "u": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-            "amu": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-            "atomicmassunit": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-            "epsilon0": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
-            "vacuumpermittivity": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
-            "mu0": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
-            "vacuumpermeability": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
-            "g": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
-            "standardgravity": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
-            "G": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
-            "gravitationalconstant": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
-            "rydberg": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
-            "rydbergconstant": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
-            "stefan": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
-            "stefanboltzmann": {"value": 5.670374419e-8, "symbol": "σ-", "name": "Stefan-Boltzmann constant"},
-            "planckbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-            "hbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-            "reducedplanck": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-            "me": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
-            "electronmass": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
-            "mp": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
-            "protonmass": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
-            "mn": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
-            "neutronmass": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
-            "re": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
-            "electronradius": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
-            "alpha": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
-            "finestructure": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
-            "wien": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
-            "wienconstant": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
-        }
-
         key = name.lower()
-        if key not in constants:
+        if key not in PHYSICAL_CONSTANTS:
             return _error_response("invalid_arguments", f"Unknown constant: {name}", tool="constant_lookup")
 
         return _success_response({
             "name": name,
-            "value": constants[key]["value"],
-            "symbol": constants[key]["symbol"],
-            "display_name": constants[key]["name"],
+            "value": PHYSICAL_CONSTANTS[key]["value"],
+            "symbol": PHYSICAL_CONSTANTS[key]["symbol"],
+            "display_name": PHYSICAL_CONSTANTS[key]["name"],
         }, tool="constant_lookup")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="constant_lookup")
@@ -1038,8 +1069,31 @@ def validate_regex(
         )
 
     try:
-        result = _regex_test(pattern, samples, flags, ignore_case, multiline, dotall, ascii)
-        return _success_response(result, tool="validate_regex")
+        ctx = multiprocessing.get_context("spawn")
+        queue: multiprocessing.Queue = ctx.Queue()
+        proc = ctx.Process(
+            target=_regex_test_worker,
+            args=(pattern, samples, flags, ignore_case, multiline, dotall, ascii, queue),
+        )
+        proc.start()
+
+        try:
+            status, value = queue.get(timeout=REGEX_TIMEOUT_SECONDS)
+        except Exception:
+            proc.terminate()
+            proc.join(timeout=2)
+            return _error_response(
+                "timeout",
+                f"Regex evaluation timed out after {REGEX_TIMEOUT_SECONDS} seconds",
+                ["Try a simpler pattern or fewer samples"],
+                tool="validate_regex",
+            )
+
+        proc.join(timeout=2)
+
+        if status == "error":
+            return _error_response("internal_error", value, tool="validate_regex")
+        return _success_response(value, tool="validate_regex")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="validate_regex")
 
@@ -1196,6 +1250,18 @@ def regex_finditer(
             tool="regex_finditer",
         )
 
+    safety = _regex_safety_check(pattern)
+    if safety.get("risk") in ("high", "medium"):
+        return _error_response(
+            "unsafe_pattern",
+            f"Pattern has {safety.get('risk', 'unknown')} risk of catastrophic backtracking",
+            [
+                "Try a simpler pattern or break it into smaller parts",
+                "Use the regex_safety_check tool for detailed analysis and suggestions",
+            ],
+            tool="regex_finditer",
+        )
+
     try:
         result = _regex_finditer(pattern, text, flags, max_matches, include_line_column, include_groups)
         return _success_response(result, tool="regex_finditer")
@@ -1327,6 +1393,15 @@ def list_compare(
             "input_too_large",
             f"List length exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
             [f"Maximum {MAX_LIST_ITEMS} items per list"],
+            tool="list_compare",
+        )
+
+    total_chars = sum(len(s) for s in a) + sum(len(s) for s in b)
+    if total_chars > MAX_TEXT_LENGTH * 2:
+        return _error_response(
+            "input_too_large",
+            f"Total string length {total_chars} exceeds maximum",
+            [f"Maximum combined string length is {MAX_TEXT_LENGTH * 2} characters"],
             tool="list_compare",
         )
 
@@ -3029,6 +3104,18 @@ def dotenv_validate_mcp(
             f"key_pattern length {len(key_pattern)} exceeds 1000",
             tool="dotenv_validate",
         )
+
+    try:
+        pattern_safety = _regex_safety_check(key_pattern)
+        if pattern_safety.get("risk") in ("high", "medium"):
+            return _error_response(
+                "unsafe_pattern",
+                f"key_pattern has {pattern_safety.get('risk', 'unknown')} risk of catastrophic backtracking",
+                ["Use a simpler regex pattern for key_pattern"],
+                tool="dotenv_validate",
+            )
+    except Exception:
+        pass
 
     try:
         result = _dotenv_validate(text, allow_export, key_pattern, duplicate_policy)

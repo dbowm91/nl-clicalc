@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import cmath
 import math
+import multiprocessing
 import random
 import threading
 from collections import OrderedDict
@@ -62,7 +63,16 @@ MAX_EXPONENT = 10000
 MAX_FACTORIAL = 1000
 MAX_NESTING_DEPTH = 100
 MAX_RESULT_VALUE = 1e308
+MAX_RESULT_DIGITS = 10000
 DEFAULT_CACHE_SIZE = 1024
+
+
+def _check_result_size(result: Any) -> Any:
+    """Raise EvaluationError if an integer result has too many digits."""
+    if isinstance(result, int) and not isinstance(result, bool):
+        if len(str(result)) > MAX_RESULT_DIGITS:
+            raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+    return result
 
 
 def register_constant(name: str, value: float) -> None:
@@ -208,7 +218,10 @@ def _safe_factorial(n: int) -> int:
         raise EvaluationError("factorial requires non-negative input")
     if n > MAX_FACTORIAL:
         raise EvaluationError(f"factorial input too large (max {MAX_FACTORIAL})")
-    return math.factorial(n)
+    result = math.factorial(n)
+    if len(str(result)) > MAX_RESULT_DIGITS:
+        raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+    return result
 
 
 def _mean(*args: float) -> float:
@@ -282,16 +295,19 @@ def _temp(value: float, from_unit: float | str, to_unit: float | str) -> float:
     return convert_temperature(value, str(from_unit), str(to_unit))
 
 
-def _convert(value: Any, to_unit: str) -> Any:
+def _convert(value: Any, to_unit: str | Any) -> Any:
     """Convert a value with units to a different unit.
 
     Args:
         value: A number or UnitValue to convert
-        to_unit: The target unit to convert to (can be str or UnitValue)
+        to_unit: The target unit to convert to (can be str, UnitValue, or callable)
 
     Returns:
         UnitValue with the converted value and unit
     """
+    # Handle case where to_unit is passed as a function (e.g., min function instead of "min" unit)
+    if callable(to_unit) and not isinstance(to_unit, UnitValue):
+        to_unit = to_unit.__name__ if hasattr(to_unit, '__name__') else str(to_unit)
     # Handle case where to_unit is passed as a UnitValue (unit name like 'ft')
     if isinstance(to_unit, UnitValue):
         to_unit = to_unit.unit if to_unit.unit else str(to_unit.value)
@@ -435,7 +451,10 @@ def _perm(n: int, r: int | None = None) -> int:
     """Calculate permutations P(n,r) = n!/(n-r)!."""
     n = int(n)
     if r is None:
-        return math.factorial(n)
+        result = math.factorial(n)
+        if len(str(result)) > MAX_RESULT_DIGITS:
+            raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+        return result
     r = int(r)
     if r > n:
         return 0
@@ -517,6 +536,8 @@ def _prime_factors(n: int) -> str:
 def _next_prime(n: int) -> int:
     """Return the next prime after n."""
     n = int(n)
+    if n > 10**15:
+        raise EvaluationError("Input too large for nextprime")
     candidate = n + 1
     while not _is_prime(candidate):
         candidate += 1
@@ -1239,6 +1260,10 @@ class Evaluator(ast.NodeVisitor):
 
         result = self.BINOPS[op_class](left_val, right_val)
 
+        if op_class in (ast.LShift, ast.RShift):
+            if isinstance(result, int) and len(str(result)) > MAX_RESULT_DIGITS:
+                raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+
         # Compound unit detection for division:
         # 1. UnitValue / UnitValue with different units -> "left_unit/right_unit"
         # 2. UnitValue / number whose AST name is a unit -> "left_unit/name" (e.g., km/h, mi/h)
@@ -1388,14 +1413,14 @@ class Evaluator(ast.NodeVisitor):
 
         # Handle result
         if isinstance(result, UnitValue):
-            return result
+            return _check_result_size(result)
         if isinstance(result, str):
             return result
         if result is None:
             return None  # Functions like seed() and clearvars() return None
         if not isinstance(result, (int, float, complex)):
             raise EvaluationError(f"Result must be a number, got '{type(result)}'")
-        return result
+        return _check_result_size(result)
 
 
 def evaluate(expression: str) -> Any:
@@ -1439,11 +1464,34 @@ class TimeoutError(Exception):
     pass
 
 
+def _evaluate_with_timeout_worker(expr: str, result_queue: multiprocessing.Queue) -> None:
+    """Run evaluation in a child process and put result in queue.
+
+    Must be a module-level function (not nested) so it can be pickled
+    by the 'spawn' multiprocessing start method.
+    """
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+    except (ImportError, ValueError, OSError):
+        pass
+    try:
+        _ensure_config_loaded()
+        result = evaluate_raw(expr)
+        result_queue.put(("ok", result))
+    except Exception as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
+
+
 def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
     """Evaluate an expression with a timeout for untrusted input.
 
     This is the recommended function for evaluating expressions from
     untrusted sources (web requests, user input, etc.).
+
+    Uses multiprocessing.Process with the 'spawn' start method to run
+    evaluation in a separate process that can be reliably terminated.
+    A ThreadPoolExecutor's future.cancel() does NOT stop a running thread.
 
     Args:
         expression: A raw expression string (with spaces, natural language, etc.)
@@ -1454,7 +1502,7 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
 
     Raises:
         TimeoutError: If evaluation exceeds the timeout.
-        EvaluationError: If the expression is invalid or contains unsupported operations.
+        EvaluationError: If expression is invalid or contains unsupported operations.
 
     Note:
         Expressions that exceed MAX_EXPONENT (10000) or MAX_FACTORIAL (1000)
@@ -1464,17 +1512,23 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
         >>> result = evaluate_with_timeout("sum([i**2 for i in range(100)])", timeout=1.0)
         # May raise TimeoutError for slow expressions
     """
-    import concurrent.futures
+    ctx = multiprocessing.get_context("spawn")
+    queue: multiprocessing.Queue = ctx.Queue()
+    proc = ctx.Process(target=_evaluate_with_timeout_worker, args=(expression, queue))
+    proc.start()
 
-    _ensure_config_loaded()
+    try:
+        status, value = queue.get(timeout=timeout)
+    except Exception:
+        proc.terminate()
+        proc.join(timeout=2)
+        raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(evaluate_raw, expression)
-        try:
-            return future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            future.cancel()
-            raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
+    proc.join(timeout=2)
+
+    if status == "error":
+        raise EvaluationError(value)
+    return value
 
 
 _default_evaluator = Evaluator()
