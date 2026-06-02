@@ -7,10 +7,12 @@ and measurement tools to agents.
 
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 from typing import Any
 
+from .. import __version__
 from .schemas import TOOL_SCHEMAS
 from .tools import (
     canonicalize_text_mcp,
@@ -151,14 +153,89 @@ def _invalid_request(request_id: Any, message: str) -> dict:
     }
 
 
+def _levenshtein_distance(s1: str, s2: str) -> int:
+    """Compute Levenshtein edit distance between two strings."""
+    if len(s1) < len(s2):
+        return _levenshtein_distance(s2, s1)
+
+    if len(s2) == 0:
+        return len(s1)
+
+    prev_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        curr_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = prev_row[j + 1] + 1
+            deletions = curr_row[j] + 1
+            substitutions = prev_row[j] + (c1 != c2)
+            curr_row.append(min(insertions, deletions, substitutions))
+        prev_row = curr_row
+
+    return prev_row[-1]
+
+
 def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
-    """Find a case-insensitive close match for tool name."""
+    """Find a case-insensitive close match for tool name using edit distance.
+
+    Returns the best matching tool name, or None if no good match found.
+    A match is considered good if the edit distance is at most half the length
+    of the shorter string, or if it's a prefix/substring match.
+    """
     name_lower = name.lower()
+
+    # First check for exact case-insensitive match
     for tool_name in handlers:
         if tool_name.lower() == name_lower:
             return tool_name
-        if name_lower in tool_name.lower() or tool_name.lower() in name_lower:
-            return tool_name
+
+    # Find best match by edit distance
+    best_match: str | None = None
+    best_distance = float('inf')
+
+    for tool_name in handlers:
+        tool_lower = tool_name.lower()
+
+        # Prefix/substring match is always good
+        if name_lower in tool_lower or tool_lower in name_lower:
+            if best_match is None or len(tool_name) < len(best_match):
+                best_match = tool_name
+                best_distance = 0
+            continue
+
+        # Compute edit distance
+        distance = _levenshtein_distance(name_lower, tool_lower)
+        threshold = max(len(name_lower), len(tool_lower)) // 2
+
+        if distance < best_distance and distance <= threshold:
+            best_distance = distance
+            best_match = tool_name
+
+    return best_match
+
+
+def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
+    """Validate that arguments match the handler's signature.
+
+    Returns None if valid, or an error message string if invalid.
+    """
+    try:
+        sig = inspect.signature(handler)
+    except (ValueError, TypeError):
+        # Can't introspect; allow call (handler will raise on bad args)
+        return None
+
+    params = sig.parameters
+
+    # Check for unexpected keyword arguments
+    unexpected = set(arguments.keys()) - set(params.keys())
+    if unexpected:
+        return f"Unexpected argument(s): {', '.join(sorted(unexpected))}"
+
+    # Check for missing required arguments (no default)
+    for name, param in params.items():
+        if param.default is inspect.Parameter.empty and name not in arguments:
+            return f"Missing required argument: {name}"
+
     return None
 
 
@@ -187,8 +264,20 @@ def _handle_call_tool(request: dict) -> dict:
             },
         }
 
+    # Validate arguments against handler signature before calling
+    handler = TOOL_HANDLERS[name]
+    validation_error = _validate_arguments(handler, arguments)
+    if validation_error is not None:
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32602,
+                "message": f"Invalid arguments for tool '{name}': {validation_error}",
+            },
+        }
+
     try:
-        handler = TOOL_HANDLERS[name]
         result = handler(**arguments)
 
         # If result is an error envelope, return as error
@@ -277,7 +366,7 @@ def _handle_initialize(request: dict) -> dict:
             },
             "serverInfo": {
                 "name": "eggcalc",
-                "version": "1.0.0",
+                "version": __version__,
             },
         },
     }

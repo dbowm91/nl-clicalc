@@ -248,16 +248,28 @@ def _min(*args: float) -> float:
 
 def _to_bin(x: int) -> str:
     """Convert integer to binary string."""
+    if isinstance(x, float):
+        if not x.is_integer():
+            raise EvaluationError("bin() requires integer input")
+        x = int(x)
     return bin(x)
 
 
 def _to_hex(x: int) -> str:
     """Convert integer to hexadecimal string."""
+    if isinstance(x, float):
+        if not x.is_integer():
+            raise EvaluationError("hex() requires integer input")
+        x = int(x)
     return hex(x)
 
 
 def _to_oct(x: int) -> str:
     """Convert integer to octal string."""
+    if isinstance(x, float):
+        if not x.is_integer():
+            raise EvaluationError("oct() requires integer input")
+        x = int(x)
     return oct(x)
 
 

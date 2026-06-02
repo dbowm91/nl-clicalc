@@ -340,6 +340,8 @@ def math_eval(expression: str) -> dict:
     Returns:
         Success response with result, or error envelope.
     """
+    if not isinstance(expression, str):
+        return _error_response("invalid_arguments", f"expression must be a string, got {type(expression).__name__}", tool="math_eval")
     if len(expression) > MAX_EXPRESSION_LENGTH:
         return _error_response("input_too_large", f"Expression exceeds maximum length of {MAX_EXPRESSION_LENGTH}", tool="math_eval")
     try:
@@ -440,6 +442,9 @@ def constant_lookup(name: str) -> dict:
         Success response with constant value and symbol.
     """
     try:
+        if len(name) > MAX_TEXT_LENGTH:
+            return _error_response("input_too_large", f"Name length {len(name)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}", tool="constant_lookup")
+
         constants = {
             "na": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
             "avogadro": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
