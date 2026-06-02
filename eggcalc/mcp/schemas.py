@@ -1547,7 +1547,6 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "normalization": {
                     "type": "string",
                     "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"],
-                    "default": None,
                     "description": "Normalization form (default: policy-specific)",
                 },
             },

@@ -17,6 +17,7 @@ from typing import Any
 from .. import __version__
 from .schemas import TOOL_SCHEMAS
 from .tools import (
+    _sanitize_error,
     canonicalize_text_mcp,
     cargo_toml_inspect_mcp,
     code_fence_extract_mcp,
@@ -294,6 +295,8 @@ def _handle_call_tool(request: dict) -> dict:
 
     name = params.get("name", "")
     arguments = params.get("arguments", {})
+    if not isinstance(name, str) or not name:
+        return _invalid_request(request.get("id"), "Invalid params: missing tool name")
     if not isinstance(arguments, dict):
         return _invalid_request(request.get("id"), "Invalid arguments: expected object")
 
@@ -387,7 +390,7 @@ def _handle_call_tool(request: dict) -> dict:
         }
 
     except Exception as e:
-        message = str(e).replace('\n', ' ')[:200]
+        message = _sanitize_error(str(e))[:200]
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),

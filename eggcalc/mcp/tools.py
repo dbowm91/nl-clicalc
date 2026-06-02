@@ -265,7 +265,7 @@ def _regex_test_worker(
 def _sanitize_error(message: str) -> str:
     """Sanitize error messages by removing non-ASCII, file paths, and Python internals."""
     text = message.encode("ascii", "replace").decode("ascii")
-    text = re.sub(r'File\s+"[^"]*"', 'File "<redacted>"', text)
+    text = re.sub(r'File\s+["\'][^"\']*["\']', 'File "<redacted>"', text)
     text = re.sub(r'line\s+\d+', 'line <redacted>', text)
     text = re.sub(r'(?:in\s+)<[^>]+>', 'in <module>', text)
     text = re.sub(r'[A-Za-z_][\w.]*\s*=\s*"[^"]*"', '<var>=<redacted>', text)
@@ -3114,6 +3114,13 @@ def dotenv_validate_mcp(
                 ["Use a simpler regex pattern for key_pattern"],
                 tool="dotenv_validate",
             )
+    except re.error:
+        return _error_response(
+            "invalid_arguments",
+            "key_pattern is not a valid regular expression",
+            ["Fix the regex syntax in key_pattern"],
+            tool="dotenv_validate",
+        )
     except Exception:
         pass
 

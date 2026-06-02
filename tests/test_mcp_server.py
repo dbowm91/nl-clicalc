@@ -5064,3 +5064,85 @@ class TestResponseEnvelope:
         assert "span" in finding
         assert "char_start" in finding["span"]
         assert "char_end" in finding["span"]
+
+
+class TestMCPSecurityAndValidation:
+    """Tests for MCP server security and input validation."""
+
+    def test_math_eval_injection_attempt(self):
+        """Test that code injection attempts are blocked."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 4002,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "__import__('os').system('ls')"},
+            },
+        })
+        # Errors come as JSON-RPC errors (not in result.content)
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+
+    def test_math_eval_type_check(self):
+        """Test that non-string expression is rejected."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 4003,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": 123},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_missing_tool_name(self):
+        """Test that missing tool name returns proper error."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 4004,
+            "method": "tools/call",
+            "params": {
+                "arguments": {"text": "hello"},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32600
+
+    def test_unknown_tool_with_suggestion(self):
+        """Test that unknown tool returns suggestion."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 4005,
+            "method": "tools/call",
+            "params": {
+                "name": "math_evl",
+                "arguments": {"expression": "1+1"},
+            },
+        })
+        assert "error" in response
+        assert "math_eval" in response["error"]["message"]
+
+    def test_text_too_large(self):
+        """Test that oversized text input is rejected."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 4006,
+            "method": "tools/call",
+            "params": {
+                "name": "text_measure",
+                "arguments": {"text": "x" * (MAX_TEXT_LENGTH + 1)},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32000
+
+    def test_batch_request_rejected(self):
+        """Test that batch JSON-RPC requests are rejected."""
+        response = handle_request([
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        ])
+        assert "error" in response
+        assert response["error"]["code"] == -32600

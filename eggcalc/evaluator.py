@@ -68,7 +68,10 @@ DEFAULT_CACHE_SIZE = 1024
 
 
 def _check_result_size(result: Any) -> Any:
-    """Raise EvaluationError if an integer result has too many digits."""
+    """Raise EvaluationError if a result has too many digits or is NaN/inf."""
+    if isinstance(result, float):
+        if math.isnan(result) or math.isinf(result):
+            raise EvaluationError("Result too large")
     if isinstance(result, int) and not isinstance(result, bool):
         if len(str(result)) > MAX_RESULT_DIGITS:
             raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
@@ -200,7 +203,13 @@ def _safe_pow(base: float, exp: float) -> float:
         raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
     if base < 0 and exp != int(exp):
         raise EvaluationError("Cannot raise negative number to non-integer power")
-    result = pow(base, exp)
+    try:
+        result = pow(base, exp)
+    except OverflowError:
+        raise EvaluationError("Result too large") from None
+    if isinstance(result, float):
+        if math.isnan(result) or math.isinf(result):
+            raise EvaluationError("Result too large")
     if abs(result) > MAX_RESULT_VALUE:
         raise EvaluationError("Result too large")
     return result
@@ -324,7 +333,10 @@ def _convert(value: Any, to_unit: str | Any) -> Any:
         return value.convert_to(to_unit)
     # If it's just a number without units, assume it's a dimensionless value
     # and try to convert (will fail if not a valid unit)
-    return UnitValue(float(value), None).convert_to(to_unit)
+    try:
+        return UnitValue(float(value), None).convert_to(to_unit)
+    except ValueError as e:
+        raise EvaluationError(str(e)) from None
 
 
 # === Complex number functions ===
@@ -444,18 +456,38 @@ def _bitrshift(a: int, b: int) -> int:
     return int(a) >> int(b)
 
 
+def _bitlshift_safe(a: int, b: int) -> int:
+    """Left shift with non-negative check."""
+    b = int(b)
+    if b < 0:
+        raise EvaluationError("Shift count must be non-negative")
+    return int(a) << b
+
+
+def _bitrshift_safe(a: int, b: int) -> int:
+    """Right shift with non-negative check."""
+    b = int(b)
+    if b < 0:
+        raise EvaluationError("Shift count must be non-negative")
+    return int(a) >> b
+
+
 # === Combinatorics ===
 
 
 def _perm(n: int, r: int | None = None) -> int:
     """Calculate permutations P(n,r) = n!/(n-r)!."""
     n = int(n)
+    if n < 0:
+        raise EvaluationError("perm requires non-negative input")
     if r is None:
         result = math.factorial(n)
         if len(str(result)) > MAX_RESULT_DIGITS:
             raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
         return result
     r = int(r)
+    if r < 0:
+        raise EvaluationError("perm requires non-negative arguments")
     if r > n:
         return 0
     return math.perm(n, r)
@@ -478,7 +510,11 @@ def _lcm(*args: int) -> int:
         raise EvaluationError("lcm requires at least one argument")
     result = int(abs(args[0]))
     for arg in args[1:]:
-        result = abs(result * int(arg)) // math.gcd(result, int(arg))
+        b = int(arg)
+        g = math.gcd(result, b)
+        if g == 0:
+            return 0
+        result = abs(result * b) // g
     return result
 
 
@@ -1112,8 +1148,8 @@ class Evaluator(ast.NodeVisitor):
         ast.Mod: _safe_mod,
         ast.Pow: _safe_pow,
         # Bitwise operators
-        ast.LShift: (lambda a, b: int(a) << int(b)),
-        ast.RShift: (lambda a, b: int(a) >> int(b)),
+        ast.LShift: _bitlshift_safe,
+        ast.RShift: _bitrshift_safe,
         ast.BitOr: (lambda a, b: a | b),
         ast.BitXor: (lambda a, b: a ^ b),
         ast.BitAnd: (lambda a, b: a & b),
@@ -1260,6 +1296,10 @@ class Evaluator(ast.NodeVisitor):
 
         result = self.BINOPS[op_class](left_val, right_val)
 
+        # Check for NaN/inf in float results (int results cannot be NaN/inf)
+        if isinstance(result, float) and (math.isnan(result) or math.isinf(result)):
+            raise EvaluationError("Result too large")
+
         if op_class in (ast.LShift, ast.RShift):
             if isinstance(result, int) and len(str(result)) > MAX_RESULT_DIGITS:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
@@ -1274,7 +1314,7 @@ class Evaluator(ast.NodeVisitor):
             if not isinstance(right, UnitValue) and right_name and right_name in UNIT_ALIASES:
                 unit_name = UNIT_ALIASES[right_name]
                 compound = f"{left.unit}/{unit_name}"
-                return UnitValue(left_val, compound)
+                return UnitValue(left_val / right_val, compound)
 
         # Compound unit detection for multiplication:
         # UnitValue * UnitValue with different units -> "left_unit*right_unit"

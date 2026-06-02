@@ -804,5 +804,324 @@ class TestUnicodeScriptOther:
         assert unicode_script("%") == "Other"
 
 
+class TestDivisionByZero:
+    """Tests for division by zero error handling."""
+
+    def test_division_by_zero(self):
+        """Test that division by zero raises EvaluationError."""
+        with pytest.raises(EvaluationError, match="Cannot divide by zero"):
+            evaluate("1/0")
+
+    def test_floor_div_by_zero(self):
+        """Test that floor division by zero raises EvaluationError."""
+        with pytest.raises(EvaluationError, match="Cannot divide by zero"):
+            evaluate("1//0")
+
+    def test_mod_by_zero(self):
+        """Test that modulo by zero raises EvaluationError."""
+        with pytest.raises(EvaluationError, match="Cannot divide by zero"):
+            evaluate("1%0")
+
+
+class TestErrorHandling:
+    """Tests for proper error handling (no raw Python exceptions)."""
+
+    def test_perm_negative(self):
+        """Test that perm with negative input raises EvaluationError."""
+        with pytest.raises(EvaluationError, match="non-negative"):
+            evaluate("perm(-1)")
+
+    def test_perm_negative_r(self):
+        """Test that perm with negative r raises EvaluationError."""
+        with pytest.raises(EvaluationError, match="non-negative"):
+            evaluate("perm(5, -1)")
+
+    def test_shift_negative(self):
+        """Test that negative shift count raises EvaluationError."""
+        with pytest.raises(EvaluationError, match="non-negative"):
+            evaluate("5 << -1")
+        with pytest.raises(EvaluationError, match="non-negative"):
+            evaluate("5 >> -1")
+
+    def test_pow_overflow(self):
+        """Test that very large exponent raises EvaluationError."""
+        with pytest.raises(EvaluationError, match="Exponent too large"):
+            evaluate("2 ** 100000")
+
+    def test_log_zero(self):
+        """Test that log of zero raises EvaluationError."""
+        with pytest.raises(EvaluationError):
+            evaluate("log(0)")
+
+    def test_factorial_negative(self):
+        """Test that factorial of negative raises EvaluationError."""
+        with pytest.raises(EvaluationError):
+            evaluate("factorial(-1)")
+
+    def test_factorial_non_integer(self):
+        """Test that factorial of non-integer raises EvaluationError."""
+        with pytest.raises(EvaluationError):
+            evaluate("factorial(1.5)")
+
+
+class TestCompoundUnitDivision:
+    """Tests for compound unit division (Fix #1)."""
+
+    def test_unit_division_by_number(self):
+        """Test that UnitValue / number correctly divides the value."""
+        result = evaluate("(100*km) / 2")
+        assert isinstance(result, UnitValue)
+        assert result.unit == "km"
+        assert abs(result.value - 50.0) < 1e-10
+
+    def test_unit_division_by_unit(self):
+        """Test that UnitValue / UnitValue with different units creates compound."""
+        result = evaluate("(100*km) / (2*m)")
+        assert isinstance(result, UnitValue)
+        assert result.unit == "km/m"
+        assert abs(result.value - 50000.0) < 1e-10
+
+
+class TestUppercaseOperators:
+    """Tests for uppercase operator words (Fix #3)."""
+
+    def test_uppercase_plus(self):
+        """Test that uppercase PLUS works."""
+        result, code = run("3 PLUS 5", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 8
+
+    def test_uppercase_minus(self):
+        """Test that uppercase MINUS works."""
+        result, code = run("10 MINUS 3", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 7
+
+    def test_uppercase_times(self):
+        """Test that uppercase TIMES works."""
+        result, code = run("4 TIMES 5", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 20
+
+    def test_mixed_case(self):
+        """Test mixed case operator words."""
+        result, code = run("3 PlUs 5", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 8
+
+
+class TestFunctionSpaceNumber:
+    """Tests for function followed by space and number (Fix #2/#17)."""
+
+    def test_sqrt_space_number(self):
+        """Test 'sqrt 144' parses correctly."""
+        result, code = run("sqrt 144", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 12.0) < 1e-10
+
+    def test_sin_space_number(self):
+        """Test 'sin 0' parses correctly."""
+        result, code = run("sin 0", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val) < 1e-10
+
+    def test_abs_space_number(self):
+        """Test 'abs( -5)' parses correctly."""
+        result, code = run("abs( -5)", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 5
+
+
+class TestTemperatureCaseSensitivity:
+    """Tests for lowercase temperature unit support (Fix #18)."""
+
+    def test_lowercase_f_to_c(self):
+        """Test '100f to c' converts correctly."""
+        result, code = run("100f to c", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 37.77777777777778) < 1e-5
+
+    def test_lowercase_c_to_f(self):
+        """Test '0c to f' converts correctly."""
+        result, code = run("0c to f", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 32.0) < 1e-10
+
+    def test_uppercase_still_works(self):
+        """Test that uppercase temperature units still work."""
+        result, code = run("100F to C", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 37.77777777777778) < 1e-5
+
+
+class TestUntestedMathFunctions:
+    """Tests for math functions that had no test coverage."""
+
+    def test_log(self):
+        """Test natural logarithm."""
+        result = evaluate("log(1)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val) < 1e-10
+
+    def test_log10(self):
+        """Test base-10 logarithm."""
+        result = evaluate("log10(100)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 2.0) < 1e-10
+
+    def test_log2(self):
+        """Test base-2 logarithm."""
+        result = evaluate("log2(8)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 3.0) < 1e-10
+
+    def test_exp(self):
+        """Test exponential function."""
+        result = evaluate("exp(0)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 1.0) < 1e-10
+
+    def test_abs_function(self):
+        """Test absolute value function."""
+        result = evaluate("abs(-5)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 5
+
+    def test_floor(self):
+        """Test floor function."""
+        result = evaluate("floor(3.7)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 3
+
+    def test_ceil(self):
+        """Test ceiling function."""
+        result = evaluate("ceil(3.2)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 4
+
+    def test_sign(self):
+        """Test sign function."""
+        result = evaluate("sign(-5)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == -1
+
+    def test_cbrt(self):
+        """Test cube root function."""
+        result = evaluate("cbrt(27)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 3.0) < 1e-10
+
+    def test_asin(self):
+        """Test arcsine function."""
+        result = evaluate("asin(1)")
+        import math
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - math.pi / 2) < 1e-10
+
+    def test_acos(self):
+        """Test arccosine function."""
+        result = evaluate("acos(1)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val) < 1e-10
+
+    def test_atan(self):
+        """Test arctangent function."""
+        result = evaluate("atan(1)")
+        import math
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - math.pi / 4) < 1e-10
+
+    def test_factorial(self):
+        """Test factorial function."""
+        result = evaluate("factorial(5)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 120
+
+    def test_gcd(self):
+        """Test GCD function."""
+        result = evaluate("gcd(12, 8)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 4
+
+    def test_sum(self):
+        """Test sum function."""
+        result = evaluate("sum(1, 2, 3, 4)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 10
+
+    def test_max_function(self):
+        """Test max function."""
+        result = evaluate("max(3, 7, 2)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 7
+
+    def test_min_function(self):
+        """Test min function."""
+        result = evaluate("min(3, 7, 2)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 2
+
+    def test_hypot(self):
+        """Test hypotenuse function."""
+        result = evaluate("hypot(3, 4)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 5.0) < 1e-10
+
+    def test_clamp(self):
+        """Test clamp function."""
+        result = evaluate("clamp(5, 1, 10)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 5
+
+    def test_clamp_below(self):
+        """Test clamp with value below range."""
+        result = evaluate("clamp(-5, 0, 10)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 0
+
+    def test_prevprime(self):
+        """Test previous prime function."""
+        result = evaluate("prevprime(10)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 7
+
+    def test_var_sample(self):
+        """Test sample variance function."""
+        result = evaluate("variance(2, 4, 4, 4, 5, 5, 7, 9)")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 4.0) < 1e-10
+
+    def test_nl_numbers(self):
+        """Test natural language number parsing."""
+        result, code = run("five plus three", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 8
+
+    def test_nl_sqrt(self):
+        """Test natural language sqrt with single number."""
+        result, code = run("sqrt of 144", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 12.0) < 1e-10
+
+    def test_nl_sqrt_simple(self):
+        """Test natural language sqrt with simple number word."""
+        result, code = run("square root of nine", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 3.0) < 1e-10
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

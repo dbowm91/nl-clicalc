@@ -57,6 +57,9 @@ MAX_NESTING_DEPTH = 100
 # Pre-computed sorted units list for performance (avoid re-sorting each call)
 _UNITS_BY_LENGTH: list[str] = sorted(UNIT_ALIASES.keys(), key=len, reverse=True)
 
+# Lowercase temperature abbreviations that should map to canonical uppercase forms
+_LOWERCASE_TEMP_UNITS: dict[str, str] = {"f": "F", "c": "C", "k": "K"}
+
 # Common unit prefixes for faster lookup (most frequently used units first)
 _COMMON_UNITS: list[str] = [
     "m",
@@ -970,6 +973,15 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Strip "and" as a filler word in NL number expressions
     expression = re.sub(r"\band\b", "", expression, flags=re.IGNORECASE)
 
+    # Replace single number words with digits BEFORE _join_number_parts runs
+    # This ensures "forty four" → "40 4" → "40+4" (correct) instead of remaining as words
+    _ALL_NUMBER_WORDS: dict[str, str] = {}
+    for val, words in NUMBER_WORDS.items():
+        for word in words:
+            _ALL_NUMBER_WORDS[word] = val
+    for word, replacement in sorted(_ALL_NUMBER_WORDS.items(), key=lambda x: len(x[0]), reverse=True):
+        expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
+
     # Handle "word percent" patterns before word_to_all converts "percent" to "%"
     # e.g., "fifty percent of 200" -> "50/100*200" -> "0.5*200"
     word_to_number = operators.get("word_to_number", {})
@@ -984,8 +996,8 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Use word boundaries to avoid replacing parts of words
     word_to_all = operators.get("word_to_all", {})
     for word, replacement in sorted(word_to_all.items(), key=lambda x: len(x[0]), reverse=True):
-        # Use regex with word boundaries to only match whole words
-        expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression)
+        # Use regex with word boundaries to only match whole words (case-insensitive)
+        expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
     # Handle "N percent" -> "N/100" AFTER word_to_all substitutions
     # This allows NL words like "fifty" to be converted to digits first
@@ -1020,23 +1032,43 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     # Replace whitespace outside parentheses with nothing
     # Preserve whitespace inside parentheses to separate function args
+    # Also insert * between function names and following digits (e.g., "sqrt 144" -> "sqrt*144")
+    _FUNC_NAMES = set(FUNCTION_MAPPINGS.values())
     result = []
     depth = 0
+    prev_was_func_end = False
     for char in expression:
         if char == "(":
             depth += 1
             if depth > MAX_NESTING_DEPTH:
                 raise ValueError(f"Expression nesting too deep (max {MAX_NESTING_DEPTH})")
             result.append(char)
+            prev_was_func_end = False
         elif char == ")":
             depth -= 1
             result.append(char)
+            prev_was_func_end = False
         elif char.isspace():
             if depth > 0:
                 result.append(char)  # Keep space inside parentheses
             # Skip space outside parentheses
         else:
+            if prev_was_func_end and char.isdigit():
+                result.append("*")
             result.append(char)
+            # Check if we just completed a function name
+            if char.isalpha():
+                # Look back to see if the current alpha sequence is a function name
+                trail = []
+                for c in reversed(result):
+                    if c.isalpha():
+                        trail.append(c)
+                    else:
+                        break
+                candidate = "".join(reversed(trail))
+                prev_was_func_end = candidate in _FUNC_NAMES
+            else:
+                prev_was_func_end = False
 
     expression = "".join(result)
 
@@ -1136,6 +1168,15 @@ def _preprocess_units(expression: str) -> str:
                             i += len(unit)
                             found_unit = True
                             break
+                    # Handle lowercase temperature units (f, c, k)
+                    if not found_unit and remaining:
+                        first_char = remaining[0]
+                        if first_char.lower() in _LOWERCASE_TEMP_UNITS:
+                            result.append(num)
+                            result.append("*")
+                            result.append(_LOWERCASE_TEMP_UNITS[first_char.lower()])
+                            i += 1
+                            found_unit = True
                     if not found_unit:
                         result.append(num)
             else:
@@ -1162,46 +1203,62 @@ def _handle_unit_conversion_from_tokens(tokens: list) -> list:
     for i in range(len(tokens) - 2):
         # Check if tokens[i] ends with a unit (has number prefix)
         token = tokens[i]
+        from_unit = None
+        from_unit_normalized = None
+        num_part = None
         for unit in _UNITS_BY_LENGTH:
             if token.endswith(unit):
                 num_part = token[: -len(unit)]
                 if num_part and num_part[-1].isdigit():
-                    # Found number+unit pattern
                     from_unit = unit
                     from_unit_normalized = UNIT_ALIASES.get(from_unit, from_unit)
+                    break
+        # Handle lowercase temperature units (f, c, k) for source
+        if from_unit is None:
+            last_char = token[-1:] if token else ""
+            if last_char.lower() in _LOWERCASE_TEMP_UNITS:
+                candidate_num = token[:-1]
+                if candidate_num and candidate_num[-1].isdigit():
+                    from_unit = last_char
+                    from_unit_normalized = _LOWERCASE_TEMP_UNITS[last_char.lower()]
+                    num_part = candidate_num
 
-                    # Check conversion word (uppercase from operator split)
-                    conv_word = tokens[i + 1].upper()
-                    if conv_word in {"IN", "TO"}:
-                        # Check target unit
-                        to_token = tokens[i + 2]
-                        to_unit_normalized = None
+        if from_unit is not None:
+            # Check conversion word (uppercase from operator split)
+            conv_word = tokens[i + 1].upper()
+            if conv_word in {"IN", "TO"}:
+                # Check target unit
+                to_token = tokens[i + 2]
+                to_unit_normalized = None
 
-                        for unit2 in _UNITS_BY_LENGTH:
-                            if to_token == unit2 or to_token.endswith(unit2):
-                                to_unit_normalized = UNIT_ALIASES.get(unit2, unit2)
-                                break
+                for unit2 in _UNITS_BY_LENGTH:
+                    if to_token == unit2 or to_token.endswith(unit2):
+                        to_unit_normalized = UNIT_ALIASES.get(unit2, unit2)
+                        break
+                # Handle lowercase temperature units (f, c, k)
+                if to_unit_normalized is None and to_token.lower() in _LOWERCASE_TEMP_UNITS:
+                    to_unit_normalized = _LOWERCASE_TEMP_UNITS[to_token.lower()]
 
-                        if to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
-                            from .units import are_units_compatible, get_unit_category
+                if to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
+                    from .units import are_units_compatible, get_unit_category
 
-                            cat1 = get_unit_category(from_unit_normalized)
-                            cat2 = get_unit_category(to_unit_normalized)
+                    cat1 = get_unit_category(from_unit_normalized)
+                    cat2 = get_unit_category(to_unit_normalized)
 
-                            if (
-                                cat1
-                                and cat2
-                                and are_units_compatible(from_unit_normalized, to_unit_normalized)
-                            ):
-                                # Replace the three tokens with the convert function
-                                new_tokens = (
-                                    tokens[:i]
-                                    + [
-                                        f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
-                                    ]
-                                    + tokens[i + 3 :]
-                                )
-                                return new_tokens
+                    if (
+                        cat1
+                        and cat2
+                        and are_units_compatible(from_unit_normalized, to_unit_normalized)
+                    ):
+                        # Replace the three tokens with the convert function
+                        new_tokens = (
+                            tokens[:i]
+                            + [
+                                f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
+                            ]
+                            + tokens[i + 3 :]
+                        )
+                        return new_tokens
 
     return tokens
 
