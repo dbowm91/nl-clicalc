@@ -53,7 +53,7 @@ class UnitValue:
         return abs(self.value - other.value) < FLOAT_EPSILON
 
     def __hash__(self) -> int:
-        return hash((self.value, self.unit))
+        return hash((round(self.value, 10), self.unit))
 
     def __add__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
@@ -85,8 +85,6 @@ class UnitValue:
     def __mul__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             if self.unit and other.unit:
-                if self.unit == other.unit:
-                    return UnitValue(self.value * other.value, self.unit)
                 return UnitValue(self.value * other.value, f"{self.unit}*{other.unit}")
             return UnitValue(self.value * other.value, self.unit or other.unit)
         return UnitValue(self.value * other, self.unit)
@@ -104,9 +102,13 @@ class UnitValue:
         return UnitValue(self.value / other, self.unit)
 
     def __rtruediv__(self, other: Numeric) -> UnitValue:
-        return UnitValue(other / self.value, self.unit)
+        if self.unit:
+            return UnitValue(other / self.value, f"1/{self.unit}")
+        return UnitValue(other / self.value, None)
 
     def __pow__(self, other: Numeric) -> UnitValue:
+        if self.unit and isinstance(other, int):
+            return UnitValue(self.value**other, f"{self.unit}**{other}")
         return UnitValue(self.value**other, self.unit)
 
     def __neg__(self) -> UnitValue:

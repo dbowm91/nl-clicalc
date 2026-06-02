@@ -513,7 +513,7 @@ class TestBitwise:
         """Test bitwise AND."""
         from eggcalc import evaluate_raw
 
-        assert self._get_value(evaluate_raw("5 AND 3")) == 1
+        assert self._get_value(evaluate_raw("5 bitand 3")) == 1
         assert self._get_value(evaluate_raw("5 & 3")) == 1
 
     def test_bitor(self):

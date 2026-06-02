@@ -306,12 +306,13 @@ def _handle_call_tool(request: dict) -> dict:
         }
 
     except Exception as e:
+        message = str(e).replace('\n', ' ')[:200]
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
             "error": {
                 "code": -32000,
-                "message": f"Tool execution error: {str(e)}",
+                "message": f"Tool execution error: {message}",
             },
         }
 
@@ -411,6 +412,7 @@ def main() -> int:
         if len(line.encode('utf-8')) > MAX_REQUEST_BYTES:
             response = {
                 "jsonrpc": "2.0",
+                "id": None,
                 "error": {
                     "code": -32700,
                     "message": f"Request exceeds maximum size of {MAX_REQUEST_BYTES} bytes",
@@ -422,6 +424,7 @@ def main() -> int:
         if line.startswith('['):
             response = {
                 "jsonrpc": "2.0",
+                "id": None,
                 "error": {
                     "code": -32600,
                     "message": "Batch requests are not supported",
@@ -435,6 +438,7 @@ def main() -> int:
         except json.JSONDecodeError:
             response = {
                 "jsonrpc": "2.0",
+                "id": None,
                 "error": {
                     "code": -32700,
                     "message": "Parse error: invalid JSON",
@@ -446,12 +450,13 @@ def main() -> int:
         try:
             response = handle_request(request)
         except Exception as e:
+            message = str(e).replace('\n', ' ')[:200]
             response = {
                 "jsonrpc": "2.0",
                 "id": request.get("id") if isinstance(request, dict) else None,
                 "error": {
                     "code": -32603,
-                    "message": f"Internal error: {str(e)}",
+                    "message": f"Internal error: {message}",
                 },
             }
 

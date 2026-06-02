@@ -646,14 +646,14 @@ def _complex_aware(
     if cmplx_func is None:
         cmplx_func = getattr(cmath, real_func.__name__, real_func)
 
-    def wrapper(x: float) -> complex | float:
+    def wrapper(x, *args):
         if isinstance(x, complex):
-            return cmplx_func(x)
+            return cmplx_func(x, *args)
         if use_complex_for_negative and x < 0:
-            return cmplx_func(x)
+            return cmplx_func(x, *args)
         if use_complex_for_abs_gt_one and abs(x) > 1:
-            return cmplx_func(x)
-        return real_func(x)
+            return cmplx_func(x, *args)
+        return real_func(x, *args)
 
     wrapper.__name__ = real_func.__name__
     wrapper.__doc__ = f"{real_func.__name__} that handles complex numbers."
@@ -661,9 +661,34 @@ def _complex_aware(
 
 
 _sqrt = _complex_aware(math.sqrt, cmath.sqrt, use_complex_for_negative=True)
-_log = _complex_aware(math.log, cmath.log, use_complex_for_negative=True)
-_log10 = _complex_aware(math.log10, cmath.log10, use_complex_for_negative=True)
-_log2 = _complex_aware(math.log2, lambda x: cmath.log(x, 2), use_complex_for_negative=True)
+
+def _safe_log(*args):
+    try:
+        return _complex_aware(math.log, cmath.log, use_complex_for_negative=True)(*args)
+    except ValueError:
+        if args and args[0] <= 0:
+            raise EvaluationError("Logarithm undefined for non-positive values")
+        raise
+
+def _safe_log10(*args):
+    try:
+        return _complex_aware(math.log10, cmath.log10, use_complex_for_negative=True)(*args)
+    except ValueError:
+        if args and args[0] <= 0:
+            raise EvaluationError("Logarithm undefined for non-positive values")
+        raise
+
+def _safe_log2(*args):
+    try:
+        return _complex_aware(math.log2, lambda x: cmath.log(x, 2), use_complex_for_negative=True)(*args)
+    except ValueError:
+        if args and args[0] <= 0:
+            raise EvaluationError("Logarithm undefined for non-positive values")
+        raise
+
+_log = _safe_log
+_log10 = _safe_log10
+_log2 = _safe_log2
 _exp = _complex_aware(math.exp, cmath.exp)
 _sin = _complex_aware(math.sin, cmath.sin)
 _cos = _complex_aware(math.cos, cmath.cos)
@@ -677,7 +702,13 @@ _tanh = _complex_aware(math.tanh, cmath.tanh)
 _asinh = _complex_aware(math.asinh, cmath.asinh)
 _acosh = _complex_aware(math.acosh, cmath.acosh)
 _atanh = _complex_aware(math.atanh, cmath.atanh)
-_cbrt = _complex_aware(lambda x: x ** (1 / 3), lambda x: x ** (1 / 3), use_complex_for_negative=True)
+def _cbrt_impl(x: float) -> float:
+    if x >= 0:
+        return x ** (1/3)
+    return -((-x) ** (1/3))
+
+
+_cbrt = _cbrt_impl
 
 
 class EvaluationError(Exception):
@@ -1036,14 +1067,29 @@ class Evaluator(ast.NodeVisitor):
     }
 
     # Safe binary operators
+    def _safe_div(a: float, b: float) -> float:
+        if b == 0:
+            raise EvaluationError("Cannot divide by zero")
+        return a / b
+
+    def _safe_floordiv(a: float, b: float) -> float:
+        if b == 0:
+            raise EvaluationError("Cannot divide by zero")
+        return a // b
+
+    def _safe_mod(a: float, b: float) -> float:
+        if b == 0:
+            raise EvaluationError("Cannot divide by zero")
+        return a % b
+
     BINOPS: dict[type[ast.operator], Any] = {
         ast.Add: (lambda a, b: a + b),
         ast.Sub: (lambda a, b: a - b),
         ast.Mult: (lambda a, b: a * b),
-        ast.Div: (lambda a, b: a / b),
-        ast.FloorDiv: (lambda a, b: a // b),
-        ast.Mod: (lambda a, b: a % b),
-        ast.Pow: (lambda a, b: a**b),
+        ast.Div: _safe_div,
+        ast.FloorDiv: _safe_floordiv,
+        ast.Mod: _safe_mod,
+        ast.Pow: _safe_pow,
         # Bitwise operators
         ast.LShift: (lambda a, b: int(a) << int(b)),
         ast.RShift: (lambda a, b: int(a) >> int(b)),
@@ -1240,6 +1286,9 @@ class Evaluator(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> Any:
         """Visit a function call node."""
+        if node.keywords:
+            raise EvaluationError("Keyword arguments are not supported")
+
         func_name = None
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
@@ -1290,6 +1339,8 @@ class Evaluator(ast.NodeVisitor):
         # Allowed node types
         if node_type in (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Name, ast.Call):
             return
+        if isinstance(node, (ast.operator, ast.unaryop, ast.expr_context)):
+            return
 
         # Forbidden node types
         forbidden = (
@@ -1318,6 +1369,9 @@ class Evaluator(ast.NodeVisitor):
             if not (isinstance(node.value, ast.Name) and node.value.id == "math"):
                 if node.attr not in ("real", "imag", "conjugate"):
                     raise EvaluationError(f"Attribute access '{node.attr}' is not allowed")
+            return
+
+        raise EvaluationError(f"Unsupported node type: '{node_type.__name__}'")
 
     def evaluate(self, expression: str) -> Any:
         """Evaluate an expression and return the result."""

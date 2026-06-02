@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from .. import EvaluationError, evaluate_raw
+from ..evaluator import evaluate_with_timeout
 from ..exact import (
     check_brackets as _check_brackets,
 )
@@ -345,12 +346,14 @@ def math_eval(expression: str) -> dict:
     if len(expression) > MAX_EXPRESSION_LENGTH:
         return _error_response("input_too_large", f"Expression exceeds maximum length of {MAX_EXPRESSION_LENGTH}", tool="math_eval")
     try:
-        result = evaluate_raw(expression)
+        result = evaluate_with_timeout(expression, timeout=5.0)
         if hasattr(result, 'value'):
             result_val = result.value
         else:
             result_val = result
         return _success_response({"result": str(result_val), "type": type(result_val).__name__}, tool="math_eval")
+    except TimeoutError:
+        return _error_response("timeout", "Expression evaluation timed out", ["Try a simpler expression"], tool="math_eval")
     except EvaluationError as e:
         return _error_response("evaluation_error", str(e), ["Check expression syntax"], tool="math_eval")
     except Exception as e:
@@ -592,6 +595,13 @@ def text_equal(
             "invalid_arguments",
             f"Unsupported normalization form: {normalization}",
             [f"Use one of: {', '.join(valid_normalizations)}"],
+            tool="text_equal",
+        )
+
+    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
             tool="text_equal",
         )
 
@@ -2237,6 +2247,20 @@ def glob_match_mcp(
             tool="glob_match",
         )
 
+    if len(pattern) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
+            tool="glob_match",
+        )
+
+    if len(path) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
+            tool="glob_match",
+        )
+
     try:
         result = _glob_match(pattern, path, platform, case_sensitive)
         return _success_response(result, tool="glob_match")
@@ -2477,6 +2501,20 @@ def version_compare_mcp(
             "invalid_arguments",
             f"Unsupported scheme: {scheme}",
             [f"Use one of: {', '.join(valid_schemes)}"],
+            tool="version_compare",
+        )
+
+    if len(a) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
+            tool="version_compare",
+        )
+
+    if len(b) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
             tool="version_compare",
         )
 
@@ -3346,6 +3384,20 @@ def version_constraint_check_mcp(
             "invalid_arguments",
             "Constraint string is empty",
             ["Provide a valid constraint like '>=1.0' or '^1.2.3'"],
+            tool="version_constraint_check",
+        )
+
+    if len(version) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
+            tool="version_constraint_check",
+        )
+
+    if len(constraint) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
             tool="version_constraint_check",
         )
 

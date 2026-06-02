@@ -45,6 +45,7 @@ import functools
 import shlex
 import zlib
 import keyword
+import inspect
 
 
 # === units.py ===
@@ -86,7 +87,7 @@ class UnitValue:
         return abs(self.value - other.value) < FLOAT_EPSILON
 
     def __hash__(self) -> int:
-        return hash((self.value, self.unit))
+        return hash((round(self.value, 10), self.unit))
 
     def __add__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
@@ -118,8 +119,6 @@ class UnitValue:
     def __mul__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             if self.unit and other.unit:
-                if self.unit == other.unit:
-                    return UnitValue(self.value * other.value, self.unit)
                 return UnitValue(self.value * other.value, f"{self.unit}*{other.unit}")
             return UnitValue(self.value * other.value, self.unit or other.unit)
         return UnitValue(self.value * other, self.unit)
@@ -137,9 +136,13 @@ class UnitValue:
         return UnitValue(self.value / other, self.unit)
 
     def __rtruediv__(self, other: Numeric) -> UnitValue:
-        return UnitValue(other / self.value, self.unit)
+        if self.unit:
+            return UnitValue(other / self.value, f"1/{self.unit}")
+        return UnitValue(other / self.value, None)
 
     def __pow__(self, other: Numeric) -> UnitValue:
+        if self.unit and isinstance(other, int):
+            return UnitValue(self.value**other, f"{self.unit}**{other}")
         return UnitValue(self.value**other, self.unit)
 
     def __neg__(self) -> UnitValue:
@@ -1540,16 +1543,28 @@ def _min(*args: float) -> float:
 
 def _to_bin(x: int) -> str:
     """Convert integer to binary string."""
+    if isinstance(x, float):
+        if not x.is_integer():
+            raise EvaluationError("bin() requires integer input")
+        x = int(x)
     return bin(x)
 
 
 def _to_hex(x: int) -> str:
     """Convert integer to hexadecimal string."""
+    if isinstance(x, float):
+        if not x.is_integer():
+            raise EvaluationError("hex() requires integer input")
+        x = int(x)
     return hex(x)
 
 
 def _to_oct(x: int) -> str:
     """Convert integer to octal string."""
+    if isinstance(x, float):
+        if not x.is_integer():
+            raise EvaluationError("oct() requires integer input")
+        x = int(x)
     return oct(x)
 
 
@@ -1926,14 +1941,14 @@ def _complex_aware(
     if cmplx_func is None:
         cmplx_func = getattr(cmath, real_func.__name__, real_func)
 
-    def wrapper(x: float) -> complex | float:
+    def wrapper(x, *args):
         if isinstance(x, complex):
-            return cmplx_func(x)
+            return cmplx_func(x, *args)
         if use_complex_for_negative and x < 0:
-            return cmplx_func(x)
+            return cmplx_func(x, *args)
         if use_complex_for_abs_gt_one and abs(x) > 1:
-            return cmplx_func(x)
-        return real_func(x)
+            return cmplx_func(x, *args)
+        return real_func(x, *args)
 
     wrapper.__name__ = real_func.__name__
     wrapper.__doc__ = f"{real_func.__name__} that handles complex numbers."
@@ -1941,9 +1956,34 @@ def _complex_aware(
 
 
 _sqrt = _complex_aware(math.sqrt, cmath.sqrt, use_complex_for_negative=True)
-_log = _complex_aware(math.log, cmath.log, use_complex_for_negative=True)
-_log10 = _complex_aware(math.log10, cmath.log10, use_complex_for_negative=True)
-_log2 = _complex_aware(math.log2, lambda x: cmath.log(x, 2), use_complex_for_negative=True)
+
+def _safe_log(*args):
+    try:
+        return _complex_aware(math.log, cmath.log, use_complex_for_negative=True)(*args)
+    except ValueError:
+        if args and args[0] <= 0:
+            raise EvaluationError("Logarithm undefined for non-positive values")
+        raise
+
+def _safe_log10(*args):
+    try:
+        return _complex_aware(math.log10, cmath.log10, use_complex_for_negative=True)(*args)
+    except ValueError:
+        if args and args[0] <= 0:
+            raise EvaluationError("Logarithm undefined for non-positive values")
+        raise
+
+def _safe_log2(*args):
+    try:
+        return _complex_aware(math.log2, lambda x: cmath.log(x, 2), use_complex_for_negative=True)(*args)
+    except ValueError:
+        if args and args[0] <= 0:
+            raise EvaluationError("Logarithm undefined for non-positive values")
+        raise
+
+_log = _safe_log
+_log10 = _safe_log10
+_log2 = _safe_log2
 _exp = _complex_aware(math.exp, cmath.exp)
 _sin = _complex_aware(math.sin, cmath.sin)
 _cos = _complex_aware(math.cos, cmath.cos)
@@ -1957,7 +1997,13 @@ _tanh = _complex_aware(math.tanh, cmath.tanh)
 _asinh = _complex_aware(math.asinh, cmath.asinh)
 _acosh = _complex_aware(math.acosh, cmath.acosh)
 _atanh = _complex_aware(math.atanh, cmath.atanh)
-_cbrt = _complex_aware(lambda x: x ** (1 / 3), lambda x: x ** (1 / 3), use_complex_for_negative=True)
+def _cbrt_impl(x: float) -> float:
+    if x >= 0:
+        return x ** (1/3)
+    return -((-x) ** (1/3))
+
+
+_cbrt = _cbrt_impl
 
 
 class EvaluationError(Exception):
@@ -2316,14 +2362,29 @@ class Evaluator(ast.NodeVisitor):
     }
 
     # Safe binary operators
+    def _safe_div(a: float, b: float) -> float:
+        if b == 0:
+            raise EvaluationError("Cannot divide by zero")
+        return a / b
+
+    def _safe_floordiv(a: float, b: float) -> float:
+        if b == 0:
+            raise EvaluationError("Cannot divide by zero")
+        return a // b
+
+    def _safe_mod(a: float, b: float) -> float:
+        if b == 0:
+            raise EvaluationError("Cannot divide by zero")
+        return a % b
+
     BINOPS: dict[type[ast.operator], Any] = {
         ast.Add: (lambda a, b: a + b),
         ast.Sub: (lambda a, b: a - b),
         ast.Mult: (lambda a, b: a * b),
-        ast.Div: (lambda a, b: a / b),
-        ast.FloorDiv: (lambda a, b: a // b),
-        ast.Mod: (lambda a, b: a % b),
-        ast.Pow: (lambda a, b: a**b),
+        ast.Div: _safe_div,
+        ast.FloorDiv: _safe_floordiv,
+        ast.Mod: _safe_mod,
+        ast.Pow: _safe_pow,
         # Bitwise operators
         ast.LShift: (lambda a, b: int(a) << int(b)),
         ast.RShift: (lambda a, b: int(a) >> int(b)),
@@ -2520,6 +2581,9 @@ class Evaluator(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> Any:
         """Visit a function call node."""
+        if node.keywords:
+            raise EvaluationError("Keyword arguments are not supported")
+
         func_name = None
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
@@ -2570,6 +2634,8 @@ class Evaluator(ast.NodeVisitor):
         # Allowed node types
         if node_type in (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Name, ast.Call):
             return
+        if isinstance(node, (ast.operator, ast.unaryop, ast.expr_context)):
+            return
 
         # Forbidden node types
         forbidden = (
@@ -2598,6 +2664,9 @@ class Evaluator(ast.NodeVisitor):
             if not (isinstance(node.value, ast.Name) and node.value.id == "math"):
                 if node.attr not in ("real", "imag", "conjugate"):
                     raise EvaluationError(f"Attribute access '{node.attr}' is not allowed")
+            return
+
+        raise EvaluationError(f"Unsupported node type: '{node_type.__name__}'")
 
     def evaluate(self, expression: str) -> Any:
         """Evaluate an expression and return the result."""
@@ -2918,7 +2987,7 @@ OPERATOR_CONVERSIONS: dict[str, list[str]] = {
     "**": ["^", "raised to", "raised to the power", "to the power of"],
     ".": ["point"],
     ",": [],
-    "&": ["AND", "and", "bitand", "bit and"],
+    "&": ["bitand", "bit and"],
     "|": ["OR", "or", "bitor", "bit or"],
     "^": ["XOR", "xor", "bitxor", "bit xor"],
     "<<": ["left shift", "shift left", "lshift"],
@@ -3041,7 +3110,7 @@ NUMBER_WORDS: dict[str, list[str]] = {
     "7": ["seven"],
     "8": ["eight"],
     "9": ["nine"],
-    "10": ["teen", "ten"],
+    "10": ["ten"],
     "11": ["eleven"],
     "12": ["twelve"],
     "13": ["thirteen"],
@@ -3078,7 +3147,6 @@ STRIPPED_PHRASES: list[str] = [
     "what's",
     "what is",
     "a ",
-    r"\bof\b",
     "?",
     "calculate",
     "compute",
@@ -3178,7 +3246,7 @@ def _build_config() -> tuple[dict, dict]:
         # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
         "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in STRIPPED_PHRASES])})"),
         "int": re.compile(r"^[-+]?[0-9]\d*$"),
-        "float": re.compile(r"^[-+]?[0-9]\d*\.\d+?$"),
+        "float": re.compile(r"^[-+]?[0-9]\d*(?:\.\d+?)?(?:[eE][-+]?\d+)?$"),
         "int_number_combine": re.compile(r"^[-+*]?[0-9]\d*$"),
         "valid_operations": re.compile(
             f"^({'|'.join([re.escape(s) for s in symbols] + [re.escape(f) for f in FUNCTION_MAPPINGS.values()] + [re.escape(c) for c in CONSTANT_WORDS.keys()])}){{1}}$"
@@ -3298,6 +3366,8 @@ def validate_for_eval(tokens: list, patterns: Mapping[str, Pattern[str]]) -> boo
             if not patterns["valid_operations"].match(token):
                 if not is_unit(token):
                     if token not in known_constants:
+                        if re.match(r"^[0-9+\-*/.%eE]+$", token):
+                            continue
                         raise ValueError(f"Invalid token: {token}")
     return True
 
@@ -3593,8 +3663,6 @@ def split_at_operators(
                 tokens[i:i+1] = parts
             elif i > 0 and tokens[i][:1] != "-" and tokens[i - 1] != ".":
                 tokens[i] = tokens[i].replace("-", "")
-            elif patterns["negative"].match(tokens[i][:1]):
-                tokens[i] = f"-{tokens[i][1:].replace('-', '')}"
 
     if indices_to_remove:
         for idx in reversed(indices_to_remove):
@@ -3677,12 +3745,12 @@ def _combine_consecutive_numbers(
         number_parts = [num_info["converted"]]
 
         while True:
-            if i + 2 < len(tokens) and tokens[i + 1] == "+":
-                next_token = tokens[i + 2]
-                next_num_info = check_if_number(next_token)
-                if next_num_info["bool"] and _is_pure_number(next_token):
-                    number_parts.append(next_num_info["converted"])
-                    i += 2
+            if i + 1 < len(tokens):
+                next_token = tokens[i + 1]
+                next_is_num = check_if_number(next_token)["bool"] and _is_pure_number(next_token)
+                if next_is_num:
+                    number_parts.append(check_if_number(next_token)["converted"])
+                    i += 1
                 else:
                     break
             else:
@@ -3719,10 +3787,6 @@ def _should_split_number_sequence(token: str) -> bool:
 
 def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str:
     """Normalize an expression by removing filler words and applying conversions."""
-    # Handle "N percent" -> "N/100" BEFORE word_to_all substitutions
-    # This must come first so we get "0.2 of 150" then word_to_all converts "of" to "*"
-    expression = re.sub(r"(\d+(?:\.\d+)?)\s+percent\b", lambda m: str(float(m.group(1)) / 100), expression, flags=re.IGNORECASE)
-
     # Replace multi-word function names before whitespace removal collapses them
     # e.g., "square root" -> "sqrt", "cube root" -> "cbrt"
     _MULTI_WORD_FUNCTIONS = {
@@ -3771,12 +3835,29 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     for phrase, replacement in sorted(_MULTI_WORD_NUMBERS.items(), key=lambda x: len(x[0]), reverse=True):
         expression = re.sub(r"\b" + re.escape(phrase) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
+    # Strip "and" as a filler word in NL number expressions
+    expression = re.sub(r"\band\b", "", expression, flags=re.IGNORECASE)
+
+    # Handle "word percent" patterns before word_to_all converts "percent" to "%"
+    # e.g., "fifty percent of 200" -> "50/100*200" -> "0.5*200"
+    word_to_number = operators.get("word_to_number", {})
+    def _replace_percent_word(m):
+        word = m.group(1).lower()
+        if word in word_to_number:
+            return str(float(word_to_number[word]) / 100)
+        return m.group(0)
+    expression = re.sub(r"\b(\w+)\s+percent\b", _replace_percent_word, expression, flags=re.IGNORECASE)
+
     # Use combined word replacement for efficiency (single pass)
     # Use word boundaries to avoid replacing parts of words
     word_to_all = operators.get("word_to_all", {})
     for word, replacement in sorted(word_to_all.items(), key=lambda x: len(x[0]), reverse=True):
         # Use regex with word boundaries to only match whole words
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression)
+
+    # Handle "N percent" -> "N/100" AFTER word_to_all substitutions
+    # This allows NL words like "fifty" to be converted to digits first
+    expression = re.sub(r"(\d+(?:\.\d+)?)\s+percent\b", lambda m: str(float(m.group(1)) / 100), expression, flags=re.IGNORECASE)
 
     # Strip phrases
     expression = patterns["stripped_chars"].sub("", expression)
@@ -24183,15 +24264,19 @@ def math_eval(expression: str) -> dict:
     Returns:
         Success response with result, or error envelope.
     """
+    if not isinstance(expression, str):
+        return _error_response("invalid_arguments", f"expression must be a string, got {type(expression).__name__}", tool="math_eval")
     if len(expression) > MAX_EXPRESSION_LENGTH:
         return _error_response("input_too_large", f"Expression exceeds maximum length of {MAX_EXPRESSION_LENGTH}", tool="math_eval")
     try:
-        result = evaluate_raw(expression)
+        result = evaluate_with_timeout(expression, timeout=5.0)
         if hasattr(result, 'value'):
             result_val = result.value
         else:
             result_val = result
         return _success_response({"result": str(result_val), "type": type(result_val).__name__}, tool="math_eval")
+    except TimeoutError:
+        return _error_response("timeout", "Expression evaluation timed out", ["Try a simpler expression"], tool="math_eval")
     except EvaluationError as e:
         return _error_response("evaluation_error", str(e), ["Check expression syntax"], tool="math_eval")
     except Exception as e:
@@ -24278,6 +24363,9 @@ def constant_lookup(name: str) -> dict:
         Success response with constant value and symbol.
     """
     try:
+        if len(name) > MAX_TEXT_LENGTH:
+            return _error_response("input_too_large", f"Name length {len(name)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}", tool="constant_lookup")
+
         constants = {
             "na": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
             "avogadro": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
@@ -24425,6 +24513,13 @@ def _mcp_text_equal(
             "invalid_arguments",
             f"Unsupported normalization form: {normalization}",
             [f"Use one of: {', '.join(valid_normalizations)}"],
+            tool="text_equal",
+        )
+
+    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
             tool="text_equal",
         )
 
@@ -26070,6 +26165,20 @@ def glob_match_mcp(
             tool="glob_match",
         )
 
+    if len(pattern) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
+            tool="glob_match",
+        )
+
+    if len(path) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
+            tool="glob_match",
+        )
+
     try:
         result = _glob_match(pattern, path, platform, case_sensitive)
         return _success_response(result, tool="glob_match")
@@ -26310,6 +26419,20 @@ def version_compare_mcp(
             "invalid_arguments",
             f"Unsupported scheme: {scheme}",
             [f"Use one of: {', '.join(valid_schemes)}"],
+            tool="version_compare",
+        )
+
+    if len(a) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
+            tool="version_compare",
+        )
+
+    if len(b) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
             tool="version_compare",
         )
 
@@ -27169,6 +27292,20 @@ def version_constraint_check_mcp(
             tool="version_constraint_check",
         )
 
+    if len(version) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
+            tool="version_constraint_check",
+        )
+
+    if len(constraint) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
+            tool="version_constraint_check",
+        )
+
     try:
         result = _check_version_constraint(version, constraint, scheme)
 
@@ -27417,14 +27554,89 @@ def _invalid_request(request_id: Any, message: str) -> dict:
     }
 
 
+def levenshtein_distance(s1: str, s2: str) -> int:
+    """Compute Levenshtein edit distance between two strings."""
+    if len(s1) < len(s2):
+        return levenshtein_distance(s2, s1)
+
+    if len(s2) == 0:
+        return len(s1)
+
+    prev_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        curr_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = prev_row[j + 1] + 1
+            deletions = curr_row[j] + 1
+            substitutions = prev_row[j] + (c1 != c2)
+            curr_row.append(min(insertions, deletions, substitutions))
+        prev_row = curr_row
+
+    return prev_row[-1]
+
+
 def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
-    """Find a case-insensitive close match for tool name."""
+    """Find a case-insensitive close match for tool name using edit distance.
+
+    Returns the best matching tool name, or None if no good match found.
+    A match is considered good if the edit distance is at most half the length
+    of the shorter string, or if it's a prefix/substring match.
+    """
     name_lower = name.lower()
+
+    # First check for exact case-insensitive match
     for tool_name in handlers:
         if tool_name.lower() == name_lower:
             return tool_name
-        if name_lower in tool_name.lower() or tool_name.lower() in name_lower:
-            return tool_name
+
+    # Find best match by edit distance
+    best_match: str | None = None
+    best_distance = float('inf')
+
+    for tool_name in handlers:
+        tool_lower = tool_name.lower()
+
+        # Prefix/substring match is always good
+        if name_lower in tool_lower or tool_lower in name_lower:
+            if best_match is None or len(tool_name) < len(best_match):
+                best_match = tool_name
+                best_distance = 0
+            continue
+
+        # Compute edit distance
+        distance = levenshtein_distance(name_lower, tool_lower)
+        threshold = max(len(name_lower), len(tool_lower)) // 2
+
+        if distance < best_distance and distance <= threshold:
+            best_distance = distance
+            best_match = tool_name
+
+    return best_match
+
+
+def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
+    """Validate that arguments match the handler's signature.
+
+    Returns None if valid, or an error message string if invalid.
+    """
+    try:
+        sig = inspect.signature(handler)
+    except (ValueError, TypeError):
+        # Can't introspect; allow call (handler will raise on bad args)
+        return None
+
+    params = sig.parameters
+
+    # Check for unexpected keyword arguments
+    unexpected = set(arguments.keys()) - set(params.keys())
+    if unexpected:
+        return f"Unexpected argument(s): {', '.join(sorted(unexpected))}"
+
+    # Check for missing required arguments (no default)
+    for name, param in params.items():
+        if param.default is inspect.Parameter.empty and name not in arguments:
+            return f"Missing required argument: {name}"
+
     return None
 
 
@@ -27453,8 +27665,20 @@ def _handle_call_tool(request: dict) -> dict:
             },
         }
 
+    # Validate arguments against handler signature before calling
+    handler = TOOL_HANDLERS[name]
+    validation_error = _validate_arguments(handler, arguments)
+    if validation_error is not None:
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32602,
+                "message": f"Invalid arguments for tool '{name}': {validation_error}",
+            },
+        }
+
     try:
-        handler = TOOL_HANDLERS[name]
         result = handler(**arguments)
 
         # If result is an error envelope, return as error
@@ -27483,12 +27707,13 @@ def _handle_call_tool(request: dict) -> dict:
         }
 
     except Exception as e:
+        message = str(e).replace('\n', ' ')[:200]
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
             "error": {
                 "code": -32000,
-                "message": f"Tool execution error: {str(e)}",
+                "message": f"Tool execution error: {message}",
             },
         }
 
@@ -27543,7 +27768,7 @@ def _handle_initialize(request: dict) -> dict:
             },
             "serverInfo": {
                 "name": "eggcalc",
-                "version": "1.0.0",
+                "version": __version__,
             },
         },
     }
@@ -27588,6 +27813,7 @@ def mcp_main() -> int:
         if len(line.encode('utf-8')) > MAX_REQUEST_BYTES:
             response = {
                 "jsonrpc": "2.0",
+                "id": None,
                 "error": {
                     "code": -32700,
                     "message": f"Request exceeds maximum size of {MAX_REQUEST_BYTES} bytes",
@@ -27599,6 +27825,7 @@ def mcp_main() -> int:
         if line.startswith('['):
             response = {
                 "jsonrpc": "2.0",
+                "id": None,
                 "error": {
                     "code": -32600,
                     "message": "Batch requests are not supported",
@@ -27612,6 +27839,7 @@ def mcp_main() -> int:
         except json.JSONDecodeError:
             response = {
                 "jsonrpc": "2.0",
+                "id": None,
                 "error": {
                     "code": -32700,
                     "message": "Parse error: invalid JSON",
@@ -27623,12 +27851,13 @@ def mcp_main() -> int:
         try:
             response = handle_request(request)
         except Exception as e:
+            message = str(e).replace('\n', ' ')[:200]
             response = {
                 "jsonrpc": "2.0",
                 "id": request.get("id") if isinstance(request, dict) else None,
                 "error": {
                     "code": -32603,
-                    "message": f"Internal error: {str(e)}",
+                    "message": f"Internal error: {message}",
                 },
             }
 

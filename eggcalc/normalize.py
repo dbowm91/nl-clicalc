@@ -118,7 +118,7 @@ OPERATOR_CONVERSIONS: dict[str, list[str]] = {
     "**": ["^", "raised to", "raised to the power", "to the power of"],
     ".": ["point"],
     ",": [],
-    "&": ["AND", "and", "bitand", "bit and"],
+    "&": ["bitand", "bit and"],
     "|": ["OR", "or", "bitor", "bit or"],
     "^": ["XOR", "xor", "bitxor", "bit xor"],
     "<<": ["left shift", "shift left", "lshift"],
@@ -241,7 +241,7 @@ NUMBER_WORDS: dict[str, list[str]] = {
     "7": ["seven"],
     "8": ["eight"],
     "9": ["nine"],
-    "10": ["teen", "ten"],
+    "10": ["ten"],
     "11": ["eleven"],
     "12": ["twelve"],
     "13": ["thirteen"],
@@ -278,7 +278,6 @@ STRIPPED_PHRASES: list[str] = [
     "what's",
     "what is",
     "a ",
-    r"\bof\b",
     "?",
     "calculate",
     "compute",
@@ -378,7 +377,7 @@ def _build_config() -> tuple[dict, dict]:
         # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
         "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in STRIPPED_PHRASES])})"),
         "int": re.compile(r"^[-+]?[0-9]\d*$"),
-        "float": re.compile(r"^[-+]?[0-9]\d*\.\d+?$"),
+        "float": re.compile(r"^[-+]?[0-9]\d*(?:\.\d+?)?(?:[eE][-+]?\d+)?$"),
         "int_number_combine": re.compile(r"^[-+*]?[0-9]\d*$"),
         "valid_operations": re.compile(
             f"^({'|'.join([re.escape(s) for s in symbols] + [re.escape(f) for f in FUNCTION_MAPPINGS.values()] + [re.escape(c) for c in CONSTANT_WORDS.keys()])}){{1}}$"
@@ -499,6 +498,8 @@ def validate_for_eval(tokens: list, patterns: Mapping[str, Pattern[str]]) -> boo
             if not patterns["valid_operations"].match(token):
                 if not is_unit(token):
                     if token not in known_constants:
+                        if re.match(r"^[0-9+\-*/.%eE]+$", token):
+                            continue
                         raise ValueError(f"Invalid token: {token}")
     return True
 
@@ -794,8 +795,6 @@ def split_at_operators(
                 tokens[i:i+1] = parts
             elif i > 0 and tokens[i][:1] != "-" and tokens[i - 1] != ".":
                 tokens[i] = tokens[i].replace("-", "")
-            elif patterns["negative"].match(tokens[i][:1]):
-                tokens[i] = f"-{tokens[i][1:].replace('-', '')}"
 
     if indices_to_remove:
         for idx in reversed(indices_to_remove):
@@ -878,12 +877,12 @@ def _combine_consecutive_numbers(
         number_parts = [num_info["converted"]]
 
         while True:
-            if i + 2 < len(tokens) and tokens[i + 1] == "+":
-                next_token = tokens[i + 2]
-                next_num_info = check_if_number(next_token)
-                if next_num_info["bool"] and _is_pure_number(next_token):
-                    number_parts.append(next_num_info["converted"])
-                    i += 2
+            if i + 1 < len(tokens):
+                next_token = tokens[i + 1]
+                next_is_num = check_if_number(next_token)["bool"] and _is_pure_number(next_token)
+                if next_is_num:
+                    number_parts.append(check_if_number(next_token)["converted"])
+                    i += 1
                 else:
                     break
             else:
@@ -920,10 +919,6 @@ def _should_split_number_sequence(token: str) -> bool:
 
 def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str:
     """Normalize an expression by removing filler words and applying conversions."""
-    # Handle "N percent" -> "N/100" BEFORE word_to_all substitutions
-    # This must come first so we get "0.2 of 150" then word_to_all converts "of" to "*"
-    expression = re.sub(r"(\d+(?:\.\d+)?)\s+percent\b", lambda m: str(float(m.group(1)) / 100), expression, flags=re.IGNORECASE)
-
     # Replace multi-word function names before whitespace removal collapses them
     # e.g., "square root" -> "sqrt", "cube root" -> "cbrt"
     _MULTI_WORD_FUNCTIONS = {
@@ -972,12 +967,29 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     for phrase, replacement in sorted(_MULTI_WORD_NUMBERS.items(), key=lambda x: len(x[0]), reverse=True):
         expression = re.sub(r"\b" + re.escape(phrase) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
+    # Strip "and" as a filler word in NL number expressions
+    expression = re.sub(r"\band\b", "", expression, flags=re.IGNORECASE)
+
+    # Handle "word percent" patterns before word_to_all converts "percent" to "%"
+    # e.g., "fifty percent of 200" -> "50/100*200" -> "0.5*200"
+    word_to_number = operators.get("word_to_number", {})
+    def _replace_percent_word(m):
+        word = m.group(1).lower()
+        if word in word_to_number:
+            return str(float(word_to_number[word]) / 100)
+        return m.group(0)
+    expression = re.sub(r"\b(\w+)\s+percent\b", _replace_percent_word, expression, flags=re.IGNORECASE)
+
     # Use combined word replacement for efficiency (single pass)
     # Use word boundaries to avoid replacing parts of words
     word_to_all = operators.get("word_to_all", {})
     for word, replacement in sorted(word_to_all.items(), key=lambda x: len(x[0]), reverse=True):
         # Use regex with word boundaries to only match whole words
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression)
+
+    # Handle "N percent" -> "N/100" AFTER word_to_all substitutions
+    # This allows NL words like "fifty" to be converted to digits first
+    expression = re.sub(r"(\d+(?:\.\d+)?)\s+percent\b", lambda m: str(float(m.group(1)) / 100), expression, flags=re.IGNORECASE)
 
     # Strip phrases
     expression = patterns["stripped_chars"].sub("", expression)
