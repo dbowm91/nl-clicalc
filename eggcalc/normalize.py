@@ -118,7 +118,7 @@ OPERATOR_CONVERSIONS: dict[str, list[str]] = {
     "-": ["minus", "negative"],
     "*": ["times", "multiplied by", "of"],  # "of" for "30% of 200"
     "/": ["divided by", "over", "per", "divide"],
-    "**": ["^", "raised to", "raised to the power", "to the power of"],
+    "**": ["^", "raised to", "raised to the power of", "to the power of"],
     ".": ["point"],
     ",": [],
     "&": ["bitand", "bit and"],
@@ -632,7 +632,9 @@ def apply_math_functions(
                 output_tokens.append("(")
 
                 # Skip * that came from "of" replacement (e.g., "sqrt * 100")
+                skipped_of = False
                 if next_token == "*" and i + 2 < len(tokens):
+                    skipped_of = True
                     i += 1
                     next_token = tokens[i + 1] if i + 1 < len(tokens) else None
 
@@ -640,16 +642,27 @@ def apply_math_functions(
                     next_token = tokens[i + 1]
                     is_operator = patterns["operators"].match(next_token) is not None
 
-                    if is_operator and next_token != ".":
-                        break
                     if next_token == ")":
                         break
 
+                    # Stop at function names (they'll be processed separately)
+                    if next_token in operators["functions"]:
+                        break
+
+                    if is_operator:
+                        if next_token == ".":
+                            pass  # continue collecting
+                        elif skipped_of and next_token in ("+", "-"):
+                            # "of" chains: replace +/- with , for multi-arg functions
+                            # e.g., mean*1+2+3 -> mean(1,2,3)
+                            output_tokens.append(",")
+                            i += 1
+                            continue
+                        else:
+                            break
+
                     output_tokens.append(next_token)
                     i += 1
-
-                    if next_token == ".":
-                        continue
 
                 output_tokens.append(")")
         else:
@@ -973,6 +986,22 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Strip "and" as a filler word in NL number expressions
     expression = re.sub(r"\band\b", "", expression, flags=re.IGNORECASE)
 
+    _DIGIT_SCALES: dict[str, str] = {
+        "thousand": "1000",
+        "million": "1000000",
+        "billion": "1000000000",
+        "trillion": "1000000000000",
+        "quadrillion": "1000000000000000",
+        "quintillion": "1000000000000000000",
+    }
+    for scale_word, scale_val in _DIGIT_SCALES.items():
+        expression = re.sub(
+            r"\b(\d+(?:\.\d+)?)\s+" + re.escape(scale_word) + r"\b",
+            lambda m, sv=scale_val: f"{m.group(1)}*{sv}",
+            expression,
+            flags=re.IGNORECASE,
+        )
+
     # Replace single number words with digits BEFORE _join_number_parts runs
     # This ensures "forty four" → "40 4" → "40+4" (correct) instead of remaining as words
     _ALL_NUMBER_WORDS: dict[str, str] = {}
@@ -981,16 +1010,6 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
             _ALL_NUMBER_WORDS[word] = val
     for word, replacement in sorted(_ALL_NUMBER_WORDS.items(), key=lambda x: len(x[0]), reverse=True):
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
-
-    # Handle "word percent" patterns before word_to_all converts "percent" to "%"
-    # e.g., "fifty percent of 200" -> "50/100*200" -> "0.5*200"
-    word_to_number = operators.get("word_to_number", {})
-    def _replace_percent_word(m):
-        word = m.group(1).lower()
-        if word in word_to_number:
-            return str(float(word_to_number[word]) / 100)
-        return m.group(0)
-    expression = re.sub(r"\b(\w+)\s+percent\b", _replace_percent_word, expression, flags=re.IGNORECASE)
 
     # Use combined word replacement for efficiency (single pass)
     # Use word boundaries to avoid replacing parts of words
@@ -1018,7 +1037,7 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
                 expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
 
     # Convert percentages (e.g., 50% -> 0.5)
-    expression = re.sub(r"(\d+(?:\.\d+)?)%", lambda m: str(float(m.group(1)) / 100), expression)
+    expression = re.sub(r"(\d+(?:\.\d+)?)\s*%", lambda m: str(float(m.group(1)) / 100), expression)
 
     # Convert 'i' suffix to 'j' for complex numbers (e.g., 3+4i -> 3+4j)
     # Match: number followed by 'i' (not preceded by another letter)

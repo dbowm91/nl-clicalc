@@ -1213,6 +1213,7 @@ UNIT_CATEGORIES: dict[str, str] = {
     "mW": "power",
     "hp": "power",
     "N": "force",
+    "mN": "force",
     "kN": "force",
     "dyne": "force",
     "lbf": "force",

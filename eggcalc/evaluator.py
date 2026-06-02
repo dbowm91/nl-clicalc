@@ -15,7 +15,6 @@ import multiprocessing
 import random
 import threading
 from collections import OrderedDict
-from functools import lru_cache
 from typing import Any
 
 from .units import (
@@ -69,7 +68,10 @@ DEFAULT_CACHE_SIZE = 1024
 
 def _check_result_size(result: Any) -> Any:
     """Raise EvaluationError if a result has too many digits or is NaN/inf."""
-    if isinstance(result, float):
+    if isinstance(result, complex):
+        if math.isnan(result.real) or math.isnan(result.imag) or math.isinf(result.real) or math.isinf(result.imag):
+            raise EvaluationError("Result too large")
+    elif isinstance(result, float):
         if math.isnan(result) or math.isinf(result):
             raise EvaluationError("Result too large")
     if isinstance(result, int) and not isinstance(result, bool):
@@ -132,9 +134,17 @@ def _ensure_config_loaded() -> None:
         load_user_config()
 
 
-@lru_cache(maxsize=DEFAULT_CACHE_SIZE)
+_cache: OrderedDict[str, Any] = OrderedDict()
+_cache_lock = threading.Lock()
+
+
 def _cached_normalize_and_evaluate(expression: str) -> Any:
     """Cache for normalized and evaluated expressions."""
+    with _cache_lock:
+        if expression in _cache:
+            _cache.move_to_end(expression)
+            return _cache[expression]
+
     _ensure_config_loaded()
     from .normalize import NORMALIZE, PATTERNS, normalize_expression
 
@@ -142,7 +152,14 @@ def _cached_normalize_and_evaluate(expression: str) -> Any:
     if exit_code != 0:
         raise EvaluationError(f"Invalid expression: {expression}")
 
-    return _default_evaluator.evaluate(normalized)
+    result = _default_evaluator.evaluate(normalized)
+
+    with _cache_lock:
+        if len(_cache) >= DEFAULT_CACHE_SIZE:
+            _cache.popitem(last=False)
+        _cache[expression] = result
+
+    return result
 
 
 def evaluate_cached(expression: str) -> Any:
@@ -156,7 +173,7 @@ def evaluate_cached(expression: str) -> Any:
     except EvaluationError:
         raise
     except (ValueError, SyntaxError, RecursionError):
-        _cached_normalize_and_evaluate.cache_clear()
+        _cache.pop(expression, None)
         raise
 
 

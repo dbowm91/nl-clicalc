@@ -220,7 +220,7 @@ PHYSICAL_CONSTANTS = {
     "rydberg": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
     "rydbergconstant": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
     "stefan": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
-    "stefanboltzmann": {"value": 5.670374419e-8, "symbol": "σ-", "name": "Stefan-Boltzmann constant"},
+    "stefanboltzmann": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
     "planckbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
     "hbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
     "reducedplanck": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
@@ -268,7 +268,7 @@ def _sanitize_error(message: str) -> str:
     text = re.sub(r'File\s+["\'][^"\']*["\']', 'File "<redacted>"', text)
     text = re.sub(r'line\s+\d+', 'line <redacted>', text)
     text = re.sub(r'(?:in\s+)<[^>]+>', 'in <module>', text)
-    text = re.sub(r'[A-Za-z_][\w.]*\s*=\s*"[^"]*"', '<var>=<redacted>', text)
+    text = re.sub(r'[A-Za-z_][\w.]*\s*=\s*["\'][^"\']*["\']', '<var>=<redacted>', text)
     return text
 
 
@@ -458,7 +458,9 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
         )
     try:
         from ..units import (
+            convert_temperature,
             get_conversion_factor,
+            get_unit_category,
             is_unit,
         )
 
@@ -466,6 +468,15 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
             return _error_response("invalid_arguments", f"Unknown unit: {from_unit}", tool="unit_convert")
         if not is_unit(to_unit):
             return _error_response("invalid_arguments", f"Unknown unit: {to_unit}", tool="unit_convert")
+
+        if get_unit_category(from_unit) == "temperature" and get_unit_category(to_unit) == "temperature":
+            result = convert_temperature(value, from_unit, to_unit)
+            return _success_response({
+                "value": result,
+                "from_unit": from_unit,
+                "to_unit": to_unit,
+                "factor": None,
+            }, tool="unit_convert")
 
         factor = get_conversion_factor(from_unit, to_unit)
         result = value * factor
@@ -1082,6 +1093,9 @@ def validate_regex(
         except Exception:
             proc.terminate()
             proc.join(timeout=2)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=1)
             return _error_response(
                 "timeout",
                 f"Regex evaluation timed out after {REGEX_TIMEOUT_SECONDS} seconds",
