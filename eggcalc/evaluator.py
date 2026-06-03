@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import cmath
+import contextvars
 import math
 import multiprocessing
 import random
@@ -64,10 +65,63 @@ MAX_NESTING_DEPTH = 100
 MAX_RESULT_VALUE = 1e308
 MAX_RESULT_DIGITS = 10000
 DEFAULT_CACHE_SIZE = 1024
+MAX_CACHE_BYTES = 64 * 1024 * 1024  # 64 MB soft cap for _cache
+
+# One-letter physical-constant names that are now unreachable as constants
+# because visit_Name checks UNIT_ALIASES first. Documented for users who
+# might be surprised. To access these constants, use the long-form name.
+_UNREACHABLE_CONSTANT_ALIASES: frozenset[str] = frozenset(
+    {"h", "g", "c", "k", "G", "f", "R", "r"}
+)
+
+
+_COLLISION_WARNING_EMITTED = False  # legacy alias, see Evaluator._COLLISION_WARNING_EMITTED
+
+
+def _check_constant_unit_collisions() -> None:
+    """Warn at import time if any CONSTANTS entry collides with a UNIT_ALIASES.
+
+    With the new visit_Name order (units first, then constants), one-letter
+    constant names like 'h' (Planck), 'g' (gravity), 'k' (Boltzmann), 'c'
+    (speed of light), 'G' (gravitational), 'f' (Faraday), 'R' (gas
+    constant) are unreachable as constants because they collide with
+    common unit names (hour, gram, kelvin, etc.). Long forms
+    ('planck', 'gravity', 'boltzmann', 'speedoflight', 'gravitationalconstant',
+    'faraday', 'gasconstant', 'r') remain accessible.
+
+    The warning is emitted at most once per process. A process-wide sentinel
+    is stashed on the ``warnings`` module (a singleton) so the package and
+    the inlined single-file build share the flag.
+    """
+    import warnings
+    if getattr(warnings, "_eggcalc_collision_warned", False):
+        return
+    warnings._eggcalc_collision_warned = True
+    # In assembled single-file mode, UNIT_ALIASES is inlined at the top.
+    # In package mode, _IS_ASSEMBLED is False and we use the imported name.
+    aliases = UNIT_ALIASES  # type: ignore[name-defined]
+    alias_lower = {a.lower() for a in aliases}
+    collisions: list[str] = []
+    for c in Evaluator.CONSTANTS:
+        if c.lower() in alias_lower:
+            collisions.append(c)
+    if collisions:
+        import sys
+        print(
+            f"Warning: CONSTANTS entries shadow UNIT_ALIASES (unreachable as "
+            f"constants; use long form): {sorted(collisions)}",
+            file=sys.stderr,
+        )
 
 
 def _check_result_size(result: Any) -> Any:
     """Raise EvaluationError if a result has too many digits or is NaN/inf."""
+    if isinstance(result, UnitValue):
+        if not math.isfinite(result.value):
+            raise EvaluationError("Result too large")
+        if isinstance(result.value, int) and not isinstance(result.value, bool):
+            if len(str(result.value)) > MAX_RESULT_DIGITS:
+                raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
     if isinstance(result, complex):
         if math.isnan(result.real) or math.isnan(result.imag) or math.isinf(result.real) or math.isinf(result.imag):
             raise EvaluationError("Result too large")
@@ -93,7 +147,16 @@ def register_function(name: str, func: Any) -> None:
 
 
 def load_user_config() -> None:
-    """Load user-defined configuration from eggcalc_config.py (thread-safe)."""
+    """Load user-defined configuration from eggcalc_config.py (thread-safe).
+
+    CUSTOM_UNITS supports two value formats per (base, name) entry:
+    - A plain number ``{"xu": 0.1}`` (backward compatible): the category is
+      inferred from the first existing unit in this base, or from the base
+      key itself.
+    - A ``(factor, category)`` tuple ``{"xu": (0.1, "length")}`` (preferred):
+      the category is recorded explicitly so the unit can be added to or
+      subtracted from other units in the same category.
+    """
     global _config_loaded
     try:
         import eggcalc.normalize as normalize_mod
@@ -107,17 +170,31 @@ def load_user_config() -> None:
 
         from . import units
 
-        for base, unit_dict in getattr(config, "CUSTOM_UNITS", {}).items():
-            if base in units.UNIT_BASE:
-                units.UNIT_BASE[base].update(unit_dict)
-            else:
-                units.UNIT_BASE[base] = unit_dict
+        with units._UNITS_LOCK:
+            for base, unit_dict in getattr(config, "CUSTOM_UNITS", {}).items():
+                if base in units.UNIT_BASE:
+                    units.UNIT_BASE[base].update(unit_dict)
+                else:
+                    units.UNIT_BASE[base] = unit_dict
+                for unit_name, value in unit_dict.items():
+                    if isinstance(value, tuple) and len(value) == 2:
+                        _factor, category = value
+                        units.UNIT_CATEGORIES[unit_name] = category
+                    else:
+                        # Infer category from the first existing unit in this
+                        # base, or fall back to the base key itself.
+                        existing = next(
+                            iter(units.UNIT_CATEGORIES.get(u) for u in units.UNIT_BASE[base]
+                                 if u in units.UNIT_CATEGORIES),
+                            None,
+                        )
+                        units.UNIT_CATEGORIES[unit_name] = existing or base
 
-        for unit, canonical in getattr(config, "CUSTOM_ALIASES", {}).items():
-            units.UNIT_ALIASES[unit] = canonical
+            for unit, canonical in getattr(config, "CUSTOM_ALIASES", {}).items():
+                units.UNIT_ALIASES[unit] = canonical
 
-        for key, (mult, offset) in getattr(config, "CUSTOM_TEMP_CONVERSIONS", {}).items():
-            units.TEMPERATURE_CONVERSIONS[key] = (mult, offset)
+            for key, (mult, offset) in getattr(config, "CUSTOM_TEMP_CONVERSIONS", {}).items():
+                units.TEMPERATURE_CONVERSIONS[key] = (mult, offset)
 
         units._rebuild_conversions()
 
@@ -136,10 +213,36 @@ def _ensure_config_loaded() -> None:
 
 _cache: OrderedDict[str, Any] = OrderedDict()
 _cache_lock = threading.Lock()
+_cache_bytes: int = 0
+
+
+def _entry_size(key: str, value: Any) -> int:
+    """Approximate size of a cache entry in bytes.
+
+    Uses the key length and the str() of the value as a simple proxy.
+    """
+    return len(key) + len(str(value))
+
+
+def _evict_until_under_cap() -> None:
+    """Evict LRU entries from _cache until total size <= MAX_CACHE_BYTES.
+
+    Called under _cache_lock. The MAX_CACHE_BYTES cap is soft: if a single
+    entry alone exceeds the cap, it is still inserted (we don't lose
+    correctness by storing a single oversized entry), but we don't
+    attempt to evict further on its behalf.
+    """
+    global _cache_bytes
+    while _cache and _cache_bytes > MAX_CACHE_BYTES:
+        old_key, old_value = _cache.popitem(last=False)
+        _cache_bytes -= _entry_size(old_key, old_value)
+    if _cache_bytes < 0:
+        _cache_bytes = 0
 
 
 def _cached_normalize_and_evaluate(expression: str) -> Any:
     """Cache for normalized and evaluated expressions."""
+    global _cache_bytes
     with _cache_lock:
         if expression in _cache:
             _cache.move_to_end(expression)
@@ -155,9 +258,14 @@ def _cached_normalize_and_evaluate(expression: str) -> Any:
     result = _default_evaluator.evaluate(normalized)
 
     with _cache_lock:
+        # Hard cap on entry count
         if len(_cache) >= DEFAULT_CACHE_SIZE:
-            _cache.popitem(last=False)
+            old_key, old_value = _cache.popitem(last=False)
+            _cache_bytes -= _entry_size(old_key, old_value)
         _cache[expression] = result
+        _cache_bytes += _entry_size(expression, result)
+        # Soft cap on total bytes
+        _evict_until_under_cap()
 
     return result
 
@@ -791,6 +899,83 @@ class EvaluationError(Exception):
     pass
 
 
+# ContextVar tracking the "current" Evaluator during evaluation.
+# FUNCTIONS dict entries (store, setvar, etc.) consult this to use
+# the per-instance state of the evaluator actually running the expression.
+_current_evaluator: contextvars.ContextVar[Evaluator | None] = contextvars.ContextVar(
+    "_current_evaluator", default=None
+)
+
+
+def _get_current_evaluator() -> Evaluator:
+    """Return the Evaluator currently executing an expression, or the default.
+
+    Used by FUNCTIONS dict entries so memory/setvar/clearvars/etc. operate on
+    the state of the Evaluator that is actually running the expression.
+    """
+    ev = _current_evaluator.get()
+    return ev if ev is not None else _default_evaluator
+
+
+# Per-instance wrappers for FUNCTIONS dict entries. They consult the
+# _current_evaluator ContextVar so behavior is correctly scoped to the
+# active Evaluator (e.g. inside a PyCalcApp instance).
+
+
+def _fn_store(value: float, register: str = "M") -> float:
+    return _get_current_evaluator()._memory.store(value, register)
+
+
+def _fn_recall(register: str = "M") -> float:
+    return _get_current_evaluator()._memory.recall(register)
+
+
+def _fn_add(value: float, register: str = "M") -> float:
+    return _get_current_evaluator()._memory.add(value, register)
+
+
+def _fn_subtract(value: float, register: str = "M") -> float:
+    return _get_current_evaluator()._memory.subtract(value, register)
+
+
+def _fn_clear(register: str | None = None) -> None:
+    _get_current_evaluator()._memory.clear(register)
+    return None
+
+
+def _fn_setvar(name: str, value: Any) -> Any:
+    ev = _get_current_evaluator()
+    with ev._var_lock:
+        ev._user_variables[name] = value
+    return value
+
+
+def _fn_getvar(name: str, default: Any = 0) -> Any:
+    ev = _get_current_evaluator()
+    with ev._var_lock:
+        return ev._user_variables.get(name, default)
+
+
+def _fn_delvar(name: str) -> None:
+    ev = _get_current_evaluator()
+    with ev._var_lock:
+        ev._user_variables.pop(name, None)
+    return None
+
+
+def _fn_listvars() -> dict[str, Any]:
+    ev = _get_current_evaluator()
+    with ev._var_lock:
+        return dict(ev._user_variables)
+
+
+def _fn_clearvars() -> None:
+    ev = _get_current_evaluator()
+    with ev._var_lock:
+        ev._user_variables.clear()
+    return None
+
+
 class Memory:
     """Memory registers for storing values (like scientific calculator memory)."""
 
@@ -852,48 +1037,45 @@ class Memory:
             return result
 
 
-# Global memory instance
-_memory = Memory()
+# Global memory instance (default evaluator; replaced by per-instance below)
+_memory: Memory = Memory()  # type: ignore[assignment]
 
 
 def memory_store(value: float, register: str = "M") -> float:
-    """Store value in memory register."""
-    return _memory.store(value, register)
+    """Store value in memory register (proxies to the default evaluator)."""
+    return _default_evaluator._memory.store(value, register)
 
 
 def memory_recall(register: str = "M") -> float:
-    """Recall value from memory register."""
-    return _memory.recall(register)
+    """Recall value from memory register (proxies to the default evaluator)."""
+    return _default_evaluator._memory.recall(register)
 
 
 def memory_add(value: float, register: str = "M") -> float:
-    """Add value to memory register (M+)."""
-    return _memory.add(value, register)
+    """Add value to memory register (M+) on the default evaluator."""
+    return _default_evaluator._memory.add(value, register)
 
 
 def memory_subtract(value: float, register: str = "M") -> float:
-    """Subtract value from memory register (M-)."""
-    return _memory.subtract(value, register)
+    """Subtract value from memory register (M-) on the default evaluator."""
+    return _default_evaluator._memory.subtract(value, register)
 
 
 def memory_clear(register: str | None = None) -> None:
-    """Clear memory register(s)."""
-    _memory.clear(register)
+    """Clear memory register(s) on the default evaluator."""
+    _default_evaluator._memory.clear(register)
 
 
 def memory_list() -> dict[str, float]:
-    """List all memory registers."""
-    return _memory.list_registers()
+    """List all memory registers on the default evaluator."""
+    return _default_evaluator._memory.list_registers()
 
 
-# === Variable storage ===
-
-_user_variables: dict[str, Any] = {}
-_variables_lock = threading.Lock()
+# === Variable storage (proxies to default evaluator) ===
 
 
 def setvar(name: str, value: Any) -> Any:
-    """Set a user variable.
+    """Set a user variable on the default evaluator.
 
     Args:
         name: Variable name
@@ -902,13 +1084,14 @@ def setvar(name: str, value: Any) -> Any:
     Returns:
         The value that was set
     """
-    with _variables_lock:
-        _user_variables[name] = value
-        return value
+    ev = _default_evaluator
+    with ev._var_lock:
+        ev._user_variables[name] = value
+    return value
 
 
 def getvar(name: str) -> Any:
-    """Get a user variable.
+    """Get a user variable from the default evaluator.
 
     Args:
         name: Variable name
@@ -916,26 +1099,106 @@ def getvar(name: str) -> Any:
     Returns:
         The variable value or 0 if not found
     """
-    with _variables_lock:
-        return _user_variables.get(name, 0)
+    ev = _default_evaluator
+    with ev._var_lock:
+        return ev._user_variables.get(name, 0)
 
 
 def delvar(name: str) -> None:
-    """Delete a user variable."""
-    with _variables_lock:
-        _user_variables.pop(name, None)
+    """Delete a user variable on the default evaluator."""
+    ev = _default_evaluator
+    with ev._var_lock:
+        ev._user_variables.pop(name, None)
 
 
 def listvars() -> dict[str, Any]:
-    """List all user variables."""
-    with _variables_lock:
-        return _user_variables.copy()
+    """List all user variables on the default evaluator."""
+    ev = _default_evaluator
+    with ev._var_lock:
+        return dict(ev._user_variables)
 
 
 def clearvars() -> None:
-    """Clear all user variables."""
-    with _variables_lock:
-        _user_variables.clear()
+    """Clear all user variables on the default evaluator."""
+    ev = _default_evaluator
+    with ev._var_lock:
+        ev._user_variables.clear()
+
+
+# === AST allow-list (M7) ===
+# Built at module import time by walking a set of known-safe expressions
+# and recording every reachable ast.expr subclass. Used by
+# Evaluator._validate_node to reject any node type not in this set.
+
+_SAFE_AST_EXPRESSIONS: tuple[str, ...] = (
+    "1",
+    "1+1",
+    "1-1",
+    "1*1",
+    "1/1",
+    "1**1",
+    "a",
+    "a+b",
+    "a-b",
+    "a*b",
+    "a/b",
+    "a**b",
+    "a(1)",
+    "a(1, 2, 3)",
+    "-a",
+    "+a",
+    "~a",
+    "1j",
+    "(1j)*(1j)",
+    "a + b * c",
+    "(a + b) * c",
+    "math.sin(1)",
+    "math.cos(0)",
+    "math.tan(0)",
+    "(1).real",
+    "(1).imag",
+    "(1).conjugate()",
+    "a.real + b.imag",
+    "1 & 3",
+    "1 | 3",
+    "1 ^ 3",
+    "1 << 2",
+    "1 >> 2",
+)
+
+
+def _build_allowed_ast_types() -> frozenset[type[ast.AST]]:
+    """Compute the set of AST node types reachable from safe expressions.
+
+    Also includes all ast.operator, ast.unaryop, ast.expr_context,
+    ast.cmpop, ast.boolop subclasses so sub-nodes (e.g. Add, Load)
+    are not erroneously rejected.
+    """
+    allowed: set[type[ast.AST]] = set()
+    for expr in _SAFE_AST_EXPRESSIONS:
+        try:
+            tree = ast.parse(expr, mode="eval")
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.expr):
+                allowed.add(type(node))
+
+    allowed.add(ast.Expression)
+    for name in dir(ast):
+        obj = getattr(ast, name)
+        if isinstance(obj, type) and issubclass(obj, ast.AST) and (
+            issubclass(obj, ast.operator)
+            or issubclass(obj, ast.unaryop)
+            or issubclass(obj, ast.expr_context)
+            or issubclass(obj, ast.cmpop)
+            or issubclass(obj, ast.boolop)
+        ):
+            allowed.add(obj)
+    return frozenset(allowed)
+
+
+_ALLOWED_AST_TYPES: frozenset[type[ast.AST]] = _build_allowed_ast_types()
 
 
 class Evaluator(ast.NodeVisitor):
@@ -945,6 +1208,10 @@ class Evaluator(ast.NodeVisitor):
     Supports arithmetic operators, trig functions, constants,
     logarithms, and unit conversions.
     """
+
+    # Class-level flag, set on first call to _check_constant_unit_collisions().
+    # Shared across the package and the inlined single-file build.
+    _COLLISION_WARNING_EMITTED: bool = False
 
     # Safe mathematical constants
     CONSTANTS: dict[str, Any] = {
@@ -1125,19 +1392,19 @@ class Evaluator(ast.NodeVisitor):
         # Unit conversion
         "convert": _convert,
         # Memory functions
-        "store": memory_store,
-        "recall": memory_recall,
-        "M": lambda: memory_recall("M"),
-        "Mplus": lambda x: memory_add(x, "M"),
-        "Mminus": lambda x: memory_subtract(x, "M"),
-        "MC": lambda: memory_clear("M"),
-        "MR": lambda: memory_recall("M"),
+        "store": _fn_store,
+        "recall": _fn_recall,
+        "M": lambda: _fn_recall("M"),
+        "Mplus": lambda x: _fn_add(x, "M"),
+        "Mminus": lambda x: _fn_subtract(x, "M"),
+        "MC": lambda: _fn_clear("M"),
+        "MR": lambda: _fn_recall("M"),
         # Variable functions
-        "setvar": setvar,
-        "getvar": getvar,
-        "delvar": delvar,
-        "listvars": listvars,
-        "clearvars": clearvars,
+        "setvar": _fn_setvar,
+        "getvar": _fn_getvar,
+        "delvar": _fn_delvar,
+        "listvars": _fn_listvars,
+        "clearvars": _fn_clearvars,
     }
 
     # Safe binary operators
@@ -1180,13 +1447,18 @@ class Evaluator(ast.NodeVisitor):
     }
 
     def __init__(self) -> None:
-        """Initialize evaluator with instance-level constants and functions.
+        """Initialize evaluator with instance-level state.
 
-        Each evaluator instance has its own copy of constants and functions,
-        allowing for instance isolation in PyCalcApp.
+        Each Evaluator instance has its own copy of constants, functions,
+        user variables, and memory registers. This enables true instance
+        isolation in PyCalcApp: variables set on one instance are not
+        visible to other instances or the module-level default evaluator.
         """
         self.CONSTANTS = self.__class__.CONSTANTS.copy()
         self.FUNCTIONS = self.__class__.FUNCTIONS.copy()
+        self._memory = Memory()
+        self._user_variables: dict[str, Any] = {}
+        self._var_lock = threading.Lock()
 
     def _parse_unit(self, text: str) -> tuple[float, str | None]:
         """Parse a string that may contain a number and unit."""
@@ -1214,16 +1486,35 @@ class Evaluator(ast.NodeVisitor):
             raise EvaluationError(f"Cannot parse: '{text}'")
 
     def _get_conversion_factor(self, from_unit: str, to_unit: str) -> float:
-        """Get conversion factor from one unit to another."""
+        """Get conversion factor from one unit to another.
+
+        We read UNIT_CONVERSIONS via the units module to pick up the
+        live binding (build_single-time imports are stale after
+        _rebuild_conversions rebinds the global).
+        """
+        import sys
+
+        try:
+            from . import units as _units  # type: ignore[import-not-found]
+        except ImportError:
+            # Assembled single-file mode: try sys.modules
+            if "." in __name__:
+                _units = sys.modules.get(__name__.rsplit(".", 1)[0] + ".units")
+            else:
+                _units = sys.modules.get("units")
+
         from_unit = normalize_unit(from_unit)
         to_unit = normalize_unit(to_unit)
 
         if from_unit == to_unit:
             return 1.0
 
+        # Use the live binding if we found the units module, else the
+        # import-time binding (which works when nothing was rebuilt).
+        conversions = _units.UNIT_CONVERSIONS if _units is not None else UNIT_CONVERSIONS
         key = (from_unit, to_unit)
-        if key in UNIT_CONVERSIONS:
-            return UNIT_CONVERSIONS[key]
+        if key in conversions:
+            return conversions[key]
 
         raise EvaluationError(f"Cannot convert from '{from_unit}' to '{to_unit}'")
 
@@ -1249,17 +1540,23 @@ class Evaluator(ast.NodeVisitor):
         raise EvaluationError(f"Unsupported constant: '{node.value}'")
 
     def visit_Name(self, node: ast.Name) -> Any:
-        """Visit a name node."""
-        if node.id in self.CONSTANTS:
-            return self.CONSTANTS[node.id]
+        """Visit a name node.
+
+        Lookup order:
+        1. UNIT_ALIASES (unit names; common short names like 'g', 'h', 'k')
+        2. CONSTANTS (physical constants; long names like 'gravity', 'planck')
+        3. FUNCTIONS (rejected as used-without-args)
+        4. Per-instance user variables
+        """
         if node.id in UNIT_ALIASES:
             return UnitValue(1.0, UNIT_ALIASES[node.id])
+        if node.id in self.CONSTANTS:
+            return self.CONSTANTS[node.id]
         if node.id in self.FUNCTIONS:
             raise EvaluationError(f"Function '{node.id}' used without arguments")
-        # Check user variables (thread-safe access)
-        with _variables_lock:
-            if node.id in _user_variables:
-                return _user_variables[node.id]
+        with self._var_lock:
+            if node.id in self._user_variables:
+                return self._user_variables[node.id]
         raise EvaluationError(f"Unknown name: '{node.id}'")
 
     def visit_BinOp(self, node: ast.BinOp) -> Any:
@@ -1457,27 +1754,31 @@ class Evaluator(ast.NodeVisitor):
 
     def evaluate(self, expression: str) -> Any:
         """Evaluate an expression and return the result."""
+        token = _current_evaluator.set(self)
         try:
-            tree = ast.parse(expression, mode="eval")
-        except SyntaxError as e:
-            raise EvaluationError(f"Invalid syntax: '{expression}'") from e
+            try:
+                tree = ast.parse(expression, mode="eval")
+            except SyntaxError as e:
+                raise EvaluationError(f"Invalid syntax: '{expression}'") from e
 
-        # Validate all nodes
-        for node in ast.walk(tree):
-            self._validate_node(node)
+            # Validate all nodes
+            for node in ast.walk(tree):
+                self._validate_node(node)
 
-        result = self.visit(tree.body)
+            result = self.visit(tree.body)
 
-        # Handle result
-        if isinstance(result, UnitValue):
+            # Handle result
+            if isinstance(result, UnitValue):
+                return _check_result_size(result)
+            if isinstance(result, str):
+                return result
+            if result is None:
+                return None  # Functions like seed() and clearvars() return None
+            if not isinstance(result, (int, float, complex)):
+                raise EvaluationError(f"Result must be a number, got '{type(result)}'")
             return _check_result_size(result)
-        if isinstance(result, str):
-            return result
-        if result is None:
-            return None  # Functions like seed() and clearvars() return None
-        if not isinstance(result, (int, float, complex)):
-            raise EvaluationError(f"Result must be a number, got '{type(result)}'")
-        return _check_result_size(result)
+        finally:
+            _current_evaluator.reset(token)
 
 
 def evaluate(expression: str) -> Any:
@@ -1579,9 +1880,23 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
     except Exception:
         proc.terminate()
         proc.join(timeout=2)
+        # If the process is still alive after terminate+join, force-kill it
+        # to ensure we don't leak a child process.
+        try:
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=2)
+        except Exception:
+            pass
         raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
 
-    proc.join(timeout=2)
+    try:
+        proc.join(timeout=2)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=2)
+    finally:
+        pass
 
     if status == "error":
         raise EvaluationError(value)
@@ -1589,6 +1904,9 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
 
 
 _default_evaluator = Evaluator()
+
+
+_check_constant_unit_collisions()
 
 
 def get_default_evaluator() -> Evaluator:

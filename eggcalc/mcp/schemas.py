@@ -57,7 +57,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "outputSchema": {
             "type": "object",
             "properties": {
-                "result": {"type": "string", "description": "Evaluation result as string"},
+                "value": {"type": "string", "description": "Evaluation result as string"},
                 "type": {"type": "string", "description": "Python type name of the result"},
             },
         },

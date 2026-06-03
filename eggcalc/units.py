@@ -15,6 +15,8 @@ Provides comprehensive unit conversion support including:
 
 from __future__ import annotations
 
+import threading
+
 Numeric = float | int | complex
 
 FLOAT_EPSILON = 1e-10
@@ -193,15 +195,15 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "mi": 1609.344,
         "mile": 1609.344,
         "miles": 1609.344,
-        "ly": 9.4607e15,
-        "lightyear": 9.4607e15,
-        "lightyears": 9.4607e15,
-        "au": 1.496e11,
-        "astronomicalunit": 1.496e11,
-        "astronomicalunits": 1.496e11,
-        "pc": 3.086e16,
-        "parsec": 3.086e16,
-        "parsecs": 3.086e16,
+        "ly": 9.4607304725808e15,
+        "lightyear": 9.4607304725808e15,
+        "lightyears": 9.4607304725808e15,
+        "au": 1.49597870700e11,
+        "astronomicalunit": 1.49597870700e11,
+        "astronomicalunits": 1.49597870700e11,
+        "pc": 3.0856775814913673e16,
+        "parsec": 3.0856775814913673e16,
+        "parsecs": 3.0856775814913673e16,
         "angstrom": 1e-10,
         "angstroms": 1e-10,
         "fermi": 1e-15,
@@ -592,11 +594,23 @@ UNIT_BASE: dict[str, dict[str, float]] = {
 }
 
 
+# Module-level lock protecting all unit-table mutations.
+# Acquired by both _rebuild_conversions() and any code that mutates
+# UNIT_BASE / UNIT_ALIASES / UNIT_CATEGORIES (e.g. load_user_config).
+_UNITS_LOCK: threading.RLock = threading.RLock()
+
+
 def _build_unit_conversions() -> dict[tuple[str, str], float]:
     """Build a complete unit conversion lookup table."""
     conversions: dict[tuple[str, str], float] = {}
 
-    for base_unit, units in UNIT_BASE.items():
+    # Snapshot UNIT_BASE so concurrent mutations don't cause rehashing
+    # mid-iteration. The snapshot is a shallow copy of the outer dict
+    # pointing to the same inner dicts; reading dict items is safe.
+    with _UNITS_LOCK:
+        base_snapshot = {base: dict(units) for base, units in UNIT_BASE.items()}
+
+    for _base_unit, units in base_snapshot.items():
         unit_factors = {unit: factor for unit, factor in units.items()}
 
         for from_unit, from_factor in unit_factors.items():
@@ -613,9 +627,15 @@ UNIT_CONVERSIONS: dict[tuple[str, str], float] = {}
 
 
 def _rebuild_conversions() -> None:
-    """Rebuild UNIT_CONVERSIONS after adding custom units."""
+    """Rebuild UNIT_CONVERSIONS after adding custom units.
+
+    Thread-safe: holds _UNITS_LOCK so concurrent readers see a consistent
+    UNIT_CONVERSIONS swap.
+    """
     global UNIT_CONVERSIONS
-    UNIT_CONVERSIONS = _build_unit_conversions()
+    new_table = _build_unit_conversions()
+    with _UNITS_LOCK:
+        UNIT_CONVERSIONS = new_table
 
 
 _rebuild_conversions()
@@ -649,9 +669,9 @@ UNIT_ALIASES: dict[str, str] = {
     "pm": "pm",
     "picometer": "pm",
     "picometers": "pm",
-    "in": "in",
-    "inch": "in",
-    "inches": "in",
+    "in": "inch",
+    "inch": "inch",
+    "inches": "inch",
     "ft": "ft",
     "foot": "ft",
     "feet": "ft",
@@ -1045,12 +1065,54 @@ UNIT_ALIASES: dict[str, str] = {
     "gigahertz": "GHz",
     "THz": "THz",
     "terahertz": "THz",
+    # Case-insensitive aliases (common capitalizations)
+    "KM": "km",
+    "KG": "kg",
+    "GHZ": "GHz",
+    "KHZ": "kHz",
+    "MHZ": "MHz",
+    "Meters": "m",
+    "Miles": "mi",
+    "Inches": "inch",
+    "Feet": "ft",
+    "Pounds": "lb",
+    "Ounces": "oz",
+    "Celsius": "C",
+    "Fahrenheit": "F",
+    "Kelvin": "K",
+    "Hours": "h",
+    "Minutes": "min",
+    "Seconds": "s",
+    "Kilograms": "kg",
+    "Grams": "g",
+    "Liters": "L",
+    "Newtons": "N",
+    "Volts": "V",
+    "Amps": "A",
+    "Amperes": "A",
+    "Watts": "W",
+    "Joules": "J",
+    "Pascals": "Pa",
 }
 
 
 def normalize_unit(unit: str) -> str:
-    """Normalize a unit to its canonical form."""
-    return UNIT_ALIASES.get(unit, unit)
+    """Normalize a unit to its canonical form.
+
+    Tries, in order:
+    1. The literal input (exact match)
+    2. .lower() (lowercase form)
+    3. .upper() (uppercase form)
+    4. .title() / .capitalize() (mixed-case common forms)
+
+    If none match, returns the input unchanged.
+    """
+    if unit in UNIT_ALIASES:
+        return UNIT_ALIASES[unit]
+    for candidate in (unit.lower(), unit.upper(), unit.title(), unit.capitalize()):
+        if candidate in UNIT_ALIASES:
+            return UNIT_ALIASES[candidate]
+    return unit
 
 
 TEMPERATURE_CONVERSIONS: dict[tuple[str, str], tuple[float, float]] = {
@@ -1108,8 +1170,13 @@ def get_conversion_factor(from_unit: str, to_unit: str) -> float:
 
 
 def is_unit(text: str) -> bool:
-    """Check if text represents a unit."""
-    return text in UNIT_ALIASES or text in UNIT_CONVERSIONS
+    """Check if text represents a unit (case-insensitive)."""
+    if text in UNIT_ALIASES or text in UNIT_CONVERSIONS:
+        return True
+    for candidate in (text.lower(), text.upper(), text.title(), text.capitalize()):
+        if candidate in UNIT_ALIASES or candidate in UNIT_CONVERSIONS:
+            return True
+    return False
 
 
 UNIT_CATEGORIES: dict[str, str] = {
@@ -1120,7 +1187,7 @@ UNIT_CATEGORIES: dict[str, str] = {
     "um": "length",
     "nm": "length",
     "pm": "length",
-    "in": "length",
+    "inch": "length",
     "ft": "length",
     "yd": "length",
     "mi": "length",

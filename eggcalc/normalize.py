@@ -52,6 +52,7 @@ __all__ = [
 ]
 
 MAX_INPUT_LENGTH = 10000
+MAX_NORMALIZED_LENGTH = 20000
 MAX_NESTING_DEPTH = 100
 
 # Pre-computed sorted units list for performance (avoid re-sorting each call)
@@ -118,7 +119,7 @@ OPERATOR_CONVERSIONS: dict[str, list[str]] = {
     "-": ["minus", "negative"],
     "*": ["times", "multiplied by", "of"],  # "of" for "30% of 200"
     "/": ["divided by", "over", "per", "divide"],
-    "**": ["^", "raised to", "raised to the power of", "to the power of"],
+    "**": ["raised to", "raised to the power of", "to the power of"],
     ".": ["point"],
     ",": [],
     "&": ["bitand", "bit and"],
@@ -374,7 +375,6 @@ def _build_config() -> tuple[dict, dict]:
         "point": re.compile(r"\."),
         "negative": re.compile(r"\-"),
         "thousands_separator": re.compile(r","),
-        "inline_negative": re.compile(r"^[a-zA-Z]+-[a-zA-Z]+$"),
         "parenthesis": re.compile(r"\(|\)"),
         "operators": re.compile(f"^({'|'.join([re.escape(s) for s in symbols])}){{1}}$"),
         # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
@@ -390,14 +390,33 @@ def _build_config() -> tuple[dict, dict]:
     return normalize_config, compiled_patterns
 
 
+import threading as _threading
+
 # Module-level config (computed once)
 NORMALIZE, PATTERNS = _build_config()
 
+# Lock protecting config rebuilds. Acquired by _rebuild_config() so that
+# concurrent readers see a consistent (NORMALIZE, PATTERNS) pair. Also
+# acquired by consumers (e.g., check_if_number via NORMALIZE/PATTERNS
+# access) when atomicity is required.
+_REBUILD_LOCK: _threading.RLock = _threading.RLock()
+
 
 def _rebuild_config() -> None:
-    """Rebuild NORMALIZE and PATTERNS after adding custom words."""
+    """Rebuild NORMALIZE and PATTERNS after adding custom words.
+
+    Thread-safe: holds _REBUILD_LOCK so that consumers see a consistent
+    (NORMALIZE, PATTERNS) pair. Also clears the check_if_number LRU cache
+    so cached results from before the rebuild don't leak into the new config.
+    """
     global NORMALIZE, PATTERNS
-    NORMALIZE, PATTERNS = _build_config()
+    with _REBUILD_LOCK:
+        new_normalize, new_patterns = _build_config()
+        NORMALIZE = new_normalize
+        PATTERNS = new_patterns
+    # Clear the LRU cache outside the lock to avoid holding it during
+    # the (potentially slow) cache eviction.
+    check_if_number.cache_clear()
 
 
 @lru_cache(maxsize=1024)
@@ -501,7 +520,9 @@ def validate_for_eval(tokens: list, patterns: Mapping[str, Pattern[str]]) -> boo
             if not patterns["valid_operations"].match(token):
                 if not is_unit(token):
                     if token not in known_constants:
-                        if re.match(r"^[0-9+\-*/.%eE]+$", token):
+                        # Accept '<num>*<unit>' or '<num>/<unit>' patterns
+                        # (e.g., '1*m' from "1 in m" unit conversion)
+                        if re.match(r"^[0-9][0-9+\-*/.%a-zA-Z]*$", token):
                             continue
                         raise ValueError(f"Invalid token: {token}")
     return True
@@ -616,14 +637,63 @@ def apply_math_functions(
     - sin(40+2) -> math.sin(40+2) (user's parens preserved)
     - sin of 40 -> math.sin(40)
     - sqrt * 100 -> math.sqrt(100) (skip * from "of" replacement)
+    - 5 factorial -> factorial(5)  (implicit-mul swap: leading number becomes the arg)
+    - 5 sin -> sin(5)
     """
+    _SINGLE_ARG_IMPLICIT_MUL: set[str] = {
+        "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
+        "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
+        "exp", "abs", "factorial", "fact", "cbrt", "floor",
+        "ceil", "round", "sign", "isprime", "nextprime",
+        "prevprime", "random", "gauss", "hypot", "primefactors",
+        "randint",
+    }
+
+    _MULTI_ARG_OF_FUNCS: set[str] = {
+        "mean", "median", "mode", "std", "variance",
+        "gcd", "lcm", "perm", "comb", "nPr", "nCr",
+        "sum", "max", "min", "clamp",
+    }
+
+    def _is_pure_num_token(tok: str) -> bool:
+        stripped = tok.strip("+-")
+        return stripped.isdigit() and not any(c.isalpha() for c in stripped)
+
     output_tokens = []
     i = 0
     while i < len(tokens):
         token = tokens[i]
 
         if token in operators["functions"]:
-            output_tokens.append(operators["functions"][token])
+            func_name = operators["functions"][token]
+            # Implicit-mul swap: <num>[*] <single-arg-func> -> <func>(<num>)
+            # Only swap if there is no value (number) immediately after the function
+            # name in the token stream; otherwise the trailing value is the argument
+            # (e.g., "2 sqrt 9" -> "2*sqrt(9)", but "5 factorial" -> "factorial(5)").
+            if token in _SINGLE_ARG_IMPLICIT_MUL and output_tokens:
+                # Check whether the next non-* token in the input is a value
+                next_idx = i + 1
+                while next_idx < len(tokens) and tokens[next_idx] == "*":
+                    next_idx += 1
+                has_trailing_value = (
+                    next_idx < len(tokens)
+                    and tokens[next_idx] not in operators["functions"]
+                    and tokens[next_idx] != ")"
+                    and not patterns["operators"].match(tokens[next_idx])
+                )
+                if not has_trailing_value and output_tokens:
+                    if output_tokens[-1] == "*":
+                        output_tokens.pop()
+                    if output_tokens and _is_pure_num_token(output_tokens[-1]):
+                        num = output_tokens.pop()
+                        output_tokens.append(func_name)
+                        output_tokens.append("(")
+                        output_tokens.append(num)
+                        output_tokens.append(")")
+                        i += 1
+                        continue
+
+            output_tokens.append(func_name)
             next_token = tokens[i + 1] if i + 1 < len(tokens) else None
 
             if next_token is not None and next_token == "(":
@@ -652,9 +722,11 @@ def apply_math_functions(
                     if is_operator:
                         if next_token == ".":
                             pass  # continue collecting
-                        elif skipped_of and next_token in ("+", "-"):
+                        elif skipped_of and next_token in ("+", "-") and token in _MULTI_ARG_OF_FUNCS:
                             # "of" chains: replace +/- with , for multi-arg functions
                             # e.g., mean*1+2+3 -> mean(1,2,3)
+                            # Restricted to multi-arg functions; for single-arg
+                            # functions like sqrt, "sqrt of 144 + 5" stays as sqrt(144)+5.
                             output_tokens.append(",")
                             i += 1
                             continue
@@ -721,21 +793,6 @@ def convert_from_human_handler(
     return tokens, is_valid
 
 
-def _handle_negative_token(
-    tokens: list,
-    index: int,
-    patterns: Mapping[str, Pattern[str]],
-) -> tuple[list, list]:
-    """Handle negative token patterns like 'five-six' or '5.-2'."""
-    if index < 2 or index >= len(tokens) or (index - 1) >= len(tokens) or (index - 2) >= len(tokens):
-        return tokens, []
-    temp = tokens[index].split("-")
-    tokens[index - 2] = f"{tokens[index - 2]}.{temp[0]}"
-    tokens[index - 1] = ""
-    tokens[index] = f"-{temp[1]}"
-    return tokens, [index - 1]
-
-
 def _should_split_number_minus(token: str) -> bool:
     """Check if token matches pattern: digit-sequence minus digit-sequence."""
     return bool(re.match(r"^\d+-\d+$", token))
@@ -746,55 +803,22 @@ def _should_split_double_minus(token: str) -> bool:
     return bool(re.match(r"^\d+--\d+$", token))
 
 
-def _should_handle_inline_negative(
-    tokens: list, index: int, patterns: Mapping[str, Pattern[str]]
-) -> bool:
-    """Check if token should be handled as inline negative."""
-    return bool(
-        index >= 2
-        and patterns["inline_negative"].match(tokens[index])
-        and patterns["point"].match(tokens[index - 1])
-        and not check_if_number(tokens[index - 2])["bool"]
-    )
-
-
-def _should_handle_decimal_negative(
-    tokens: list, index: int, patterns: Mapping[str, Pattern[str]]
-) -> bool:
-    """Check if token should be handled as decimal negative."""
-    return bool(
-        index >= 2
-        and patterns["negative"].search(tokens[index])
-        and patterns["point"].match(tokens[index - 1])
-        and check_if_number(tokens[index - 2])["bool"]
-    )
-
-
 def split_at_operators(
     expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]
 ) -> list:
     """Split an expression string at operator boundaries."""
-    # Escape operators for splitting
     for symbol in operators["symbols"]:
         if symbol != "-":
             expression = expression.replace(symbol, f"\\{symbol}\\")
 
     tokens = [t.strip() for t in expression.split("\\") if t.strip()]
 
-    indices_to_remove = []
-
     for i in range(len(tokens)):
         is_num = check_if_number(tokens[i])["bool"]
         is_op = patterns["operators"].match(tokens[i]) is not None
 
         if not is_num and not is_op:
-            if _should_handle_inline_negative(tokens, i, patterns):
-                tokens, removed = _handle_negative_token(tokens, i, patterns)
-                indices_to_remove.extend(removed)
-            elif _should_handle_decimal_negative(tokens, i, patterns):
-                tokens, removed = _handle_negative_token(tokens, i, patterns)
-                indices_to_remove.extend(removed)
-            elif _should_split_number_minus(tokens[i]):
+            if _should_split_number_minus(tokens[i]):
                 token = tokens[i]
                 parts = token.split("-", 1)
                 tokens[i] = parts[0]
@@ -809,12 +833,6 @@ def split_at_operators(
             elif _should_split_number_sequence(tokens[i]):
                 parts = tokens[i].split()
                 tokens[i:i+1] = parts
-            elif i > 0 and tokens[i][:1] != "-" and tokens[i - 1] != ".":
-                tokens[i] = tokens[i].replace("-", "")
-
-    if indices_to_remove:
-        for idx in reversed(indices_to_remove):
-            tokens.pop(idx)
 
     return tokens
 
@@ -870,6 +888,9 @@ def _combine_consecutive_numbers(
     2. Collect the full sequence of number + number + number...
     3. Use combine_number_parts to properly combine them
     4. Output any non-number or unit-having tokens as-is
+
+    Preserves the original token text so leading zeros (e.g., "0.015")
+    are not lost when re-emitting.
     """
     if not tokens:
         return tokens
@@ -890,14 +911,16 @@ def _combine_consecutive_numbers(
             i += 1
             continue
 
-        number_parts = [num_info["converted"]]
+        number_parts: list[tuple[Any, str]] = [(num_info["converted"], token)]
+        original_tokens: list[str] = [token]
 
         while True:
             if i + 1 < len(tokens):
                 next_token = tokens[i + 1]
                 next_is_num = check_if_number(next_token)["bool"] and _is_pure_number(next_token)
                 if next_is_num:
-                    number_parts.append(check_if_number(next_token)["converted"])
+                    number_parts.append((check_if_number(next_token)["converted"], next_token))
+                    original_tokens.append(next_token)
                     i += 1
                 else:
                     break
@@ -905,10 +928,14 @@ def _combine_consecutive_numbers(
                 break
 
         if len(number_parts) > 1:
-            combined = _finish_number_group(number_parts, patterns)
-            result.extend(combined)
+            values = [v for v, _ in number_parts]
+            combined = _finish_number_group(values, patterns)
+            if len(combined) == 1 and combined[0] == "+".join(original_tokens):
+                result.append(combined[0])
+            else:
+                result.extend(combined)
         else:
-            result.append(str(number_parts[0]))
+            result.append(original_tokens[0])
 
         i += 1
 
@@ -930,6 +957,71 @@ def _should_split_number_sequence(token: str) -> bool:
         stripped = part.strip('+-')
         if not stripped.replace('.', '').replace('e', '').replace('E', '').isdigit():
             return False
+
+
+# Module-level binary-word validation. Detects <value> not/in/to/as/into <value>
+# patterns and raises a clear error (e.g., "5 not 6" -> SyntaxError rather than
+# the silent "5~6" that would be produced by naive word substitution).
+_BINARY_WORD_PATTERN = re.compile(
+    r"(\d+(?:\.\d+)?|\([^)]*\))\s+"
+    r"(not|in|to|as|into)\s+"
+    r"(\d+(?:\.\d+)?)",
+    flags=re.IGNORECASE,
+)
+
+
+# Module-level set of function names that participate in implicit multiplication.
+# Used by the whitespace-removal loop to insert '*' between a digit/') and a
+# function name, and (in apply_math_functions) to swap leading numbers into
+# the function's argument list when the function takes exactly one argument.
+_IMPLICIT_MUL_FUNCS: set[str] = {
+    "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
+    "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
+    "exp", "abs", "factorial", "fact", "cbrt", "floor",
+    "ceil", "round", "sign", "mean", "median", "mode",
+    "std", "variance", "gcd", "lcm", "perm", "comb",
+    "nPr", "nCr", "isprime", "nextprime", "prevprime",
+    "primefactors", "random", "randint", "gauss", "sum",
+    "max", "min", "hypot", "clamp",
+}
+
+# Subset of _IMPLICIT_MUL_FUNCS that take exactly one argument. Used by
+# apply_math_functions to detect "<num> <func>" -> "<func>(<num>)" swap.
+_SINGLE_ARG_IMPLICIT_MUL: set[str] = {
+    "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
+    "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
+    "exp", "abs", "factorial", "fact", "cbrt", "floor",
+    "ceil", "round", "sign", "isprime", "nextprime",
+    "prevprime", "random", "gauss", "hypot", "primefactors",
+    "randint",
+}
+
+# Subset of _IMPLICIT_MUL_FUNCS that take multiple arguments. Used by
+# apply_math_functions to allow "of" chains like "mean of 1+2+3" ->
+# "mean(1,2,3)". Single-arg functions keep "+" / "-" as real operators
+# (e.g., "sqrt of 144 + 5" -> "sqrt(144) + 5").
+_MULTI_ARG_OF_FUNCS: set[str] = {
+    "mean", "median", "mode", "std", "variance",
+    "gcd", "lcm", "perm", "comb", "nPr", "nCr",
+    "sum", "max", "min", "clamp",
+}
+
+
+def _binary_word_check(expr: str) -> None:
+    """Raise ValueError if expr contains <value> not/in/to/as/into <value>.
+
+    These words are reserved for unary bitwise NOT or unit conversion. When
+    they appear between two numeric values (e.g., "5 not 6", "1 in 2"), we
+    would produce invalid Python (e.g., "5~6", "1IN2") and the meaning is
+    ambiguous. Raises a clear error instead.
+    """
+    m = _BINARY_WORD_PATTERN.search(expr)
+    if m:
+        raise ValueError(
+            f"Syntax error: '{m.group(2).lower()}' is not a binary operator in this context. "
+            f"Use parentheses for unary 'not' (e.g., '~(5+6)'); "
+            f"for unit conversion, follow the pattern '<value> in <unit>'."
+        )
     return True
 
 
@@ -980,19 +1072,32 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
                 for scale_word in scale_words:
                     key = f"{word} {scale_word}"
                     _MULTI_WORD_NUMBERS[key] = str(int(num_val) * int(scale_val))
+    # Add combinations of tens + ones + scale: "twenty one hundred" -> 2100,
+    # "fifty six thousand" -> 56000, "thirty two million" -> 32000000, etc.
+    for tens_val, tens_words in _NUMBER_WORDS_TENS.items():
+        for ones_val, ones_words in {**_NUMBER_WORDS_SINGLE, **_NUMBER_WORDS_TEENS}.items():
+            for scale_val, scale_words in _NUMBER_SCALES.items():
+                for tens_word in tens_words:
+                    for ones_word in ones_words:
+                        for scale_word in scale_words:
+                            key = f"{tens_word} {ones_word} {scale_word}"
+                            _MULTI_WORD_NUMBERS[key] = str(
+                                (int(tens_val) + int(ones_val)) * int(scale_val)
+                            )
     for phrase, replacement in sorted(_MULTI_WORD_NUMBERS.items(), key=lambda x: len(x[0]), reverse=True):
         expression = re.sub(r"\b" + re.escape(phrase) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
     # Strip "and" as a filler word in NL number expressions
     expression = re.sub(r"\band\b", "", expression, flags=re.IGNORECASE)
 
+    _binary_word_check(expression)
+
     _DIGIT_SCALES: dict[str, str] = {
         "thousand": "1000",
         "million": "1000000",
-        "billion": "1000000000",
-        "trillion": "1000000000000",
-        "quadrillion": "1000000000000000",
-        "quintillion": "1000000000000000000",
+        "billion": "1000000000000",
+        "trillion": "1000000000000000000",
+        "quadrillion": "1000000000000000000",
     }
     for scale_word, scale_val in _DIGIT_SCALES.items():
         expression = re.sub(
@@ -1014,8 +1119,17 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Use combined word replacement for efficiency (single pass)
     # Use word boundaries to avoid replacing parts of words
     word_to_all = operators.get("word_to_all", {})
+    _binary_word_check(expression)
     for word, replacement in sorted(word_to_all.items(), key=lambda x: len(x[0]), reverse=True):
-        # Use regex with word boundaries to only match whole words (case-insensitive)
+        # Special case: don't convert "in"/"into" when it appears to be a unit suffix
+        # (preceded by a digit, no following unit, or followed by something that
+        # isn't a unit). E.g., "5 in" or "5 in to cm" where "in" is a unit, not a keyword.
+        if word.lower() in ("in", "into") and re.search(
+            r"\d\s+" + re.escape(word) + r"(?:\s*$|\s+(?!\d))",
+            expression,
+            flags=re.IGNORECASE,
+        ):
+            continue
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
     # Handle "N percent" -> "N/100" AFTER word_to_all substitutions
@@ -1027,14 +1141,40 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     # Handle compound unit conversions after stripping
     # e.g., "60mi/h in m/s" -> "convert(60*mi/h,m/s)"
-    # The / in unit names would be tokenized as division, so we must handle this first
+    # e.g., "30 km/h in mph" -> "convert(30*km/h,mph)"
+    # The / in unit names would be tokenized as division, so we must handle this first.
+    # Note: "in"/"to" may have been replaced with "IN"/"TO" already; handle both forms.
+    # Also accept the optional "*" between the number and the unit (from
+    # the bare compound unit handling below).
     _COMPOUND_UNITS = ["km/h", "mi/h", "m/s", "km/s", "mi/s"]
+    # Also allow single units as targets (e.g., "30 km/h in mph")
+    _SINGLE_UNITS_FOR_CONVERSION = ["mph", "kph", "knot", "ft/s", "ft/min"]
     for from_unit in _COMPOUND_UNITS:
-        for to_unit in _COMPOUND_UNITS:
+        for to_unit in _COMPOUND_UNITS + _SINGLE_UNITS_FOR_CONVERSION:
             if from_unit != to_unit:
-                pattern = rf"(\d+(?:\.\d+)?)\s*{re.escape(from_unit)}\s+(?:in|to)\s+{re.escape(to_unit)}"
+                pattern = rf"(\d+(?:\.\d+)?)\s*\*?\s*{re.escape(from_unit)}\s*(?:in|to|IN|TO)\s*{re.escape(to_unit)}"
                 replacement_fn = lambda m, fu=from_unit, tu=to_unit: f"convert({m.group(1)}*{fu},{tu})"
                 expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
+
+    # Handle bare compound unit expressions: "30 km/h" -> "30*km/h"
+    # (without this, "/h" would be tokenized as division and the unit interpretation
+    # would be lost). Only insert "*" between the number and the compound unit.
+    for unit in _COMPOUND_UNITS:
+        pattern = rf"(\d+(?:\.\d+)?)(\s*)({re.escape(unit)})\b"
+        expression = re.sub(pattern, lambda m: f"{m.group(1)}*{m.group(3)}", expression, flags=re.IGNORECASE)
+
+    # Handle "<num> <unit> / <unit>" expressions (e.g., "5 km / h") - convert
+    # to a form the evaluator can handle without naming `h` as a Planck constant.
+    # We emit convert(N*unit1, base_unit) / convert(1*unit2, base_unit2) form.
+    _COMPOUND_SPLIT_PAIRS: list[tuple[str, str]] = [
+        ("km", "h"), ("mi", "h"), ("m", "s"), ("km", "s"), ("mi", "s"),
+        ("km", "hr"), ("mi", "hr"), ("m", "sec"), ("km", "sec"), ("mi", "sec"),
+        ("km", "min"), ("mi", "min"),
+    ]
+    for u1, u2 in _COMPOUND_SPLIT_PAIRS:
+        pattern = rf"(\d+(?:\.\d+)?)\s*{re.escape(u1)}\s*/\s*{re.escape(u2)}\b"
+        replacement_fn = lambda m, uu1=u1, uu2=u2: f"({m.group(1)}*{uu1})/({uu2})"
+        expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
 
     # Convert percentages (e.g., 50% -> 0.5)
     expression = re.sub(r"(\d+(?:\.\d+)?)\s*%", lambda m: str(float(m.group(1)) / 100), expression)
@@ -1045,6 +1185,17 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Handle standalone 'i' preceded by operators or at start
     expression = re.sub(r"(^|[+\-*/(])i\b", r"\g<1>1j", expression)
 
+    # Handle angle mode: <number> degrees -> <number>*pi/180
+    # This makes sin(30 degrees) interpret the argument as degrees rather than radians.
+    # Must be done BEFORE the 'i' -> 'j' substitution (no conflict) and BEFORE
+    # whitespace removal. Use word boundaries and case-insensitive matching.
+    expression = re.sub(
+        r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b",
+        lambda m: f"({m.group(1)}*pi/180)",
+        expression,
+        flags=re.IGNORECASE,
+    )
+
     # Join space-separated number sequences with + for proper evaluation
     # This must happen BEFORE whitespace removal so we get "3+100+20+2" instead of "3100202"
     expression = _join_number_parts(expression)
@@ -1052,27 +1203,58 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Replace whitespace outside parentheses with nothing
     # Preserve whitespace inside parentheses to separate function args
     # Also insert * between function names and following digits (e.g., "sqrt 144" -> "sqrt*144")
-    _FUNC_NAMES = set(FUNCTION_MAPPINGS.values())
+    # And between a digit/`) and a function name (e.g., "5 sin" -> "5*sin", "2 sqrt 9" -> "2*sqrt 9")
     result = []
     depth = 0
     prev_was_func_end = False
-    for char in expression:
+    i = 0
+    n = len(expression)
+    while i < n:
+        char = expression[i]
         if char == "(":
+            if result and result[-1] == ")":
+                # Implicit multiplication: ")(" -> ")*("
+                result.append("*")
             depth += 1
             if depth > MAX_NESTING_DEPTH:
                 raise ValueError(f"Expression nesting too deep (max {MAX_NESTING_DEPTH})")
             result.append(char)
             prev_was_func_end = False
+            i += 1
         elif char == ")":
             depth -= 1
             result.append(char)
             prev_was_func_end = False
+            i += 1
         elif char.isspace():
             if depth > 0:
                 result.append(char)  # Keep space inside parentheses
             # Skip space outside parentheses
+            i += 1
         else:
+            # Detect: digit or ")" followed by a function name token (e.g., "5 sin" -> "5*sin")
+            if char.isalpha() and result and result[-1] in "0123456789)":
+                # Look ahead to see if current alpha sequence matches an implicit-mul function
+                trail: list[str] = []
+                j = i
+                while j < n and (expression[j].isalpha() or expression[j].isdigit()):
+                    trail.append(expression[j])
+                    j += 1
+                candidate = "".join(trail)
+                # Skip if the candidate is a unit alias (e.g., "30 min" -> "30min", not "30*min()")
+                if candidate in _IMPLICIT_MUL_FUNCS and candidate not in UNIT_ALIASES and candidate.lower() not in UNIT_ALIASES:
+                    result.append("*")
+                    for c in candidate:
+                        result.append(c)
+                    i = j
+                    prev_was_func_end = candidate in _IMPLICIT_MUL_FUNCS
+                    continue
+
             if prev_was_func_end and char.isdigit():
+                result.append("*")
+            if result and result[-1] == ")" and (char.isdigit() or char == "("):
+                # Implicit multiplication: ")(" or ")<digit>" -> ")*(" or ")*<digit>"
+                # (e.g., "(2+3)4" -> "(2+3)*4", "(2+3)(4+5)" -> "(2+3)*(4+5)")
                 result.append("*")
             result.append(char)
             # Check if we just completed a function name
@@ -1084,10 +1266,11 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
                         trail.append(c)
                     else:
                         break
-                candidate = "".join(reversed(trail))
-                prev_was_func_end = candidate in _FUNC_NAMES
+                cand = "".join(reversed(trail))
+                prev_was_func_end = cand in _IMPLICIT_MUL_FUNCS
             else:
                 prev_was_func_end = False
+            i += 1
 
     expression = "".join(result)
 
@@ -1101,47 +1284,72 @@ def _join_number_parts(expression: str) -> str:
     (or simple expressions evaluating to numbers) and joins them with +.
     This ensures "three hundred twenty two" -> 3+100+20+2 -> 125,
     not 3100202.
+
+    Also inserts implicit '*' between adjacent number and non-number non-operator
+    tokens (e.g., "sqrt 144" -> "sqrt*144", "2 sqrt 9" -> "2*sqrt*9").
+    Operators like '+', '-', '*', '/', '&', '|', '^' are passed through unchanged.
+    Unit aliases (e.g., 'm', 'min', 'kg') are NOT treated as function names, so
+    no '*' is inserted between a number and a unit (deferred to _preprocess_units).
     """
     tokens = expression.split()
     if len(tokens) <= 1:
         return expression
 
-    result = []
+    _OPERATOR_TOKENS: set[str] = {
+        "+", "-", "*", "/", "**", "%", "&", "|", "^", "<<", ">>", "~",
+        "IN", "TO", "MOD",
+    }
+
+    def _is_digit_token(tok: str) -> bool:
+        stripped = tok.strip('+-')
+        return stripped.replace('.', '').replace('e', '').replace('E', '').isdigit()
+
+    def _is_unit_token(tok: str) -> bool:
+        return tok in UNIT_ALIASES or tok.lower() in UNIT_ALIASES
+
+    result: list[str] = []
     current_number_seq: list[str] = []
 
-    for token in tokens:
-        if token in ('+', '-'):
-            if current_number_seq:
-                if len(current_number_seq) == 1:
-                    result.append(current_number_seq[0])
-                else:
-                    result.append('+'.join(current_number_seq))
-                current_number_seq = []
-            result.append(token)
-        else:
-            stripped = token.strip('+-')
-            if stripped.replace('.', '').replace('e', '').replace('E', '').isdigit():
-                current_number_seq.append(token)
-            else:
-                if current_number_seq:
-                    if len(current_number_seq) == 1:
-                        result.append(current_number_seq[0])
-                    else:
-                        result.append('+'.join(current_number_seq))
-                    current_number_seq = []
-                result.append(token)
-
-    if current_number_seq:
+    def _flush_number_seq() -> None:
+        if not current_number_seq:
+            return
         if len(current_number_seq) == 1:
             result.append(current_number_seq[0])
         else:
             result.append('+'.join(current_number_seq))
+        current_number_seq.clear()
 
+    prev_kind: str | None = None
+
+    for token in tokens:
+        if token in _OPERATOR_TOKENS:
+            _flush_number_seq()
+            result.append(token)
+            prev_kind = "op"
+        elif _is_digit_token(token):
+            if prev_kind == "other" and not _is_unit_token(token):
+                result.append("*")
+            current_number_seq.append(token)
+            prev_kind = "num"
+        else:
+            _flush_number_seq()
+            if prev_kind == "num":
+                result.append("*")
+            result.append(token)
+            prev_kind = "other"
+
+    _flush_number_seq()
     return ''.join(result)
 
 
 def _preprocess_units(expression: str) -> str:
-    """Preprocess expression to add multiplication before units."""
+    """Preprocess expression to add multiplication before units.
+
+    Emits the canonical form of each unit (via UNIT_ALIASES) so that the
+    evaluator's visit_Name lookup is deterministic. E.g., "5in" -> "5*inch"
+    (canonical 'inch' instead of alias 'in'), "10 m" -> "10*m", etc.
+    Also handles cases where '*' is already present (e.g., "5*in" -> "5*inch").
+    """
     result = []
     i = 0
     depth = 0
@@ -1181,9 +1389,12 @@ def _preprocess_units(expression: str) -> str:
                     found_unit = False
                     for unit in units:
                         if remaining.startswith(unit):
+                            # Emit the canonical form (e.g., "in" -> "inch") so
+                            # the evaluator doesn't depend on the alias ordering.
+                            canonical = UNIT_ALIASES.get(unit, unit)
                             result.append(num)
                             result.append("*")
-                            result.append(unit)
+                            result.append(canonical)
                             i += len(unit)
                             found_unit = True
                             break
@@ -1200,6 +1411,38 @@ def _preprocess_units(expression: str) -> str:
                         result.append(num)
             else:
                 result.append(num)
+        elif char == "*" and result and result[-1].isdigit() and i + 1 < len(expression):
+            # "*" preceded by a digit. Check if the next alpha-only token is a
+            # unit alias. Find the longest prefix that matches a unit alias.
+            # (E.g., for "5*inTOcm", find "in" even though "i" alone isn't a unit.)
+            result.append("*")
+            i += 1
+            unit_tok = ""
+            j = i
+            best_end = i
+            while j < len(expression) and expression[j].isalpha():
+                candidate = expression[i:j + 1]
+                if candidate in UNIT_ALIASES:
+                    unit_tok = candidate
+                    best_end = j + 1
+                    j += 1
+                else:
+                    j += 1
+                    # Don't break; keep trying longer prefixes in case a longer
+                    # one matches (e.g., "in" matches even though "i" doesn't).
+                    # But stop if we've clearly passed any plausible unit length
+                    # (units are typically <= 20 chars).
+                    if j - i > 25:
+                        break
+            if unit_tok:
+                canonical = UNIT_ALIASES.get(unit_tok, unit_tok)
+                result.append(canonical)
+                i = best_end
+            else:
+                # Not a unit alias; emit as-is
+                if i < len(expression) and expression[i].isalpha():
+                    result.append(expression[i])
+                    i += 1
         else:
             result.append(char)
             i += 1
@@ -1210,17 +1453,116 @@ def _preprocess_units(expression: str) -> str:
 def _handle_unit_conversion_from_tokens(tokens: list) -> list:
     """Handle unit conversion patterns from tokens like ['2 meters', 'in', 'feet'].
 
-    Detects patterns like: [number+unit, 'in'/'to'/'into'/'as', target_unit]
-    Converts to: ['convert(number*unit,target_unit)']
+    Detects patterns like:
+    - [number+unit, 'in'/'to'/'into'/'as', target_unit] -> convert(number*unit, target_unit)
+    - [number, 'in'/'to'/'into'/'as', target_unit] -> convert(number, target_unit) (treated as multiply)
+    - [number, '*', unit, 'in'/'to'/'into'/'as', target_unit] -> convert(number*unit, target_unit)
+      (e.g., from "5 in to cm" -> tokens ['5', '*', 'in', 'TO', 'cm'])
     """
     if len(tokens) < 3:
         return tokens
 
-    # Look for pattern: token with number+unit followed by conversion word followed by unit
-    conversion_words = {"in", "to", "into", "as"}
+    for i in range(len(tokens) - 2):
+        token = tokens[i]
+        from_unit = None
+        from_unit_normalized = None
+        num_part = None
+        advance = 1  # How many tokens to skip after the conversion
+        for unit in _UNITS_BY_LENGTH:
+            if token.endswith(unit):
+                num_part = token[: -len(unit)]
+                if num_part and num_part[-1].isdigit():
+                    from_unit = unit
+                    from_unit_normalized = UNIT_ALIASES.get(from_unit, from_unit)
+                    break
+        if from_unit is None:
+            last_char = token[-1:] if token else ""
+            if last_char.lower() in _LOWERCASE_TEMP_UNITS:
+                candidate_num = token[:-1]
+                if candidate_num and candidate_num[-1].isdigit():
+                    from_unit = last_char
+                    from_unit_normalized = _LOWERCASE_TEMP_UNITS[last_char.lower()]
+                    num_part = candidate_num
+
+        # Pattern: <num> '*' <unit> <IN/TO> <target>  (e.g., ['5', '*', 'in', 'TO', 'cm'])
+        if (
+            from_unit is None
+            and token
+            and (token[0].isdigit() or token[0] == "-")
+            and token[-1].isdigit()
+            and i + 2 < len(tokens)
+            and tokens[i + 1] == "*"
+        ):
+            unit_token = tokens[i + 2]
+            if unit_token in UNIT_ALIASES or unit_token.lower() in UNIT_ALIASES:
+                from_unit = unit_token
+                from_unit_normalized = UNIT_ALIASES.get(unit_token, unit_token)
+                if from_unit_normalized == unit_token:
+                    from_unit_normalized = UNIT_ALIASES.get(unit_token.lower(), unit_token)
+                num_part = token
+                advance = 3  # Skip '*' and the unit token
+
+        # Bare-number source: e.g., tokens[i] is just "1" (no unit suffix)
+        bare_number = False
+        if from_unit is None and token and (token[0].isdigit() or token[0] == "-") and token[-1].isdigit():
+            try:
+                float(token)
+                bare_number = True
+                num_part = token
+                from_unit_normalized = ""
+            except ValueError:
+                pass
+
+        if from_unit is not None or bare_number:
+            next_idx = i + advance
+            if next_idx >= len(tokens):
+                continue
+            conv_word = tokens[next_idx].upper()
+            if conv_word in {"IN", "TO"}:
+                to_idx = next_idx + 1
+                if to_idx >= len(tokens):
+                    continue
+                to_token = tokens[to_idx]
+                to_unit_normalized = None
+
+                for unit2 in _UNITS_BY_LENGTH:
+                    if to_token == unit2 or to_token.endswith(unit2):
+                        to_unit_normalized = UNIT_ALIASES.get(unit2, unit2)
+                        break
+                if to_unit_normalized is None and to_token.lower() in _LOWERCASE_TEMP_UNITS:
+                    to_unit_normalized = _LOWERCASE_TEMP_UNITS[to_token.lower()]
+
+                if bare_number:
+                    if to_unit_normalized:
+                        new_tokens = (
+                            tokens[:i]
+                            + [f"{num_part}*{to_unit_normalized}"]
+                            + tokens[next_idx + 2:]
+                        )
+                        return new_tokens
+                elif to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
+                    from .units import are_units_compatible, get_unit_category
+
+                    cat1 = get_unit_category(from_unit_normalized)
+                    cat2 = get_unit_category(to_unit_normalized)
+
+                    if (
+                        cat1
+                        and cat2
+                        and are_units_compatible(from_unit_normalized, to_unit_normalized)
+                    ):
+                        new_tokens = (
+                            tokens[:i]
+                            + [
+                                f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
+                            ]
+                            + tokens[next_idx + 2:]
+                        )
+                        return new_tokens
+
+    return tokens
 
     for i in range(len(tokens) - 2):
-        # Check if tokens[i] ends with a unit (has number prefix)
         token = tokens[i]
         from_unit = None
         from_unit_normalized = None
@@ -1232,7 +1574,6 @@ def _handle_unit_conversion_from_tokens(tokens: list) -> list:
                     from_unit = unit
                     from_unit_normalized = UNIT_ALIASES.get(from_unit, from_unit)
                     break
-        # Handle lowercase temperature units (f, c, k) for source
         if from_unit is None:
             last_char = token[-1:] if token else ""
             if last_char.lower() in _LOWERCASE_TEMP_UNITS:
@@ -1242,11 +1583,20 @@ def _handle_unit_conversion_from_tokens(tokens: list) -> list:
                     from_unit_normalized = _LOWERCASE_TEMP_UNITS[last_char.lower()]
                     num_part = candidate_num
 
-        if from_unit is not None:
-            # Check conversion word (uppercase from operator split)
+        # Bare-number source: e.g., tokens[i] is just "1" (no unit suffix)
+        bare_number = False
+        if from_unit is None and token and (token[0].isdigit() or token[0] == "-") and token[-1].isdigit():
+            try:
+                float(token)
+                bare_number = True
+                num_part = token
+                from_unit_normalized = ""
+            except ValueError:
+                pass
+
+        if from_unit is not None or bare_number:
             conv_word = tokens[i + 1].upper()
             if conv_word in {"IN", "TO"}:
-                # Check target unit
                 to_token = tokens[i + 2]
                 to_unit_normalized = None
 
@@ -1254,11 +1604,18 @@ def _handle_unit_conversion_from_tokens(tokens: list) -> list:
                     if to_token == unit2 or to_token.endswith(unit2):
                         to_unit_normalized = UNIT_ALIASES.get(unit2, unit2)
                         break
-                # Handle lowercase temperature units (f, c, k)
                 if to_unit_normalized is None and to_token.lower() in _LOWERCASE_TEMP_UNITS:
                     to_unit_normalized = _LOWERCASE_TEMP_UNITS[to_token.lower()]
 
-                if to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
+                if bare_number:
+                    if to_unit_normalized:
+                        new_tokens = (
+                            tokens[:i]
+                            + [f"{num_part}*{to_unit_normalized}"]
+                            + tokens[i + 3:]
+                        )
+                        return new_tokens
+                elif to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
                     from .units import are_units_compatible, get_unit_category
 
                     cat1 = get_unit_category(from_unit_normalized)
@@ -1269,13 +1626,12 @@ def _handle_unit_conversion_from_tokens(tokens: list) -> list:
                         and cat2
                         and are_units_compatible(from_unit_normalized, to_unit_normalized)
                     ):
-                        # Replace the three tokens with the convert function
                         new_tokens = (
                             tokens[:i]
                             + [
                                 f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
                             ]
-                            + tokens[i + 3 :]
+                            + tokens[i + 3:]
                         )
                         return new_tokens
 
@@ -1306,6 +1662,9 @@ def normalize_expression(
         return f"Error: Input too long (max {MAX_INPUT_LENGTH} characters)", 2
 
     expression = normalize(expression, operators, patterns)
+
+    if len(expression) > MAX_NORMALIZED_LENGTH:
+        return f"Error: Normalized expression too long (max {MAX_NORMALIZED_LENGTH} characters)", 2
     tokens = split_at_operators(expression, operators, patterns)
     tokens, is_valid = convert_from_human_handler(tokens, operators, patterns, expression)
 
@@ -1343,7 +1702,11 @@ def run(
         tuple: (result, exit_code) - result is the evaluated value or None on error
     """
     original = expression
-    joined, exit_code = normalize_expression(expression, operators, patterns)
+    try:
+        joined, exit_code = normalize_expression(expression, operators, patterns)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return None, 1
 
     if exit_code != 0:
         if exit_code == 2:

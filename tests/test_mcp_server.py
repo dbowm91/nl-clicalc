@@ -87,7 +87,7 @@ class TestToolsCall:
         assert "result" in response
         content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is True
-        assert content["result"]["result"] == "8"
+        assert content["result"]["value"] == "8"
         assert content["result"]["type"] == "int"
 
     def test_call_text_measure_valid_input(self):
@@ -3676,7 +3676,7 @@ class TestDocExamples:
         assert "result" in response
         content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is True
-        assert content["result"]["result"] == "8"
+        assert content["result"]["value"] == "8"
 
     def test_text_measure_hello_world(self):
         """text_measure with Hello, world! example."""
@@ -4808,7 +4808,8 @@ class TestResponseEnvelope:
     """Test the standardized response envelope with findings, machine_code, recommended_next_tool."""
 
     def test_success_envelope_has_standard_fields(self):
-        """Success envelope always has ok, tool, result, warnings, limits_applied."""
+        """Success envelope has ok, tool, result. warnings/limits_applied
+        are omitted when empty (compact-response contract)."""
         response = handle_request({
             "jsonrpc": "2.0",
             "id": 3000,
@@ -4822,8 +4823,8 @@ class TestResponseEnvelope:
         assert content["ok"] is True
         assert "tool" in content
         assert "result" in content
-        assert "warnings" in content
-        assert "limits_applied" in content
+        assert "warnings" not in content
+        assert "limits_applied" not in content
 
     def test_success_envelope_omits_findings_when_absent(self):
         """findings, machine_code, recommended_next_tool omitted when not applicable."""
@@ -5146,3 +5147,185 @@ class TestMCPSecurityAndValidation:
         ])
         assert "error" in response
         assert response["error"]["code"] == -32600
+
+
+class TestHardeningGroupA:
+    """Group A: C7, C9, C10 fixes."""
+
+    def test_math_eval_envelope_no_double_wrap(self):
+        """math_eval output envelope uses 'value' and 'type' at outer level."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "5 + 3"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "value" in content["result"]
+        assert "type" in content["result"]
+        assert content["result"]["value"] == "8"
+        assert content["result"]["type"] == "int"
+        assert "result" not in content["result"]
+
+    def test_unit_convert_with_bool_value_returns_error(self):
+        """unit_convert rejects bool values (True is an int subclass)."""
+        from eggcalc.mcp.tools import unit_convert
+
+        result = unit_convert(True, "m", "ft")
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+
+    def test_unit_convert_with_infinity_returns_error(self):
+        """unit_convert rejects non-finite values via math.isfinite."""
+        from eggcalc.mcp.tools import unit_convert
+
+        result = unit_convert(float("inf"), "m", "ft")
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+
+        result = unit_convert(float("nan"), "m", "ft")
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+
+    def test_validate_regex_redos_pattern_rejected_before_spawn(self):
+        """A ReDoS-unsafe pattern is rejected before any worker is spawned."""
+        from eggcalc.mcp.tools import _SPAWN_SEMAPHORE, validate_regex
+
+        result = validate_regex("(a+)+b", ["aaaa"], [])
+        assert result["ok"] is False
+        assert result["error_type"] == "unsafe_pattern"
+        acquired = 0
+        while _SPAWN_SEMAPHORE.acquire(block=False):
+            acquired += 1
+        for _ in range(acquired):
+            _SPAWN_SEMAPHORE.release()
+        from eggcalc.mcp.tools import MAX_CONCURRENT_SPAWNED
+        assert acquired >= MAX_CONCURRENT_SPAWNED
+
+
+class TestHardeningRegexWorkerCleanup:
+    """Group A: validate_regex worker cleanup."""
+
+    def test_validate_regex_many_calls_no_leak(self):
+        """Many validate_regex calls don't leak semaphore permits."""
+        from eggcalc.mcp.tools import _SPAWN_SEMAPHORE, validate_regex
+
+        for _ in range(10):
+            result = validate_regex(r"\d+", ["123", "456"], [])
+            assert result["ok"] is True
+        acquired = 0
+        while _SPAWN_SEMAPHORE.acquire(block=False):
+            acquired += 1
+        for _ in range(acquired):
+            _SPAWN_SEMAPHORE.release()
+        from eggcalc.mcp.tools import MAX_CONCURRENT_SPAWNED
+        assert acquired >= MAX_CONCURRENT_SPAWNED
+
+
+class TestHardeningGroupBM2:
+    """Group B M2: text_count target validation per count_mode."""
+
+    def test_text_count_byte_with_multi_byte_target_rejected(self):
+        from eggcalc.mcp.tools import text_count
+
+        result = text_count("hello", "hé", "raw", "byte")
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+
+    def test_text_count_codepoint_with_multi_codepoint_target_rejected(self):
+        from eggcalc.mcp.tools import text_count
+
+        result = text_count("hello", "ab", "raw", "codepoint")
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+
+
+class TestHardeningGroupBF:
+    """Group F: dotenv_validate malformed key_pattern."""
+
+    def test_dotenv_validate_malformed_key_pattern_returns_clear_error(self):
+        from eggcalc.mcp.tools import dotenv_validate_mcp
+
+        result = dotenv_validate_mcp("KEY=value", key_pattern="[unclosed")
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+
+
+class TestHardeningGroupBL6:
+    """Group D L6: json_extract.max_output_chars cap."""
+
+    def test_json_extract_huge_max_output_chars_returns_error(self):
+        from eggcalc.mcp.tools import json_extract
+
+        result = json_extract('{"a": 1}', "/a", "normal", 10**9)
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+
+
+class TestHardeningGroupBM1:
+    """Group B M1: most tools reject non-string inputs cleanly.
+
+    The server's argument schema rejects non-string values for typed
+    string parameters at the JSON-RPC layer with code -32602, before
+    the tool itself runs.
+    """
+
+    def _assert_schema_rejection(self, tool, args):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": args},
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_text_measure_text_none_returns_error(self):
+        self._assert_schema_rejection("text_measure", {"text": None})
+
+    def test_text_measure_text_int_returns_error(self):
+        self._assert_schema_rejection("text_measure", {"text": 42})
+
+    def test_text_count_text_int_returns_error(self):
+        self._assert_schema_rejection("text_count", {"text": 42})
+
+    def test_validate_json_text_none_returns_error(self):
+        self._assert_schema_rejection("validate_json", {"text": None})
+
+    def test_validate_brackets_text_int_returns_error(self):
+        self._assert_schema_rejection("validate_brackets", {"text": 42})
+
+    def test_text_hash_text_int_returns_error(self):
+        self._assert_schema_rejection("text_hash", {"text": 42})
+
+    def test_escape_text_text_none_returns_error(self):
+        self._assert_schema_rejection("escape_text", {"text": None, "mode": "json_string"})
+
+    def test_unescape_text_text_int_returns_error(self):
+        self._assert_schema_rejection("unescape_text", {"text": 42, "mode": "json_string"})
+
+    def test_text_truncate_text_int_returns_error(self):
+        self._assert_schema_rejection("text_truncate", {"text": 42, "max_graphemes": 5})
+
+    def test_path_analyze_text_int_returns_error(self):
+        self._assert_schema_rejection("path_analyze", {"path": 42})
+
+
+class TestHardeningGroupDL14:
+    """Group D L14: argv_compare XOR validation."""
+
+    def test_argv_compare_with_both_command_and_argv_returns_error(self):
+        from eggcalc.mcp.tools import shell_argv_compare
+
+        result = shell_argv_compare(
+            left_command="ls -la",
+            left_argv=["ls", "-la"],
+            right_command="ls",
+        )
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"

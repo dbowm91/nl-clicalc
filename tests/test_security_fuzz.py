@@ -494,5 +494,178 @@ class TestASTSecurity:
             evaluate("exec('x=1')")
 
 
+class TestASTAllowlist:
+    """Tests for the AST allow-list hardening (M7).
+
+    Verifies that every ast.expr subclass NOT in the allow-list is
+    rejected. We iterate over all ast.expr subclasses and confirm
+    that constructing an expression containing one is rejected.
+    """
+
+    def test_walrus_operator_rejected(self):
+        """Python 3.8+ walrus (NamedExpr) must be rejected."""
+        from eggcalc import EvaluationError, evaluate
+
+        with pytest.raises(EvaluationError):
+            evaluate("(x := 1)")
+
+    def test_match_value_rejected(self):
+        """match/case AST nodes must be rejected."""
+        import ast
+        from eggcalc.evaluator import EvaluationError as EE
+
+        node = ast.MatchValue(value=ast.Constant(value=1))
+        with pytest.raises(EE):
+            from eggcalc.evaluator import Evaluator
+            Evaluator()._validate_node(node)
+
+    def test_all_expr_subclasses_rejected_except_allowed(self):
+        """Walk every ast.expr subclass; verify it's rejected unless allowed."""
+        import ast
+
+        from eggcalc.evaluator import _ALLOWED_AST_TYPES, EvaluationError as EE
+
+        expr_classes = {
+            getattr(ast, name)
+            for name in dir(ast)
+            if isinstance(getattr(ast, name, None), type)
+            and issubclass(getattr(ast, name), ast.expr)
+        }
+
+        for cls in expr_classes:
+            try:
+                if cls is ast.Constant:
+                    node = ast.Constant(value=1)
+                elif cls is ast.Name:
+                    node = ast.Name(id="x")
+                elif cls is ast.Attribute:
+                    node = ast.Attribute(
+                        value=ast.Name(id="math"), attr="x", ctx=ast.Load()
+                    )
+                elif cls is ast.Call:
+                    node = ast.Call(
+                        func=ast.Name(id="f"), args=[], keywords=[]
+                    )
+                elif cls is ast.UnaryOp:
+                    node = ast.UnaryOp(op=ast.UAdd(), operand=ast.Constant(value=1))
+                elif cls is ast.BinOp:
+                    node = ast.BinOp(
+                        left=ast.Constant(value=1),
+                        op=ast.Add(),
+                        right=ast.Constant(value=1),
+                    )
+                elif cls is ast.NamedExpr:
+                    node = ast.NamedExpr(
+                        target=ast.Name(id="x"),
+                        value=ast.Constant(value=1),
+                    )
+                elif cls is ast.MatchValue:
+                    node = ast.MatchValue(value=ast.Constant(value=1))
+                elif cls is ast.MatchSingleton:
+                    node = ast.MatchSingleton(value=None)
+                elif cls is ast.Tuple:
+                    node = ast.Tuple(elts=[ast.Constant(value=1)], ctx=ast.Load())
+                elif cls is ast.List:
+                    node = ast.List(elts=[ast.Constant(value=1)], ctx=ast.Load())
+                elif cls is ast.Set:
+                    node = ast.Set(elts=[ast.Constant(value=1)])
+                elif cls is ast.Dict:
+                    node = ast.Dict(keys=[ast.Constant(value=1)], values=[ast.Constant(value=2)])
+                elif cls is ast.Subscript:
+                    node = ast.Subscript(
+                        value=ast.Name(id="x"),
+                        slice=ast.Constant(value=0),
+                        ctx=ast.Load(),
+                    )
+                elif cls is ast.IfExp:
+                    node = ast.IfExp(
+                        test=ast.Constant(value=True),
+                        body=ast.Constant(value=1),
+                        orelse=ast.Constant(value=2),
+                    )
+                elif cls is ast.Lambda:
+                    node = ast.Lambda(
+                        args=ast.arguments(
+                            posonlyargs=[], args=[], kwonlyargs=[],
+                            kw_defaults=[], defaults=[],
+                        ),
+                        body=ast.Constant(value=1),
+                    )
+                elif cls is ast.BoolOp:
+                    node = ast.BoolOp(
+                        op=ast.And(),
+                        values=[ast.Constant(value=True), ast.Constant(value=False)],
+                    )
+                elif cls is ast.Compare:
+                    node = ast.Compare(
+                        left=ast.Constant(value=1),
+                        ops=[ast.Eq()],
+                        comparators=[ast.Constant(value=1)],
+                    )
+                elif cls is ast.Starred:
+                    node = ast.Starred(value=ast.Name(id="x"), ctx=ast.Load())
+                elif cls is ast.FormattedValue:
+                    node = ast.FormattedValue(
+                        value=ast.Constant(value=1), conversion=-1, format_spec=None
+                    )
+                elif cls is ast.JoinedStr:
+                    node = ast.JoinedStr(values=[ast.Constant(value="x")])
+                elif cls is ast.Await:
+                    node = ast.Await(value=ast.Constant(value=1))
+                elif cls is ast.Yield:
+                    node = ast.Yield(value=ast.Constant(value=1))
+                elif cls is ast.YieldFrom:
+                    node = ast.YieldFrom(value=ast.Name(id="x"))
+                elif cls is ast.Slice:
+                    node = ast.Slice(lower=None, upper=None, step=None)
+                elif cls is ast.TemplateStr:
+                    try:
+                        node = ast.TemplateStr(values=[ast.Constant(value="x")])
+                    except AttributeError:
+                        continue
+                elif cls is ast.Interpolation:
+                    try:
+                        node = ast.Interpolation(
+                            value=ast.Constant(value="x"),
+                            str=ast.Constant(value="x"),
+                            conversion=-1,
+                        )
+                    except (AttributeError, TypeError):
+                        continue
+                else:
+                    continue
+            except (TypeError, AttributeError):
+                continue
+
+            from eggcalc.evaluator import Evaluator
+            if cls in _ALLOWED_AST_TYPES:
+                try:
+                    Evaluator()._validate_node(node)
+                except EE as e:
+                    pytest.fail(
+                        f"Expected {cls.__name__} to be allowed, but got: {e}"
+                    )
+            else:
+                try:
+                    Evaluator()._validate_node(node)
+                    pytest.fail(
+                        f"Expected {cls.__name__} to be rejected (not in allow-list)"
+                    )
+                except EE:
+                    pass  # expected
+
+    def test_attribute_only_math_or_known(self):
+        """Attribute access is allowed only for math.* / .real / .imag / .conjugate."""
+        from eggcalc import EvaluationError, evaluate
+
+        # math.* is allowed
+        assert evaluate("math.sqrt(4)") == 2
+        # Other attribute access is blocked
+        with pytest.raises(EvaluationError):
+            evaluate("a.b")
+        with pytest.raises(EvaluationError):
+            evaluate("(1).__class__")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

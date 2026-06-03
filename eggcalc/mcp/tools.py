@@ -176,13 +176,20 @@ from ..exact.validate import (
 from ..exact.validate import (
     json_query as _json_query,
 )
-from .schemas import ErrorEnvelope
+from .schemas import TOOL_SCHEMAS, ErrorEnvelope
 
 MAX_TEXT_LENGTH = 100_000
 MAX_EXPRESSION_LENGTH = 10_000
 MAX_LIST_ITEMS = 10_000
 MAX_REGEX_SAMPLES = 100
 REGEX_TIMEOUT_SECONDS = 5
+MAX_CONCURRENT_SPAWNED = 4
+
+# Module-level semaphore that caps how many worker processes can be in flight
+# at once. multiprocessing.spawn is ~150-300 ms per call, and unbounded
+# concurrent spawns can exhaust file descriptors and CPU. Acquire before any
+# Process() is created in validate_regex and math_eval (via evaluate_with_timeout).
+_SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(MAX_CONCURRENT_SPAWNED)
 
 PHYSICAL_CONSTANTS = {
     "na": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
@@ -263,10 +270,16 @@ def _regex_test_worker(
 
 
 def _sanitize_error(message: str) -> str:
-    """Sanitize error messages by removing non-ASCII, file paths, and Python internals."""
-    text = message.encode("ascii", "replace").decode("ascii")
-    text = re.sub(r'File\s+["\'][^"\']*["\']', 'File "<redacted>"', text)
-    text = re.sub(r'line\s+\d+', 'line <redacted>', text)
+    """Sanitize error messages by removing non-ASCII, file paths, and Python internals.
+
+    Patterns are anchored to traceback-like contexts so unrelated prose
+    containing the substrings "line 5" or "File" is preserved. Input is
+    also capped at 8192 bytes to bound the cost of regex substitution on
+    very large error messages.
+    """
+    text = message[:8192]
+    text = text.encode("ascii", "replace").decode("ascii")
+    text = re.sub(r'File\s+["\'][^"\']*["\'],\s*line\s+\d+', 'File "<redacted>", line <redacted>', text)
     text = re.sub(r'(?:in\s+)<[^>]+>', 'in <module>', text)
     text = re.sub(r'[A-Za-z_][\w.]*\s*=\s*["\'][^"\']*["\']', '<var>=<redacted>', text)
     return text
@@ -274,97 +287,29 @@ def _sanitize_error(message: str) -> str:
 
 def _get_tool_tier(name: str) -> int:
     """Get the tier for a tool (1, 2, or 3)."""
-    from .schemas import TOOL_SCHEMAS
     return TOOL_SCHEMAS.get(name, {}).get("tier", 3)
 
 
-def apply_detail_defaults(
-    detail: str,
-    min_items: int,
-    default_items: int,
-    max_items: int,
-) -> tuple[int, str]:
-    """Apply detail level to determine effective limit.
+def _require_str(value: Any, name: str, tool: str) -> dict | None:
+    """Validate that ``value`` is a non-overlong string.
 
-    Args:
-        detail: Detail level ("summary", "normal", or "full")
-        min_items: Minimum allowed items
-        default_items: Default items for "normal" detail
-        max_items: Maximum allowed items
-
-    Returns:
-        Tuple of (effective_limit, detail_used)
+    Returns a standard error envelope on failure, or None if valid.
+    Used at the top of every public tool that takes a string to convert
+    a TypeError from ``len()`` into a clean ``invalid_arguments`` response.
     """
-    if detail == "summary":
-        effective = min_items
-        detail_used = "summary"
-    elif detail == "full":
-        effective = max_items
-        detail_used = "full"
-    else:
-        effective = default_items
-        detail_used = "normal"
-
-    if effective > max_items:
-        effective = max_items
-        detail_used = "max"
-    elif effective < min_items:
-        effective = min_items
-        detail_used = "min"
-
-    return effective, detail_used
-
-
-def truncate_list(
-    items: list,
-    max_items: int,
-    detail: str,
-) -> tuple[list, list[str]]:
-    """Truncate a list based on detail level.
-
-    Args:
-        items: List to truncate
-        max_items: Maximum items to return
-        detail: Detail level
-
-    Returns:
-        Tuple of (truncated_list, limits_applied_msgs)
-    """
-    limits_applied: list[str] = []
-    effective_limit, detail_used = apply_detail_defaults(detail, 1, 100, max_items)
-
-    if len(items) > effective_limit:
-        truncated = items[:effective_limit]
-        limits_applied.append(f"max_items={effective_limit} (detail={detail_used})")
-        return truncated, limits_applied
-
-    return items, limits_applied
-
-
-def truncate_text(
-    text: str,
-    max_chars: int,
-    detail: str,
-) -> tuple[str, list[str]]:
-    """Truncate text based on detail level.
-
-    Args:
-        text: Text to truncate
-        max_chars: Maximum characters to return
-        detail: Detail level
-
-    Returns:
-        Tuple of (truncated_text, limits_applied_msgs)
-    """
-    limits_applied: list[str] = []
-    effective_limit, detail_used = apply_detail_defaults(detail, 100, 1000, max_chars)
-
-    if len(text) > effective_limit:
-        truncated = text[:effective_limit]
-        limits_applied.append(f"max_chars={effective_limit} (detail={detail_used})")
-        return truncated, limits_applied
-
-    return text, limits_applied
+    if not isinstance(value, str):
+        return _error_response(
+            "invalid_arguments",
+            f"{name} must be a string, got {type(value).__name__}",
+            tool=tool,
+        )
+    if len(value) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"{name} length {len(value)} exceeds {MAX_TEXT_LENGTH}",
+            tool=tool,
+        )
+    return None
 
 
 def _error_response(
@@ -393,14 +338,21 @@ def _success_response(
     machine_code: str | None = None,
     recommended_next_tool: str | list[str] | None = None,
 ) -> dict:
-    """Create a standardized success envelope."""
+    """Create a standardized success envelope.
+
+    The ``warnings`` and ``limits_applied`` keys are omitted when empty
+    to keep successful responses compact. Callers that explicitly pass
+    a list (even empty) get the key; ``None`` or omitted args omit it.
+    """
     envelope: dict[str, Any] = {
         "ok": True,
         "tool": tool,
         "result": result,
-        "warnings": warnings or [],
-        "limits_applied": limits_applied or [],
     }
+    if warnings is not None:
+        envelope["warnings"] = warnings
+    if limits_applied is not None:
+        envelope["limits_applied"] = limits_applied
     if findings:
         envelope["findings"] = findings
     if machine_code is not None:
@@ -423,19 +375,25 @@ def math_eval(expression: str) -> dict:
         return _error_response("invalid_arguments", f"expression must be a string, got {type(expression).__name__}", tool="math_eval")
     if len(expression) > MAX_EXPRESSION_LENGTH:
         return _error_response("input_too_large", f"Expression exceeds maximum length of {MAX_EXPRESSION_LENGTH}", tool="math_eval")
+    _SPAWN_SEMAPHORE.acquire()
     try:
         result = evaluate_with_timeout(expression, timeout=5.0)
         if hasattr(result, 'value'):
             result_val = result.value
         else:
             result_val = result
-        return _success_response({"result": str(result_val), "type": type(result_val).__name__}, tool="math_eval")
+        return _success_response(
+            {"value": str(result_val), "type": type(result_val).__name__},
+            tool="math_eval",
+        )
     except TimeoutError:
         return _error_response("timeout", "Expression evaluation timed out", ["Try a simpler expression"], tool="math_eval")
     except EvaluationError as e:
         return _error_response("evaluation_error", str(e), ["Check expression syntax"], tool="math_eval")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="math_eval")
+    finally:
+        _SPAWN_SEMAPHORE.release()
 
 
 def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
@@ -450,7 +408,14 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
         Success response with conversion result.
     """
     import math
-    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return _error_response(
+            "invalid_arguments",
+            f"value must be a finite number, got {type(value).__name__}",
+            tool="unit_convert",
+        )
+    value = float(value)
+    if not math.isfinite(value):
         return _error_response(
             "invalid_arguments",
             f"Value must be a finite number, got {value}",
@@ -568,13 +533,8 @@ def text_measure(text: str, detail: str = "normal") -> dict:
     Returns:
         Success envelope with metrics, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_measure",
-        )
+    if (err := _require_str(text, "text", "text_measure")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -640,12 +600,10 @@ def text_equal(
             tool="text_equal",
         )
 
-    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
-            tool="text_equal",
-        )
+    if (err := _require_str(a, "a", "text_equal")) is not None:
+        return err
+    if (err := _require_str(b, "b", "text_equal")) is not None:
+        return err
 
     try:
         result = _text_equal(a, b, normalization, casefold, trim,
@@ -676,11 +634,22 @@ def text_diff_explain(
     Returns:
         Success envelope with diff explanation, or error envelope.
     """
-    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
+    if (err := _require_str(a, "a", "text_diff_explain")) is not None:
+        return err
+    if (err := _require_str(b, "b", "text_diff_explain")) is not None:
+        return err
+
+    MAX_DIFFS = 10_000
+    if max_diffs < 0:
         return _error_response(
-            "input_too_large",
-            f"Input exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            "invalid_arguments",
+            f"max_diffs must be non-negative, got {max_diffs}",
+            tool="text_diff_explain",
+        )
+    if max_diffs > MAX_DIFFS:
+        return _error_response(
+            "invalid_arguments",
+            f"max_diffs {max_diffs} exceeds {MAX_DIFFS}",
             tool="text_diff_explain",
         )
 
@@ -721,13 +690,8 @@ def text_inspect(
     Returns:
         Success envelope with inspection result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_inspect",
-        )
+    if (err := _require_str(text, "text", "text_inspect")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -808,21 +772,45 @@ def text_count(
     Returns:
         Success envelope with count result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_count",
-        )
+    if (err := _require_str(text, "text", "text_count")) is not None:
+        return err
 
-    if target is not None and len(target) != 1 and count_mode != "substring":
-        return _error_response(
-            "invalid_arguments",
-            "target must be a single character",
-            ["Provide a single character or None for frequency table"],
-            tool="text_count",
-        )
+    MAX_TARGET_LENGTH = 1000
+    if target is not None:
+        if not isinstance(target, str):
+            return _error_response(
+                "invalid_arguments",
+                f"target must be a string, got {type(target).__name__}",
+                tool="text_count",
+            )
+        if len(target) > MAX_TARGET_LENGTH:
+            return _error_response(
+                "input_too_large",
+                f"target length {len(target)} exceeds {MAX_TARGET_LENGTH}",
+                tool="text_count",
+            )
+        if count_mode != "substring":
+            if count_mode == "byte" and len(target.encode("utf-8")) != 1:
+                return _error_response(
+                    "invalid_arguments",
+                    "target must be a single byte for count_mode='byte'",
+                    ["Provide a single-byte target"],
+                    tool="text_count",
+                )
+            elif count_mode == "grapheme" and _count_graphemes(target) != 1:
+                return _error_response(
+                    "invalid_arguments",
+                    "target must be a single grapheme for count_mode='grapheme'",
+                    ["Provide a single-grapheme target"],
+                    tool="text_count",
+                )
+            elif count_mode == "codepoint" and len(target) != 1:
+                return _error_response(
+                    "invalid_arguments",
+                    "target must be a single codepoint for count_mode='codepoint'",
+                    ["Provide a single-codepoint target"],
+                    tool="text_count",
+                )
 
     valid_normalizations = {"raw", "NFC", "NFKC"}
     if normalization not in valid_normalizations:
@@ -859,13 +847,8 @@ def validate_brackets(text: str, pairs: dict[str, str] | None = None) -> dict:
     Returns:
         Success envelope with bracket check result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="validate_brackets",
-        )
+    if (err := _require_str(text, "text", "validate_brackets")) is not None:
+        return err
 
     if pairs is not None and not isinstance(pairs, dict):
         return _error_response(
@@ -890,13 +873,8 @@ def validate_json(text: str) -> dict:
     Returns:
         Success envelope with validation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="validate_json",
-        )
+    if (err := _require_str(text, "text", "validate_json")) is not None:
+        return err
 
     try:
         result = _validate_json(text)
@@ -935,13 +913,8 @@ def validate_toml(text: str, detail: str = "normal") -> dict:
     Returns:
         Success envelope with validation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="validate_toml",
-        )
+    if (err := _require_str(text, "text", "validate_toml")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -995,11 +968,22 @@ def json_compare(
     Returns:
         Success envelope with comparison result, or error envelope.
     """
-    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
+    if (err := _require_str(a, "a", "json_compare")) is not None:
+        return err
+    if (err := _require_str(b, "b", "json_compare")) is not None:
+        return err
+
+    MAX_DIFFS = 10_000
+    if max_diffs < 0:
         return _error_response(
-            "input_too_large",
-            f"Input exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            "invalid_arguments",
+            f"max_diffs must be non-negative, got {max_diffs}",
+            tool="json_compare",
+        )
+    if max_diffs > MAX_DIFFS:
+        return _error_response(
+            "invalid_arguments",
+            f"max_diffs {max_diffs} exceeds {MAX_DIFFS}",
             tool="json_compare",
         )
 
@@ -1079,37 +1063,83 @@ def validate_regex(
             tool="validate_regex",
         )
 
-    try:
-        ctx = multiprocessing.get_context("spawn")
-        queue: multiprocessing.Queue = ctx.Queue()
-        proc = ctx.Process(
-            target=_regex_test_worker,
-            args=(pattern, samples, flags, ignore_case, multiline, dotall, ascii, queue),
+    if not isinstance(pattern, str):
+        return _error_response(
+            "invalid_arguments",
+            f"pattern must be a string, got {type(pattern).__name__}",
+            tool="validate_regex",
         )
-        proc.start()
+    if not isinstance(samples, list):
+        return _error_response(
+            "invalid_arguments",
+            f"samples must be a list, got {type(samples).__name__}",
+            tool="validate_regex",
+        )
+
+    safety = _regex_safety_check(pattern)
+    if safety.get("risk") in ("high", "medium"):
+        return _error_response(
+            "unsafe_pattern",
+            f"Pattern has {safety.get('risk', 'unknown')} risk of catastrophic backtracking",
+            [
+                "Try a simpler pattern or break it into smaller parts",
+                "Use the regex_safety_check tool for detailed analysis and suggestions",
+            ],
+            tool="validate_regex",
+        )
+
+    ctx = multiprocessing.get_context("spawn")
+    queue: multiprocessing.Queue = ctx.Queue()
+    proc: multiprocessing.Process | None = None
+    try:
+        _SPAWN_SEMAPHORE.acquire()
+        try:
+            proc = ctx.Process(
+                target=_regex_test_worker,
+                args=(pattern, samples, flags, ignore_case, multiline, dotall, ascii, queue),
+            )
+            proc.start()
+        except BaseException:
+            _SPAWN_SEMAPHORE.release()
+            raise
 
         try:
             status, value = queue.get(timeout=REGEX_TIMEOUT_SECONDS)
         except Exception:
-            proc.terminate()
-            proc.join(timeout=2)
-            if proc.is_alive():
-                proc.kill()
-                proc.join(timeout=1)
             return _error_response(
                 "timeout",
                 f"Regex evaluation timed out after {REGEX_TIMEOUT_SECONDS} seconds",
                 ["Try a simpler pattern or fewer samples"],
                 tool="validate_regex",
             )
-
-        proc.join(timeout=2)
+        finally:
+            try:
+                queue.close()
+            except Exception:
+                pass
+            try:
+                queue.join_thread()
+            except Exception:
+                pass
+            if proc is not None:
+                if proc.is_alive():
+                    proc.terminate()
+                    proc.join(timeout=2)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=1)
+                try:
+                    proc.close()
+                except Exception:
+                    pass
 
         if status == "error":
             return _error_response("internal_error", value, tool="validate_regex")
         return _success_response(value, tool="validate_regex")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="validate_regex")
+    finally:
+        _SPAWN_SEMAPHORE.release()
 
 
 def json_extract(
@@ -1129,11 +1159,25 @@ def json_extract(
     Returns:
         Success envelope with extraction result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
+    if (err := _require_str(text, "text", "json_extract")) is not None:
+        return err
+
+    if not isinstance(max_output_chars, int) or isinstance(max_output_chars, bool):
         return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            "invalid_arguments",
+            f"max_output_chars must be a non-negative integer, got {type(max_output_chars).__name__}",
+            tool="json_extract",
+        )
+    if max_output_chars < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"max_output_chars must be non-negative, got {max_output_chars}",
+            tool="json_extract",
+        )
+    if max_output_chars > MAX_TEXT_LENGTH:
+        return _error_response(
+            "invalid_arguments",
+            f"max_output_chars {max_output_chars} exceeds {MAX_TEXT_LENGTH}",
             tool="json_extract",
         )
 
@@ -1175,13 +1219,8 @@ def json_shape(text: str, max_depth: int = 4, max_keys: int = 100, max_array_ite
     Returns:
         Success envelope with shape result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="json_shape",
-        )
+    if (err := _require_str(text, "text", "json_shape")) is not None:
+        return err
 
     if max_depth < 1:
         return _error_response(
@@ -1204,6 +1243,28 @@ def json_shape(text: str, max_depth: int = 4, max_keys: int = 100, max_array_ite
             "invalid_arguments",
             f"max_array_items must be at least 1, got {max_array_items}",
             ["Set max_array_items to 1 or higher"],
+            tool="json_shape",
+        )
+
+    MAX_SHAPE_DEPTH = 32
+    MAX_SHAPE_KEYS = 10_000
+    MAX_SHAPE_ARRAY_ITEMS = 10_000
+    if max_depth > MAX_SHAPE_DEPTH:
+        return _error_response(
+            "invalid_arguments",
+            f"max_depth {max_depth} exceeds {MAX_SHAPE_DEPTH}",
+            tool="json_shape",
+        )
+    if max_keys > MAX_SHAPE_KEYS:
+        return _error_response(
+            "invalid_arguments",
+            f"max_keys {max_keys} exceeds {MAX_SHAPE_KEYS}",
+            tool="json_shape",
+        )
+    if max_array_items > MAX_SHAPE_ARRAY_ITEMS:
+        return _error_response(
+            "invalid_arguments",
+            f"max_array_items {max_array_items} exceeds {MAX_SHAPE_ARRAY_ITEMS}",
             tool="json_shape",
         )
 
@@ -1332,11 +1393,28 @@ def validate_schema_light(text: str, schema: dict, detail: str = "normal") -> di
     Returns:
         Success envelope with validation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
+    if (err := _require_str(text, "text", "validate_schema_light")) is not None:
+        return err
+
+    MAX_SCHEMA_LENGTH = 100_000
+    if not isinstance(schema, dict):
+        return _error_response(
+            "invalid_arguments",
+            f"schema must be a dict, got {type(schema).__name__}",
+            tool="validate_schema_light",
+        )
+    try:
+        schema_size = len(json.dumps(schema))
+    except (TypeError, ValueError) as e:
+        return _error_response(
+            "invalid_arguments",
+            f"schema is not JSON-serializable: {e}",
+            tool="validate_schema_light",
+        )
+    if schema_size > MAX_SCHEMA_LENGTH:
         return _error_response(
             "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            f"schema length {schema_size} exceeds {MAX_SCHEMA_LENGTH}",
             tool="validate_schema_light",
         )
 
@@ -1553,13 +1631,8 @@ def text_truncate(text: str, max_graphemes: int) -> dict:
     Returns:
         Success envelope with truncation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_truncate",
-        )
+    if (err := _require_str(text, "text", "text_truncate")) is not None:
+        return err
 
     if max_graphemes < 0:
         return _error_response(
@@ -1601,13 +1674,8 @@ def text_transform(text: str, operations: list[str], detail: str = "normal") -> 
     Returns:
         Success envelope with transformation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_transform",
-        )
+    if (err := _require_str(text, "text", "text_transform")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -1661,11 +1729,19 @@ def text_position(
     Returns:
         Success envelope with position result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
+    if (err := _require_str(text, "text", "text_position")) is not None:
+        return err
+
+    if line_base not in (0, 1):
         return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            "invalid_arguments",
+            f"line_base must be 0 or 1, got {line_base}",
+            tool="text_position",
+        )
+    if column_base not in (0, 1):
+        return _error_response(
+            "invalid_arguments",
+            f"column_base must be 0 or 1, got {column_base}",
             tool="text_position",
         )
 
@@ -1724,13 +1800,8 @@ def escape_text(text: str, mode: str, detail: str = "normal") -> dict:
     Returns:
         Success envelope with escape result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="escape_text",
-        )
+    if (err := _require_str(text, "text", "escape_text")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -1787,13 +1858,8 @@ def unescape_text(text: str, mode: str, detail: str = "normal") -> dict:
     Returns:
         Success envelope with unescape result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="unescape_text",
-        )
+    if (err := _require_str(text, "text", "unescape_text")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -1851,13 +1917,8 @@ def text_hash(
     Returns:
         Success envelope with hash result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_hash",
-        )
+    if (err := _require_str(text, "text", "text_hash")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -1902,13 +1963,8 @@ def path_analyze_mcp(path: str, style: str = "auto", detail: str = "normal") -> 
     Returns:
         Success envelope with path analysis result, or error envelope.
     """
-    if len(path) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Path length {len(path)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_analyze",
-        )
+    if (err := _require_str(path, "path", "path_analyze")) is not None:
+        return err
 
     valid_styles = {"auto", "posix", "windows"}
     if style not in valid_styles:
@@ -1986,13 +2042,8 @@ def path_normalize(
     Returns:
         Success envelope with path normalization result, or error envelope.
     """
-    if len(path) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Path length {len(path)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_normalize",
-        )
+    if (err := _require_str(path, "path", "path_normalize")) is not None:
+        return err
 
     valid_platforms = {"posix", "windows"}
     if platform not in valid_platforms:
@@ -2031,21 +2082,10 @@ def path_compare_mcp(
     Returns:
         Success envelope with comparison result, or error envelope.
     """
-    if len(left) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Left path length {len(left)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_compare",
-        )
-
-    if len(right) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Right path length {len(right)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_compare",
-        )
+    if (err := _require_str(left, "left", "path_compare")) is not None:
+        return err
+    if (err := _require_str(right, "right", "path_compare")) is not None:
+        return err
 
     valid_platforms = {"posix", "windows"}
     if platform not in valid_platforms:
@@ -2082,21 +2122,10 @@ def path_scope_check_mcp(
     Returns:
         Success envelope with scope check result, or error envelope.
     """
-    if len(root) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Root path length {len(root)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_scope_check",
-        )
-
-    if len(target) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Target path length {len(target)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_scope_check",
-        )
+    if (err := _require_str(root, "root", "path_scope_check")) is not None:
+        return err
+    if (err := _require_str(target, "target", "path_scope_check")) is not None:
+        return err
 
     valid_platforms = {"posix", "windows"}
     if platform not in valid_platforms:
@@ -2129,13 +2158,8 @@ def identifier_analyze(
     Returns:
         Success envelope with analysis result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="identifier_analyze",
-        )
+    if (err := _require_str(text, "text", "identifier_analyze")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -2197,19 +2221,22 @@ def text_window(
     Returns:
         Success envelope with text_window result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_window",
-        )
+    if (err := _require_str(text, "text", "text_window")) is not None:
+        return err
 
     if context_lines < 0:
         return _error_response(
             "invalid_arguments",
             f"context_lines must be non-negative, got {context_lines}",
             ["Set context_lines to 0 or higher"],
+            tool="text_window",
+        )
+
+    MAX_CONTEXT_LINES = 10_000
+    if context_lines > MAX_CONTEXT_LINES:
+        return _error_response(
+            "invalid_arguments",
+            f"context_lines {context_lines} exceeds {MAX_CONTEXT_LINES}",
             tool="text_window",
         )
 
@@ -2253,13 +2280,8 @@ def json_canonicalize(
     Returns:
         Success envelope with canonicalization result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="json_canonicalize",
-        )
+    if (err := _require_str(text, "text", "json_canonicalize")) is not None:
+        return err
 
     if indent is not None and (indent < 0 or indent > 100):
         return _error_response(
@@ -2295,13 +2317,8 @@ def json_query(text: str, pointer: str = "") -> dict:
     Returns:
         Success envelope with query result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="json_query",
-        )
+    if (err := _require_str(text, "text", "json_query")) is not None:
+        return err
 
     try:
         result = _json_query(text, pointer)
@@ -2336,19 +2353,10 @@ def glob_match_mcp(
             tool="glob_match",
         )
 
-    if len(pattern) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
-            tool="glob_match",
-        )
-
-    if len(path) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
-            tool="glob_match",
-        )
+    if (err := _require_str(pattern, "pattern", "glob_match")) is not None:
+        return err
+    if (err := _require_str(path, "path", "glob_match")) is not None:
+        return err
 
     try:
         result = _glob_match(pattern, path, platform, case_sensitive)
@@ -2376,13 +2384,8 @@ def text_fingerprint_mcp(
     Returns:
         Success envelope with fingerprint result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_fingerprint",
-        )
+    if (err := _require_str(text, "text", "text_fingerprint")) is not None:
+        return err
 
     valid_unicode = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
     if unicode not in valid_unicode:
@@ -2514,13 +2517,8 @@ def markdown_structure_mcp(
     Returns:
         Success envelope with Markdown structure, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="markdown_structure",
-        )
+    if (err := _require_str(text, "text", "markdown_structure")) is not None:
+        return err
 
     try:
         result = _markdown_structure(
@@ -2550,13 +2548,8 @@ def code_fence_extract_mcp(
     Returns:
         Success envelope with extracted code blocks, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="code_fence_extract",
-        )
+    if (err := _require_str(text, "text", "code_fence_extract")) is not None:
+        return err
 
     try:
         result = _code_fence_extract(
@@ -2593,19 +2586,10 @@ def version_compare_mcp(
             tool="version_compare",
         )
 
-    if len(a) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
-            tool="version_compare",
-        )
-
-    if len(b) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
-            tool="version_compare",
-        )
+    if (err := _require_str(a, "a", "version_compare")) is not None:
+        return err
+    if (err := _require_str(b, "b", "version_compare")) is not None:
+        return err
 
     try:
         result = _version_compare(a, b, scheme)
@@ -2629,13 +2613,8 @@ def toml_shape_mcp(
     Returns:
         Success envelope with shape result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="toml_shape",
-        )
+    if (err := _require_str(text, "text", "toml_shape")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -2783,13 +2762,8 @@ def text_replace_check(
     Returns:
         Success envelope with replace check result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_replace_check",
-        )
+    if (err := _require_str(text, "text", "text_replace_check")) is not None:
+        return err
 
     valid_modes = {"exact", "nfc", "nfkc", "casefold", "whitespace_collapse"}
     if mode not in valid_modes:
@@ -2813,6 +2787,14 @@ def text_replace_check(
         return _error_response(
             "invalid_arguments",
             f"max_preview_chars must be non-negative, got {max_preview_chars}",
+            tool="text_replace_check",
+        )
+
+    MAX_PREVIEW_CHARS = 100_000
+    if max_preview_chars > MAX_PREVIEW_CHARS:
+        return _error_response(
+            "invalid_arguments",
+            f"max_preview_chars {max_preview_chars} exceeds {MAX_PREVIEW_CHARS}",
             tool="text_replace_check",
         )
 
@@ -2849,14 +2831,33 @@ def line_range_extract(
     Returns:
         Success envelope with line range extract result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
+    if (err := _require_str(text, "text", "line_range_extract")) is not None:
+        return err
+
+    if not isinstance(start_line, int) or isinstance(start_line, bool):
         return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            "invalid_arguments",
+            f"start_line must be an int, got {type(start_line).__name__}",
             tool="line_range_extract",
         )
-
+    if not isinstance(end_line, int) or isinstance(end_line, bool):
+        return _error_response(
+            "invalid_arguments",
+            f"end_line must be an int, got {type(end_line).__name__}",
+            tool="line_range_extract",
+        )
+    if start_line < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"start_line must be non-negative, got {start_line}",
+            tool="line_range_extract",
+        )
+    if end_line < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"end_line must be non-negative, got {end_line}",
+            tool="line_range_extract",
+        )
     if start_line > end_line:
         return _error_response(
             "invalid_arguments",
@@ -2944,13 +2945,8 @@ def shell_split(
     Returns:
         Success envelope with parsed argv and features, or error envelope.
     """
-    if len(command) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Command length {len(command)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="shell_split",
-        )
+    if (err := _require_str(command, "command", "shell_split")) is not None:
+        return err
 
     valid_shells = {"posix"}
     if shell not in valid_shells:
@@ -3033,6 +3029,21 @@ def shell_argv_compare(
             tool="argv_compare",
         )
 
+    # XOR validation: each side must be either a *_command OR an *_argv,
+    # not both (and not neither).
+    if (left_command is not None) == (left_argv is not None):
+        return _error_response(
+            "invalid_arguments",
+            "Provide exactly one of left_command or left_argv, not both",
+            tool="argv_compare",
+        )
+    if (right_command is not None) == (right_argv is not None):
+        return _error_response(
+            "invalid_arguments",
+            "Provide exactly one of right_command or right_argv, not both",
+            tool="argv_compare",
+        )
+
     if left_command is not None and len(left_command) > MAX_TEXT_LENGTH:
         return _error_response(
             "input_too_large",
@@ -3095,13 +3106,8 @@ def dotenv_validate_mcp(
     Returns:
         Success envelope with validation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="dotenv_validate",
-        )
+    if (err := _require_str(text, "text", "dotenv_validate")) is not None:
+        return err
 
     valid_policies = {"warn", "error", "allow"}
     if duplicate_policy not in valid_policies:
@@ -3121,22 +3127,35 @@ def dotenv_validate_mcp(
 
     try:
         pattern_safety = _regex_safety_check(key_pattern)
-        if pattern_safety.get("risk") in ("high", "medium"):
-            return _error_response(
-                "unsafe_pattern",
-                f"key_pattern has {pattern_safety.get('risk', 'unknown')} risk of catastrophic backtracking",
-                ["Use a simpler regex pattern for key_pattern"],
-                tool="dotenv_validate",
-            )
-    except re.error:
+    except re.error as e:
         return _error_response(
             "invalid_arguments",
-            "key_pattern is not a valid regular expression",
+            f"key_pattern is not a valid regular expression: {e}",
             ["Fix the regex syntax in key_pattern"],
             tool="dotenv_validate",
         )
-    except Exception:
-        pass
+    except ValueError as e:
+        return _error_response(
+            "invalid_arguments",
+            f"key_pattern safety check failed: {e}",
+            tool="dotenv_validate",
+        )
+    # Other exception types (TypeError, AttributeError, etc.) propagate as
+    # internal errors so they are not silently swallowed.
+    if not pattern_safety.get("valid_pattern", True):
+        return _error_response(
+            "invalid_arguments",
+            f"key_pattern is not a valid regular expression: {pattern_safety.get('error', 'unknown')}",
+            ["Fix the regex syntax in key_pattern"],
+            tool="dotenv_validate",
+        )
+    if pattern_safety.get("risk") in ("high", "medium"):
+        return _error_response(
+            "unsafe_pattern",
+            f"key_pattern has {pattern_safety.get('risk', 'unknown')} risk of catastrophic backtracking",
+            ["Use a simpler regex pattern for key_pattern"],
+            tool="dotenv_validate",
+        )
 
     try:
         result = _dotenv_validate(text, allow_export, key_pattern, duplicate_policy)
@@ -3165,13 +3184,8 @@ def ini_validate_mcp(
     Returns:
         Success envelope with validation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="ini_validate",
-        )
+    if (err := _require_str(text, "text", "ini_validate")) is not None:
+        return err
 
     valid_policies = {"warn", "error", "allow"}
     if duplicate_policy not in valid_policies:
@@ -3294,13 +3308,8 @@ def unicode_policy_check_mcp(
     Returns:
         Success envelope with policy check result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="unicode_policy_check",
-        )
+    if (err := _require_str(text, "text", "unicode_policy_check")) is not None:
+        return err
 
     valid_policies = {
         "identifier_strict", "filename_safe", "source_code",
@@ -3347,13 +3356,8 @@ def canonicalize_text_mcp(
     Returns:
         Success envelope with canonicalization result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="canonicalize_text",
-        )
+    if (err := _require_str(text, "text", "canonicalize_text")) is not None:
+        return err
 
     valid_profiles = {
         "source_file_identity", "identifier_compare", "human_label_compare",
@@ -3521,10 +3525,10 @@ def version_constraint_check_mcp(
             })
 
         machine_code: str | None = None
-        if result.get("findings"):
-            machine_code = "CONSTRAINT_NOTE"
-        elif not result.get("satisfies"):
+        if not result.get("satisfies"):
             machine_code = "CONSTRAINT_NOT_SATISFIED"
+        elif findings:
+            machine_code = "CONSTRAINT_NOTE"
 
         return _success_response(
             result,
@@ -3551,13 +3555,8 @@ def cargo_toml_inspect_mcp(
     Returns:
         Success envelope with Cargo.toml inspection result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="cargo_toml_inspect",
-        )
+    if (err := _require_str(text, "text", "cargo_toml_inspect")) is not None:
+        return err
 
     try:
         result = _cargo_toml_inspect(text, check_workspace, check_dependencies)
@@ -3623,13 +3622,8 @@ def prompt_input_inspect_mcp(
     Returns:
         Success envelope with inspection result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="prompt_input_inspect",
-        )
+    if (err := _require_str(text, "text", "prompt_input_inspect")) is not None:
+        return err
 
     valid_checks = {
         "unicode_hidden", "bidi", "html_comments", "markdown_links",

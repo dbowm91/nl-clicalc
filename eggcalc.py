@@ -20,20 +20,23 @@ os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
 __version__ = "1.1.1"
 
 # === Collected imports ===
+import threading
 import ast
 import cmath
+import contextvars
 import math
+import multiprocessing
 import random
-import threading
 from collections import OrderedDict
-from functools import lru_cache
 from typing import Any
 import argparse
 import re
 import sys
 import traceback
 from collections.abc import Mapping
+from functools import lru_cache
 from re import Pattern
+import threading as _threading
 import unicodedata
 from typing import NamedTuple, TypedDict
 import difflib
@@ -46,6 +49,8 @@ import shlex
 import zlib
 import keyword
 import inspect
+import time
+from collections import deque
 
 
 # === units.py ===
@@ -227,15 +232,15 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "mi": 1609.344,
         "mile": 1609.344,
         "miles": 1609.344,
-        "ly": 9.4607e15,
-        "lightyear": 9.4607e15,
-        "lightyears": 9.4607e15,
-        "au": 1.496e11,
-        "astronomicalunit": 1.496e11,
-        "astronomicalunits": 1.496e11,
-        "pc": 3.086e16,
-        "parsec": 3.086e16,
-        "parsecs": 3.086e16,
+        "ly": 9.4607304725808e15,
+        "lightyear": 9.4607304725808e15,
+        "lightyears": 9.4607304725808e15,
+        "au": 1.49597870700e11,
+        "astronomicalunit": 1.49597870700e11,
+        "astronomicalunits": 1.49597870700e11,
+        "pc": 3.0856775814913673e16,
+        "parsec": 3.0856775814913673e16,
+        "parsecs": 3.0856775814913673e16,
         "angstrom": 1e-10,
         "angstroms": 1e-10,
         "fermi": 1e-15,
@@ -626,11 +631,23 @@ UNIT_BASE: dict[str, dict[str, float]] = {
 }
 
 
+# Module-level lock protecting all unit-table mutations.
+# Acquired by both _rebuild_conversions() and any code that mutates
+# UNIT_BASE / UNIT_ALIASES / UNIT_CATEGORIES (e.g. load_user_config).
+_UNITS_LOCK: threading.RLock = threading.RLock()
+
+
 def _build_unit_conversions() -> dict[tuple[str, str], float]:
     """Build a complete unit conversion lookup table."""
     conversions: dict[tuple[str, str], float] = {}
 
-    for base_unit, units in UNIT_BASE.items():
+    # Snapshot UNIT_BASE so concurrent mutations don't cause rehashing
+    # mid-iteration. The snapshot is a shallow copy of the outer dict
+    # pointing to the same inner dicts; reading dict items is safe.
+    with _UNITS_LOCK:
+        base_snapshot = {base: dict(units) for base, units in UNIT_BASE.items()}
+
+    for _base_unit, units in base_snapshot.items():
         unit_factors = {unit: factor for unit, factor in units.items()}
 
         for from_unit, from_factor in unit_factors.items():
@@ -647,9 +664,15 @@ UNIT_CONVERSIONS: dict[tuple[str, str], float] = {}
 
 
 def _rebuild_conversions() -> None:
-    """Rebuild UNIT_CONVERSIONS after adding custom units."""
+    """Rebuild UNIT_CONVERSIONS after adding custom units.
+
+    Thread-safe: holds _UNITS_LOCK so concurrent readers see a consistent
+    UNIT_CONVERSIONS swap.
+    """
     global UNIT_CONVERSIONS
-    UNIT_CONVERSIONS = _build_unit_conversions()
+    new_table = _build_unit_conversions()
+    with _UNITS_LOCK:
+        UNIT_CONVERSIONS = new_table
 
 
 _rebuild_conversions()
@@ -683,9 +706,9 @@ UNIT_ALIASES: dict[str, str] = {
     "pm": "pm",
     "picometer": "pm",
     "picometers": "pm",
-    "in": "in",
-    "inch": "in",
-    "inches": "in",
+    "in": "inch",
+    "inch": "inch",
+    "inches": "inch",
     "ft": "ft",
     "foot": "ft",
     "feet": "ft",
@@ -959,6 +982,8 @@ UNIT_ALIASES: dict[str, str] = {
     "newtons": "N",
     "kN": "kN",
     "kilonewton": "kN",
+    "mN": "mN",
+    "millinewton": "mN",
     "dyne": "dyne",
     "dynes": "dyne",
     "lbf": "lbf",
@@ -1077,12 +1102,54 @@ UNIT_ALIASES: dict[str, str] = {
     "gigahertz": "GHz",
     "THz": "THz",
     "terahertz": "THz",
+    # Case-insensitive aliases (common capitalizations)
+    "KM": "km",
+    "KG": "kg",
+    "GHZ": "GHz",
+    "KHZ": "kHz",
+    "MHZ": "MHz",
+    "Meters": "m",
+    "Miles": "mi",
+    "Inches": "inch",
+    "Feet": "ft",
+    "Pounds": "lb",
+    "Ounces": "oz",
+    "Celsius": "C",
+    "Fahrenheit": "F",
+    "Kelvin": "K",
+    "Hours": "h",
+    "Minutes": "min",
+    "Seconds": "s",
+    "Kilograms": "kg",
+    "Grams": "g",
+    "Liters": "L",
+    "Newtons": "N",
+    "Volts": "V",
+    "Amps": "A",
+    "Amperes": "A",
+    "Watts": "W",
+    "Joules": "J",
+    "Pascals": "Pa",
 }
 
 
 def normalize_unit(unit: str) -> str:
-    """Normalize a unit to its canonical form."""
-    return UNIT_ALIASES.get(unit, unit)
+    """Normalize a unit to its canonical form.
+
+    Tries, in order:
+    1. The literal input (exact match)
+    2. .lower() (lowercase form)
+    3. .upper() (uppercase form)
+    4. .title() / .capitalize() (mixed-case common forms)
+
+    If none match, returns the input unchanged.
+    """
+    if unit in UNIT_ALIASES:
+        return UNIT_ALIASES[unit]
+    for candidate in (unit.lower(), unit.upper(), unit.title(), unit.capitalize()):
+        if candidate in UNIT_ALIASES:
+            return UNIT_ALIASES[candidate]
+    return unit
 
 
 TEMPERATURE_CONVERSIONS: dict[tuple[str, str], tuple[float, float]] = {
@@ -1091,7 +1158,7 @@ TEMPERATURE_CONVERSIONS: dict[tuple[str, str], tuple[float, float]] = {
     ("K", "C"): (1.0, -273.15),
     ("C", "K"): (1.0, 273.15),
     ("K", "F"): (1.8, -459.67),
-    ("F", "K"): (1.0 / 1.8, 255.372222),
+    ("F", "K"): (1.0 / 1.8, 459.67 / 1.8),
     ("C", "F"): (1.8, 32.0),
     ("F", "C"): (1.0 / 1.8, -32.0 / 1.8),
     ("K", "R"): (1.8, 0.0),
@@ -1140,8 +1207,13 @@ def get_conversion_factor(from_unit: str, to_unit: str) -> float:
 
 
 def is_unit(text: str) -> bool:
-    """Check if text represents a unit."""
-    return text in UNIT_ALIASES or text in UNIT_CONVERSIONS
+    """Check if text represents a unit (case-insensitive)."""
+    if text in UNIT_ALIASES or text in UNIT_CONVERSIONS:
+        return True
+    for candidate in (text.lower(), text.upper(), text.title(), text.capitalize()):
+        if candidate in UNIT_ALIASES or candidate in UNIT_CONVERSIONS:
+            return True
+    return False
 
 
 UNIT_CATEGORIES: dict[str, str] = {
@@ -1152,7 +1224,7 @@ UNIT_CATEGORIES: dict[str, str] = {
     "um": "length",
     "nm": "length",
     "pm": "length",
-    "in": "length",
+    "inch": "length",
     "ft": "length",
     "yd": "length",
     "mi": "length",
@@ -1245,6 +1317,7 @@ UNIT_CATEGORIES: dict[str, str] = {
     "mW": "power",
     "hp": "power",
     "N": "force",
+    "mN": "force",
     "kN": "force",
     "dyne": "force",
     "lbf": "force",
@@ -1358,7 +1431,75 @@ MAX_EXPONENT = 10000
 MAX_FACTORIAL = 1000
 MAX_NESTING_DEPTH = 100
 MAX_RESULT_VALUE = 1e308
+MAX_RESULT_DIGITS = 10000
 DEFAULT_CACHE_SIZE = 1024
+MAX_CACHE_BYTES = 64 * 1024 * 1024  # 64 MB soft cap for _cache
+
+# One-letter physical-constant names that are now unreachable as constants
+# because visit_Name checks UNIT_ALIASES first. Documented for users who
+# might be surprised. To access these constants, use the long-form name.
+_UNREACHABLE_CONSTANT_ALIASES: frozenset[str] = frozenset(
+    {"h", "g", "c", "k", "G", "f", "R", "r"}
+)
+
+
+_COLLISION_WARNING_EMITTED = False  # legacy alias, see Evaluator._COLLISION_WARNING_EMITTED
+
+
+def _check_constant_unit_collisions() -> None:
+    """Warn at import time if any CONSTANTS entry collides with a UNIT_ALIASES.
+
+    With the new visit_Name order (units first, then constants), one-letter
+    constant names like 'h' (Planck), 'g' (gravity), 'k' (Boltzmann), 'c'
+    (speed of light), 'G' (gravitational), 'f' (Faraday), 'R' (gas
+    constant) are unreachable as constants because they collide with
+    common unit names (hour, gram, kelvin, etc.). Long forms
+    ('planck', 'gravity', 'boltzmann', 'speedoflight', 'gravitationalconstant',
+    'faraday', 'gasconstant', 'r') remain accessible.
+
+    The warning is emitted at most once per process. A process-wide sentinel
+    is stashed on the ``warnings`` module (a singleton) so the package and
+    the inlined single-file build share the flag.
+    """
+    import warnings
+    if getattr(warnings, "_eggcalc_collision_warned", False):
+        return
+    warnings._eggcalc_collision_warned = True
+    # In assembled single-file mode, UNIT_ALIASES is inlined at the top.
+    # In package mode, _IS_ASSEMBLED is False and we use the imported name.
+    aliases = UNIT_ALIASES  # type: ignore[name-defined]
+    alias_lower = {a.lower() for a in aliases}
+    collisions: list[str] = []
+    for c in Evaluator.CONSTANTS:
+        if c.lower() in alias_lower:
+            collisions.append(c)
+    if collisions:
+        import sys
+        print(
+            f"Warning: CONSTANTS entries shadow UNIT_ALIASES (unreachable as "
+            f"constants; use long form): {sorted(collisions)}",
+            file=sys.stderr,
+        )
+
+
+def _check_result_size(result: Any) -> Any:
+    """Raise EvaluationError if a result has too many digits or is NaN/inf."""
+    if isinstance(result, UnitValue):
+        if not math.isfinite(result.value):
+            raise EvaluationError("Result too large")
+        if isinstance(result.value, int) and not isinstance(result.value, bool):
+            if len(str(result.value)) > MAX_RESULT_DIGITS:
+                raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+    if isinstance(result, complex):
+        if math.isnan(result.real) or math.isnan(result.imag) or math.isinf(result.real) or math.isinf(result.imag):
+            raise EvaluationError("Result too large")
+    elif isinstance(result, float):
+        if math.isnan(result) or math.isinf(result):
+            raise EvaluationError("Result too large")
+    if isinstance(result, int) and not isinstance(result, bool):
+        if len(str(result)) > MAX_RESULT_DIGITS:
+            raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+    return result
 
 
 def register_constant(name: str, value: float) -> None:
@@ -1374,7 +1515,16 @@ def register_function(name: str, func: Any) -> None:
 
 
 def load_user_config() -> None:
-    """Load user-defined configuration from eggcalc_config.py (thread-safe)."""
+    """Load user-defined configuration from eggcalc_config.py (thread-safe).
+
+    CUSTOM_UNITS supports two value formats per (base, name) entry:
+    - A plain number ``{"xu": 0.1}`` (backward compatible): the category is
+      inferred from the first existing unit in this base, or from the base
+      key itself.
+    - A ``(factor, category)`` tuple ``{"xu": (0.1, "length")}`` (preferred):
+      the category is recorded explicitly so the unit can be added to or
+      subtracted from other units in the same category.
+    """
     global _config_loaded
     try:
         import eggcalc.normalize as normalize_mod
@@ -1388,17 +1538,31 @@ def load_user_config() -> None:
 
         from . import units
 
-        for base, unit_dict in getattr(config, "CUSTOM_UNITS", {}).items():
-            if base in UNIT_BASE:
-                UNIT_BASE[base].update(unit_dict)
-            else:
-                UNIT_BASE[base] = unit_dict
+        with units._UNITS_LOCK:
+            for base, unit_dict in getattr(config, "CUSTOM_UNITS", {}).items():
+                if base in UNIT_BASE:
+                    UNIT_BASE[base].update(unit_dict)
+                else:
+                    UNIT_BASE[base] = unit_dict
+                for unit_name, value in unit_dict.items():
+                    if isinstance(value, tuple) and len(value) == 2:
+                        _factor, category = value
+                        units.UNIT_CATEGORIES[unit_name] = category
+                    else:
+                        # Infer category from the first existing unit in this
+                        # base, or fall back to the base key itself.
+                        existing = next(
+                            iter(units.UNIT_CATEGORIES.get(u) for u in UNIT_BASE[base]
+                                 if u in units.UNIT_CATEGORIES),
+                            None,
+                        )
+                        units.UNIT_CATEGORIES[unit_name] = existing or base
 
-        for unit, canonical in getattr(config, "CUSTOM_ALIASES", {}).items():
-            UNIT_ALIASES[unit] = canonical
+            for unit, canonical in getattr(config, "CUSTOM_ALIASES", {}).items():
+                UNIT_ALIASES[unit] = canonical
 
-        for key, (mult, offset) in getattr(config, "CUSTOM_TEMP_CONVERSIONS", {}).items():
-            TEMPERATURE_CONVERSIONS[key] = (mult, offset)
+            for key, (mult, offset) in getattr(config, "CUSTOM_TEMP_CONVERSIONS", {}).items():
+                TEMPERATURE_CONVERSIONS[key] = (mult, offset)
 
         _rebuild_conversions()
 
@@ -1415,16 +1579,62 @@ def _ensure_config_loaded() -> None:
         load_user_config()
 
 
-@lru_cache(maxsize=DEFAULT_CACHE_SIZE)
+_cache: OrderedDict[str, Any] = OrderedDict()
+_cache_lock = threading.Lock()
+_cache_bytes: int = 0
+
+
+def _entry_size(key: str, value: Any) -> int:
+    """Approximate size of a cache entry in bytes.
+
+    Uses the key length and the str() of the value as a simple proxy.
+    """
+    return len(key) + len(str(value))
+
+
+def _evict_until_under_cap() -> None:
+    """Evict LRU entries from _cache until total size <= MAX_CACHE_BYTES.
+
+    Called under _cache_lock. The MAX_CACHE_BYTES cap is soft: if a single
+    entry alone exceeds the cap, it is still inserted (we don't lose
+    correctness by storing a single oversized entry), but we don't
+    attempt to evict further on its behalf.
+    """
+    global _cache_bytes
+    while _cache and _cache_bytes > MAX_CACHE_BYTES:
+        old_key, old_value = _cache.popitem(last=False)
+        _cache_bytes -= _entry_size(old_key, old_value)
+    if _cache_bytes < 0:
+        _cache_bytes = 0
+
+
 def _cached_normalize_and_evaluate(expression: str) -> Any:
     """Cache for normalized and evaluated expressions."""
+    global _cache_bytes
+    with _cache_lock:
+        if expression in _cache:
+            _cache.move_to_end(expression)
+            return _cache[expression]
+
     _ensure_config_loaded()
 
     normalized, exit_code = normalize_expression(expression, NORMALIZE, PATTERNS)
     if exit_code != 0:
         raise EvaluationError(f"Invalid expression: {expression}")
 
-    return _default_evaluator.evaluate(normalized)
+    result = _default_evaluator.evaluate(normalized)
+
+    with _cache_lock:
+        # Hard cap on entry count
+        if len(_cache) >= DEFAULT_CACHE_SIZE:
+            old_key, old_value = _cache.popitem(last=False)
+            _cache_bytes -= _entry_size(old_key, old_value)
+        _cache[expression] = result
+        _cache_bytes += _entry_size(expression, result)
+        # Soft cap on total bytes
+        _evict_until_under_cap()
+
+    return result
 
 
 def evaluate_cached(expression: str) -> Any:
@@ -1438,7 +1648,7 @@ def evaluate_cached(expression: str) -> Any:
     except EvaluationError:
         raise
     except (ValueError, SyntaxError, RecursionError):
-        _cached_normalize_and_evaluate.cache_clear()
+        _cache.pop(expression, None)
         raise
 
 
@@ -1485,7 +1695,13 @@ def _safe_pow(base: float, exp: float) -> float:
         raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
     if base < 0 and exp != int(exp):
         raise EvaluationError("Cannot raise negative number to non-integer power")
-    result = pow(base, exp)
+    try:
+        result = pow(base, exp)
+    except OverflowError:
+        raise EvaluationError("Result too large") from None
+    if isinstance(result, float):
+        if math.isnan(result) or math.isinf(result):
+            raise EvaluationError("Result too large")
     if abs(result) > MAX_RESULT_VALUE:
         raise EvaluationError("Result too large")
     return result
@@ -1503,7 +1719,10 @@ def _safe_factorial(n: int) -> int:
         raise EvaluationError("factorial requires non-negative input")
     if n > MAX_FACTORIAL:
         raise EvaluationError(f"factorial input too large (max {MAX_FACTORIAL})")
-    return math.factorial(n)
+    result = math.factorial(n)
+    if len(str(result)) > MAX_RESULT_DIGITS:
+        raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+    return result
 
 
 def _mean(*args: float) -> float:
@@ -1577,16 +1796,19 @@ def _temp(value: float, from_unit: float | str, to_unit: float | str) -> float:
     return convert_temperature(value, str(from_unit), str(to_unit))
 
 
-def _convert(value: Any, to_unit: str) -> Any:
+def _convert(value: Any, to_unit: str | Any) -> Any:
     """Convert a value with units to a different unit.
 
     Args:
         value: A number or UnitValue to convert
-        to_unit: The target unit to convert to (can be str or UnitValue)
+        to_unit: The target unit to convert to (can be str, UnitValue, or callable)
 
     Returns:
         UnitValue with the converted value and unit
     """
+    # Handle case where to_unit is passed as a function (e.g., min function instead of "min" unit)
+    if callable(to_unit) and not isinstance(to_unit, UnitValue):
+        to_unit = to_unit.__name__ if hasattr(to_unit, '__name__') else str(to_unit)
     # Handle case where to_unit is passed as a UnitValue (unit name like 'ft')
     if isinstance(to_unit, UnitValue):
         to_unit = to_unit.unit if to_unit.unit else str(to_unit.value)
@@ -1603,7 +1825,10 @@ def _convert(value: Any, to_unit: str) -> Any:
         return value.convert_to(to_unit)
     # If it's just a number without units, assume it's a dimensionless value
     # and try to convert (will fail if not a valid unit)
-    return UnitValue(float(value), None).convert_to(to_unit)
+    try:
+        return UnitValue(float(value), None).convert_to(to_unit)
+    except ValueError as e:
+        raise EvaluationError(str(e)) from None
 
 
 # === Complex number functions ===
@@ -1723,15 +1948,38 @@ def _bitrshift(a: int, b: int) -> int:
     return int(a) >> int(b)
 
 
+def _bitlshift_safe(a: int, b: int) -> int:
+    """Left shift with non-negative check."""
+    b = int(b)
+    if b < 0:
+        raise EvaluationError("Shift count must be non-negative")
+    return int(a) << b
+
+
+def _bitrshift_safe(a: int, b: int) -> int:
+    """Right shift with non-negative check."""
+    b = int(b)
+    if b < 0:
+        raise EvaluationError("Shift count must be non-negative")
+    return int(a) >> b
+
+
 # === Combinatorics ===
 
 
 def _perm(n: int, r: int | None = None) -> int:
     """Calculate permutations P(n,r) = n!/(n-r)!."""
     n = int(n)
+    if n < 0:
+        raise EvaluationError("perm requires non-negative input")
     if r is None:
-        return math.factorial(n)
+        result = math.factorial(n)
+        if len(str(result)) > MAX_RESULT_DIGITS:
+            raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+        return result
     r = int(r)
+    if r < 0:
+        raise EvaluationError("perm requires non-negative arguments")
     if r > n:
         return 0
     return math.perm(n, r)
@@ -1754,7 +2002,11 @@ def _lcm(*args: int) -> int:
         raise EvaluationError("lcm requires at least one argument")
     result = int(abs(args[0]))
     for arg in args[1:]:
-        result = abs(result * int(arg)) // math.gcd(result, int(arg))
+        b = int(arg)
+        g = math.gcd(result, b)
+        if g == 0:
+            return 0
+        result = abs(result * b) // g
     return result
 
 
@@ -1812,6 +2064,8 @@ def _prime_factors(n: int) -> str:
 def _next_prime(n: int) -> int:
     """Return the next prime after n."""
     n = int(n)
+    if n > 10**15:
+        raise EvaluationError("Input too large for nextprime")
     candidate = n + 1
     while not _is_prime(candidate):
         candidate += 1
@@ -2012,6 +2266,83 @@ class EvaluationError(Exception):
     pass
 
 
+# ContextVar tracking the "current" Evaluator during evaluation.
+# FUNCTIONS dict entries (store, setvar, etc.) consult this to use
+# the per-instance state of the evaluator actually running the expression.
+_current_evaluator: contextvars.ContextVar[Evaluator | None] = contextvars.ContextVar(
+    "_current_evaluator", default=None
+)
+
+
+def _get_current_evaluator() -> Evaluator:
+    """Return the Evaluator currently executing an expression, or the default.
+
+    Used by FUNCTIONS dict entries so memory/setvar/clearvars/etc. operate on
+    the state of the Evaluator that is actually running the expression.
+    """
+    ev = _current_evaluator.get()
+    return ev if ev is not None else _default_evaluator
+
+
+# Per-instance wrappers for FUNCTIONS dict entries. They consult the
+# _current_evaluator ContextVar so behavior is correctly scoped to the
+# active Evaluator (e.g. inside a PyCalcApp instance).
+
+
+def _fn_store(value: float, register: str = "M") -> float:
+    return _get_current_evaluator()._memory.store(value, register)
+
+
+def _fn_recall(register: str = "M") -> float:
+    return _get_current_evaluator()._memory.recall(register)
+
+
+def _fn_add(value: float, register: str = "M") -> float:
+    return _get_current_evaluator()._memory.add(value, register)
+
+
+def _fn_subtract(value: float, register: str = "M") -> float:
+    return _get_current_evaluator()._memory.subtract(value, register)
+
+
+def _fn_clear(register: str | None = None) -> None:
+    _get_current_evaluator()._memory.clear(register)
+    return None
+
+
+def _fn_setvar(name: str, value: Any) -> Any:
+    ev = _get_current_evaluator()
+    with ev._var_lock:
+        ev._user_variables[name] = value
+    return value
+
+
+def _fn_getvar(name: str, default: Any = 0) -> Any:
+    ev = _get_current_evaluator()
+    with ev._var_lock:
+        return ev._user_variables.get(name, default)
+
+
+def _fn_delvar(name: str) -> None:
+    ev = _get_current_evaluator()
+    with ev._var_lock:
+        ev._user_variables.pop(name, None)
+    return None
+
+
+def _fn_listvars() -> dict[str, Any]:
+    ev = _get_current_evaluator()
+    with ev._var_lock:
+        return dict(ev._user_variables)
+
+
+def _fn_clearvars() -> None:
+    ev = _get_current_evaluator()
+    with ev._var_lock:
+        ev._user_variables.clear()
+    return None
+
+
 class Memory:
     """Memory registers for storing values (like scientific calculator memory)."""
 
@@ -2073,48 +2404,45 @@ class Memory:
             return result
 
 
-# Global memory instance
-_memory = Memory()
+# Global memory instance (default evaluator; replaced by per-instance below)
+_memory: Memory = Memory()  # type: ignore[assignment]
 
 
 def memory_store(value: float, register: str = "M") -> float:
-    """Store value in memory register."""
-    return _memory.store(value, register)
+    """Store value in memory register (proxies to the default evaluator)."""
+    return _default_evaluator._memory.store(value, register)
 
 
 def memory_recall(register: str = "M") -> float:
-    """Recall value from memory register."""
-    return _memory.recall(register)
+    """Recall value from memory register (proxies to the default evaluator)."""
+    return _default_evaluator._memory.recall(register)
 
 
 def memory_add(value: float, register: str = "M") -> float:
-    """Add value to memory register (M+)."""
-    return _memory.add(value, register)
+    """Add value to memory register (M+) on the default evaluator."""
+    return _default_evaluator._memory.add(value, register)
 
 
 def memory_subtract(value: float, register: str = "M") -> float:
-    """Subtract value from memory register (M-)."""
-    return _memory.subtract(value, register)
+    """Subtract value from memory register (M-) on the default evaluator."""
+    return _default_evaluator._memory.subtract(value, register)
 
 
 def memory_clear(register: str | None = None) -> None:
-    """Clear memory register(s)."""
-    _memory.clear(register)
+    """Clear memory register(s) on the default evaluator."""
+    _default_evaluator._memory.clear(register)
 
 
 def memory_list() -> dict[str, float]:
-    """List all memory registers."""
-    return _memory.list_registers()
+    """List all memory registers on the default evaluator."""
+    return _default_evaluator._memory.list_registers()
 
 
-# === Variable storage ===
-
-_user_variables: dict[str, Any] = {}
-_variables_lock = threading.Lock()
+# === Variable storage (proxies to default evaluator) ===
 
 
 def setvar(name: str, value: Any) -> Any:
-    """Set a user variable.
+    """Set a user variable on the default evaluator.
 
     Args:
         name: Variable name
@@ -2123,13 +2451,14 @@ def setvar(name: str, value: Any) -> Any:
     Returns:
         The value that was set
     """
-    with _variables_lock:
-        _user_variables[name] = value
-        return value
+    ev = _default_evaluator
+    with ev._var_lock:
+        ev._user_variables[name] = value
+    return value
 
 
 def getvar(name: str) -> Any:
-    """Get a user variable.
+    """Get a user variable from the default evaluator.
 
     Args:
         name: Variable name
@@ -2137,26 +2466,106 @@ def getvar(name: str) -> Any:
     Returns:
         The variable value or 0 if not found
     """
-    with _variables_lock:
-        return _user_variables.get(name, 0)
+    ev = _default_evaluator
+    with ev._var_lock:
+        return ev._user_variables.get(name, 0)
 
 
 def delvar(name: str) -> None:
-    """Delete a user variable."""
-    with _variables_lock:
-        _user_variables.pop(name, None)
+    """Delete a user variable on the default evaluator."""
+    ev = _default_evaluator
+    with ev._var_lock:
+        ev._user_variables.pop(name, None)
 
 
 def listvars() -> dict[str, Any]:
-    """List all user variables."""
-    with _variables_lock:
-        return _user_variables.copy()
+    """List all user variables on the default evaluator."""
+    ev = _default_evaluator
+    with ev._var_lock:
+        return dict(ev._user_variables)
 
 
 def clearvars() -> None:
-    """Clear all user variables."""
-    with _variables_lock:
-        _user_variables.clear()
+    """Clear all user variables on the default evaluator."""
+    ev = _default_evaluator
+    with ev._var_lock:
+        ev._user_variables.clear()
+
+
+# === AST allow-list (M7) ===
+# Built at module import time by walking a set of known-safe expressions
+# and recording every reachable ast.expr subclass. Used by
+# Evaluator._validate_node to reject any node type not in this set.
+
+_SAFE_AST_EXPRESSIONS: tuple[str, ...] = (
+    "1",
+    "1+1",
+    "1-1",
+    "1*1",
+    "1/1",
+    "1**1",
+    "a",
+    "a+b",
+    "a-b",
+    "a*b",
+    "a/b",
+    "a**b",
+    "a(1)",
+    "a(1, 2, 3)",
+    "-a",
+    "+a",
+    "~a",
+    "1j",
+    "(1j)*(1j)",
+    "a + b * c",
+    "(a + b) * c",
+    "math.sin(1)",
+    "math.cos(0)",
+    "math.tan(0)",
+    "(1).real",
+    "(1).imag",
+    "(1).conjugate()",
+    "a.real + b.imag",
+    "1 & 3",
+    "1 | 3",
+    "1 ^ 3",
+    "1 << 2",
+    "1 >> 2",
+)
+
+
+def _build_allowed_ast_types() -> frozenset[type[ast.AST]]:
+    """Compute the set of AST node types reachable from safe expressions.
+
+    Also includes all ast.operator, ast.unaryop, ast.expr_context,
+    ast.cmpop, ast.boolop subclasses so sub-nodes (e.g. Add, Load)
+    are not erroneously rejected.
+    """
+    allowed: set[type[ast.AST]] = set()
+    for expr in _SAFE_AST_EXPRESSIONS:
+        try:
+            tree = ast.parse(expr, mode="eval")
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.expr):
+                allowed.add(type(node))
+
+    allowed.add(ast.Expression)
+    for name in dir(ast):
+        obj = getattr(ast, name)
+        if isinstance(obj, type) and issubclass(obj, ast.AST) and (
+            issubclass(obj, ast.operator)
+            or issubclass(obj, ast.unaryop)
+            or issubclass(obj, ast.expr_context)
+            or issubclass(obj, ast.cmpop)
+            or issubclass(obj, ast.boolop)
+        ):
+            allowed.add(obj)
+    return frozenset(allowed)
+
+
+_ALLOWED_AST_TYPES: frozenset[type[ast.AST]] = _build_allowed_ast_types()
 
 
 class Evaluator(ast.NodeVisitor):
@@ -2166,6 +2575,10 @@ class Evaluator(ast.NodeVisitor):
     Supports arithmetic operators, trig functions, constants,
     logarithms, and unit conversions.
     """
+
+    # Class-level flag, set on first call to _check_constant_unit_collisions().
+    # Shared across the package and the inlined single-file build.
+    _COLLISION_WARNING_EMITTED: bool = False
 
     # Safe mathematical constants
     CONSTANTS: dict[str, Any] = {
@@ -2346,19 +2759,19 @@ class Evaluator(ast.NodeVisitor):
         # Unit conversion
         "convert": _convert,
         # Memory functions
-        "store": memory_store,
-        "recall": memory_recall,
-        "M": lambda: memory_recall("M"),
-        "Mplus": lambda x: memory_add(x, "M"),
-        "Mminus": lambda x: memory_subtract(x, "M"),
-        "MC": lambda: memory_clear("M"),
-        "MR": lambda: memory_recall("M"),
+        "store": _fn_store,
+        "recall": _fn_recall,
+        "M": lambda: _fn_recall("M"),
+        "Mplus": lambda x: _fn_add(x, "M"),
+        "Mminus": lambda x: _fn_subtract(x, "M"),
+        "MC": lambda: _fn_clear("M"),
+        "MR": lambda: _fn_recall("M"),
         # Variable functions
-        "setvar": setvar,
-        "getvar": getvar,
-        "delvar": delvar,
-        "listvars": listvars,
-        "clearvars": clearvars,
+        "setvar": _fn_setvar,
+        "getvar": _fn_getvar,
+        "delvar": _fn_delvar,
+        "listvars": _fn_listvars,
+        "clearvars": _fn_clearvars,
     }
 
     # Safe binary operators
@@ -2386,8 +2799,8 @@ class Evaluator(ast.NodeVisitor):
         ast.Mod: _safe_mod,
         ast.Pow: _safe_pow,
         # Bitwise operators
-        ast.LShift: (lambda a, b: int(a) << int(b)),
-        ast.RShift: (lambda a, b: int(a) >> int(b)),
+        ast.LShift: _bitlshift_safe,
+        ast.RShift: _bitrshift_safe,
         ast.BitOr: (lambda a, b: a | b),
         ast.BitXor: (lambda a, b: a ^ b),
         ast.BitAnd: (lambda a, b: a & b),
@@ -2401,13 +2814,18 @@ class Evaluator(ast.NodeVisitor):
     }
 
     def __init__(self) -> None:
-        """Initialize evaluator with instance-level constants and functions.
+        """Initialize evaluator with instance-level state.
 
-        Each evaluator instance has its own copy of constants and functions,
-        allowing for instance isolation in PyCalcApp.
+        Each Evaluator instance has its own copy of constants, functions,
+        user variables, and memory registers. This enables true instance
+        isolation in PyCalcApp: variables set on one instance are not
+        visible to other instances or the module-level default evaluator.
         """
         self.CONSTANTS = self.__class__.CONSTANTS.copy()
         self.FUNCTIONS = self.__class__.FUNCTIONS.copy()
+        self._memory = Memory()
+        self._user_variables: dict[str, Any] = {}
+        self._var_lock = threading.Lock()
 
     def _parse_unit(self, text: str) -> tuple[float, str | None]:
         """Parse a string that may contain a number and unit."""
@@ -2435,16 +2853,35 @@ class Evaluator(ast.NodeVisitor):
             raise EvaluationError(f"Cannot parse: '{text}'")
 
     def _get_conversion_factor(self, from_unit: str, to_unit: str) -> float:
-        """Get conversion factor from one unit to another."""
+        """Get conversion factor from one unit to another.
+
+        We read UNIT_CONVERSIONS via the units module to pick up the
+        live binding (build_single-time imports are stale after
+        _rebuild_conversions rebinds the global).
+        """
+        import sys
+
+        try:
+            from . import units as _units  # type: ignore[import-not-found]
+        except ImportError:
+            # Assembled single-file mode: try sys.modules
+            if "." in __name__:
+                _units = sys.modules.get(__name__.rsplit(".", 1)[0] + ".units")
+            else:
+                _units = sys.modules.get("units")
+
         from_unit = normalize_unit(from_unit)
         to_unit = normalize_unit(to_unit)
 
         if from_unit == to_unit:
             return 1.0
 
+        # Use the live binding if we found the units module, else the
+        # import-time binding (which works when nothing was rebuilt).
+        conversions = _units.UNIT_CONVERSIONS if _units is not None else UNIT_CONVERSIONS
         key = (from_unit, to_unit)
-        if key in UNIT_CONVERSIONS:
-            return UNIT_CONVERSIONS[key]
+        if key in conversions:
+            return conversions[key]
 
         raise EvaluationError(f"Cannot convert from '{from_unit}' to '{to_unit}'")
 
@@ -2470,17 +2907,23 @@ class Evaluator(ast.NodeVisitor):
         raise EvaluationError(f"Unsupported constant: '{node.value}'")
 
     def visit_Name(self, node: ast.Name) -> Any:
-        """Visit a name node."""
-        if node.id in self.CONSTANTS:
-            return self.CONSTANTS[node.id]
+        """Visit a name node.
+
+        Lookup order:
+        1. UNIT_ALIASES (unit names; common short names like 'g', 'h', 'k')
+        2. CONSTANTS (physical constants; long names like 'gravity', 'planck')
+        3. FUNCTIONS (rejected as used-without-args)
+        4. Per-instance user variables
+        """
         if node.id in UNIT_ALIASES:
             return UnitValue(1.0, UNIT_ALIASES[node.id])
+        if node.id in self.CONSTANTS:
+            return self.CONSTANTS[node.id]
         if node.id in self.FUNCTIONS:
             raise EvaluationError(f"Function '{node.id}' used without arguments")
-        # Check user variables (thread-safe access)
-        with _variables_lock:
-            if node.id in _user_variables:
-                return _user_variables[node.id]
+        with self._var_lock:
+            if node.id in self._user_variables:
+                return self._user_variables[node.id]
         raise EvaluationError(f"Unknown name: '{node.id}'")
 
     def visit_BinOp(self, node: ast.BinOp) -> Any:
@@ -2534,6 +2977,14 @@ class Evaluator(ast.NodeVisitor):
 
         result = self.BINOPS[op_class](left_val, right_val)
 
+        # Check for NaN/inf in float results (int results cannot be NaN/inf)
+        if isinstance(result, float) and (math.isnan(result) or math.isinf(result)):
+            raise EvaluationError("Result too large")
+
+        if op_class in (ast.LShift, ast.RShift):
+            if isinstance(result, int) and len(str(result)) > MAX_RESULT_DIGITS:
+                raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+
         # Compound unit detection for division:
         # 1. UnitValue / UnitValue with different units -> "left_unit/right_unit"
         # 2. UnitValue / number whose AST name is a unit -> "left_unit/name" (e.g., km/h, mi/h)
@@ -2544,7 +2995,7 @@ class Evaluator(ast.NodeVisitor):
             if not isinstance(right, UnitValue) and right_name and right_name in UNIT_ALIASES:
                 unit_name = UNIT_ALIASES[right_name]
                 compound = f"{left.unit}/{unit_name}"
-                return UnitValue(left_val, compound)
+                return UnitValue(left_val / right_val, compound)
 
         # Compound unit detection for multiplication:
         # UnitValue * UnitValue with different units -> "left_unit*right_unit"
@@ -2670,27 +3121,31 @@ class Evaluator(ast.NodeVisitor):
 
     def evaluate(self, expression: str) -> Any:
         """Evaluate an expression and return the result."""
+        token = _current_evaluator.set(self)
         try:
-            tree = ast.parse(expression, mode="eval")
-        except SyntaxError as e:
-            raise EvaluationError(f"Invalid syntax: '{expression}'") from e
+            try:
+                tree = ast.parse(expression, mode="eval")
+            except SyntaxError as e:
+                raise EvaluationError(f"Invalid syntax: '{expression}'") from e
 
-        # Validate all nodes
-        for node in ast.walk(tree):
-            self._validate_node(node)
+            # Validate all nodes
+            for node in ast.walk(tree):
+                self._validate_node(node)
 
-        result = self.visit(tree.body)
+            result = self.visit(tree.body)
 
-        # Handle result
-        if isinstance(result, UnitValue):
-            return result
-        if isinstance(result, str):
-            return result
-        if result is None:
-            return None  # Functions like seed() and clearvars() return None
-        if not isinstance(result, (int, float, complex)):
-            raise EvaluationError(f"Result must be a number, got '{type(result)}'")
-        return result
+            # Handle result
+            if isinstance(result, UnitValue):
+                return _check_result_size(result)
+            if isinstance(result, str):
+                return result
+            if result is None:
+                return None  # Functions like seed() and clearvars() return None
+            if not isinstance(result, (int, float, complex)):
+                raise EvaluationError(f"Result must be a number, got '{type(result)}'")
+            return _check_result_size(result)
+        finally:
+            _current_evaluator.reset(token)
 
 
 def evaluate(expression: str) -> Any:
@@ -2733,11 +3188,34 @@ class TimeoutError(Exception):
     pass
 
 
+def _evaluate_with_timeout_worker(expr: str, result_queue: multiprocessing.Queue) -> None:
+    """Run evaluation in a child process and put result in queue.
+
+    Must be a module-level function (not nested) so it can be pickled
+    by the 'spawn' multiprocessing start method.
+    """
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+    except (ImportError, ValueError, OSError):
+        pass
+    try:
+        _ensure_config_loaded()
+        result = evaluate_raw(expr)
+        result_queue.put(("ok", result))
+    except Exception as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
+
+
 def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
     """Evaluate an expression with a timeout for untrusted input.
 
     This is the recommended function for evaluating expressions from
     untrusted sources (web requests, user input, etc.).
+
+    Uses multiprocessing.Process with the 'spawn' start method to run
+    evaluation in a separate process that can be reliably terminated.
+    A ThreadPoolExecutor's future.cancel() does NOT stop a running thread.
 
     Args:
         expression: A raw expression string (with spaces, natural language, etc.)
@@ -2748,7 +3226,7 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
 
     Raises:
         TimeoutError: If evaluation exceeds the timeout.
-        EvaluationError: If the expression is invalid or contains unsupported operations.
+        EvaluationError: If expression is invalid or contains unsupported operations.
 
     Note:
         Expressions that exceed MAX_EXPONENT (10000) or MAX_FACTORIAL (1000)
@@ -2758,20 +3236,43 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
         >>> result = evaluate_with_timeout("sum([i**2 for i in range(100)])", timeout=1.0)
         # May raise TimeoutError for slow expressions
     """
-    import concurrent.futures
+    ctx = multiprocessing.get_context("spawn")
+    queue: multiprocessing.Queue = ctx.Queue()
+    proc = ctx.Process(target=_evaluate_with_timeout_worker, args=(expression, queue))
+    proc.start()
 
-    _ensure_config_loaded()
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(evaluate_raw, expression)
+    try:
+        status, value = queue.get(timeout=timeout)
+    except Exception:
+        proc.terminate()
+        proc.join(timeout=2)
+        # If the process is still alive after terminate+join, force-kill it
+        # to ensure we don't leak a child process.
         try:
-            return future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            future.cancel()
-            raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=2)
+        except Exception:
+            pass
+        raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
+
+    try:
+        proc.join(timeout=2)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=2)
+    finally:
+        pass
+
+    if status == "error":
+        raise EvaluationError(value)
+    return value
 
 
 _default_evaluator = Evaluator()
+
+
+_check_constant_unit_collisions()
 
 
 def get_default_evaluator() -> Evaluator:
@@ -2921,10 +3422,14 @@ __all__ = [
 ]
 
 MAX_INPUT_LENGTH = 10000
+MAX_NORMALIZED_LENGTH = 20000
 MAX_NESTING_DEPTH = 100
 
 # Pre-computed sorted units list for performance (avoid re-sorting each call)
 _UNITS_BY_LENGTH: list[str] = sorted(UNIT_ALIASES.keys(), key=len, reverse=True)
+
+# Lowercase temperature abbreviations that should map to canonical uppercase forms
+_LOWERCASE_TEMP_UNITS: dict[str, str] = {"f": "F", "c": "C", "k": "K"}
 
 # Common unit prefixes for faster lookup (most frequently used units first)
 _COMMON_UNITS: list[str] = [
@@ -2984,7 +3489,7 @@ OPERATOR_CONVERSIONS: dict[str, list[str]] = {
     "-": ["minus", "negative"],
     "*": ["times", "multiplied by", "of"],  # "of" for "30% of 200"
     "/": ["divided by", "over", "per", "divide"],
-    "**": ["^", "raised to", "raised to the power", "to the power of"],
+    "**": ["raised to", "raised to the power of", "to the power of"],
     ".": ["point"],
     ",": [],
     "&": ["bitand", "bit and"],
@@ -3240,7 +3745,6 @@ def _build_config() -> tuple[dict, dict]:
         "point": re.compile(r"\."),
         "negative": re.compile(r"\-"),
         "thousands_separator": re.compile(r","),
-        "inline_negative": re.compile(r"^[a-zA-Z]+-[a-zA-Z]+$"),
         "parenthesis": re.compile(r"\(|\)"),
         "operators": re.compile(f"^({'|'.join([re.escape(s) for s in symbols])}){{1}}$"),
         # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
@@ -3256,14 +3760,32 @@ def _build_config() -> tuple[dict, dict]:
     return normalize_config, compiled_patterns
 
 
+
 # Module-level config (computed once)
 NORMALIZE, PATTERNS = _build_config()
 
+# Lock protecting config rebuilds. Acquired by _rebuild_config() so that
+# concurrent readers see a consistent (NORMALIZE, PATTERNS) pair. Also
+# acquired by consumers (e.g., check_if_number via NORMALIZE/PATTERNS
+# access) when atomicity is required.
+_REBUILD_LOCK: _threading.RLock = _threading.RLock()
+
 
 def _rebuild_config() -> None:
-    """Rebuild NORMALIZE and PATTERNS after adding custom words."""
+    """Rebuild NORMALIZE and PATTERNS after adding custom words.
+
+    Thread-safe: holds _REBUILD_LOCK so that consumers see a consistent
+    (NORMALIZE, PATTERNS) pair. Also clears the check_if_number LRU cache
+    so cached results from before the rebuild don't leak into the new config.
+    """
     global NORMALIZE, PATTERNS
-    NORMALIZE, PATTERNS = _build_config()
+    with _REBUILD_LOCK:
+        new_normalize, new_patterns = _build_config()
+        NORMALIZE = new_normalize
+        PATTERNS = new_patterns
+    # Clear the LRU cache outside the lock to avoid holding it during
+    # the (potentially slow) cache eviction.
+    check_if_number.cache_clear()
 
 
 @lru_cache(maxsize=1024)
@@ -3366,7 +3888,9 @@ def validate_for_eval(tokens: list, patterns: Mapping[str, Pattern[str]]) -> boo
             if not patterns["valid_operations"].match(token):
                 if not is_unit(token):
                     if token not in known_constants:
-                        if re.match(r"^[0-9+\-*/.%eE]+$", token):
+                        # Accept '<num>*<unit>' or '<num>/<unit>' patterns
+                        # (e.g., '1*m' from "1 in m" unit conversion)
+                        if re.match(r"^[0-9][0-9+\-*/.%a-zA-Z]*$", token):
                             continue
                         raise ValueError(f"Invalid token: {token}")
     return True
@@ -3481,14 +4005,63 @@ def apply_math_functions(
     - sin(40+2) -> math.sin(40+2) (user's parens preserved)
     - sin of 40 -> math.sin(40)
     - sqrt * 100 -> math.sqrt(100) (skip * from "of" replacement)
+    - 5 factorial -> factorial(5)  (implicit-mul swap: leading number becomes the arg)
+    - 5 sin -> sin(5)
     """
+    _SINGLE_ARG_IMPLICIT_MUL: set[str] = {
+        "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
+        "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
+        "exp", "abs", "factorial", "fact", "cbrt", "floor",
+        "ceil", "round", "sign", "isprime", "nextprime",
+        "prevprime", "random", "gauss", "hypot", "primefactors",
+        "randint",
+    }
+
+    _MULTI_ARG_OF_FUNCS: set[str] = {
+        "mean", "median", "mode", "std", "variance",
+        "gcd", "lcm", "perm", "comb", "nPr", "nCr",
+        "sum", "max", "min", "clamp",
+    }
+
+    def _is_pure_num_token(tok: str) -> bool:
+        stripped = tok.strip("+-")
+        return stripped.isdigit() and not any(c.isalpha() for c in stripped)
+
     output_tokens = []
     i = 0
     while i < len(tokens):
         token = tokens[i]
 
         if token in operators["functions"]:
-            output_tokens.append(operators["functions"][token])
+            func_name = operators["functions"][token]
+            # Implicit-mul swap: <num>[*] <single-arg-func> -> <func>(<num>)
+            # Only swap if there is no value (number) immediately after the function
+            # name in the token stream; otherwise the trailing value is the argument
+            # (e.g., "2 sqrt 9" -> "2*sqrt(9)", but "5 factorial" -> "factorial(5)").
+            if token in _SINGLE_ARG_IMPLICIT_MUL and output_tokens:
+                # Check whether the next non-* token in the input is a value
+                next_idx = i + 1
+                while next_idx < len(tokens) and tokens[next_idx] == "*":
+                    next_idx += 1
+                has_trailing_value = (
+                    next_idx < len(tokens)
+                    and tokens[next_idx] not in operators["functions"]
+                    and tokens[next_idx] != ")"
+                    and not patterns["operators"].match(tokens[next_idx])
+                )
+                if not has_trailing_value and output_tokens:
+                    if output_tokens[-1] == "*":
+                        output_tokens.pop()
+                    if output_tokens and _is_pure_num_token(output_tokens[-1]):
+                        num = output_tokens.pop()
+                        output_tokens.append(func_name)
+                        output_tokens.append("(")
+                        output_tokens.append(num)
+                        output_tokens.append(")")
+                        i += 1
+                        continue
+
+            output_tokens.append(func_name)
             next_token = tokens[i + 1] if i + 1 < len(tokens) else None
 
             if next_token is not None and next_token == "(":
@@ -3497,7 +4070,9 @@ def apply_math_functions(
                 output_tokens.append("(")
 
                 # Skip * that came from "of" replacement (e.g., "sqrt * 100")
+                skipped_of = False
                 if next_token == "*" and i + 2 < len(tokens):
+                    skipped_of = True
                     i += 1
                     next_token = tokens[i + 1] if i + 1 < len(tokens) else None
 
@@ -3505,16 +4080,29 @@ def apply_math_functions(
                     next_token = tokens[i + 1]
                     is_operator = patterns["operators"].match(next_token) is not None
 
-                    if is_operator and next_token != ".":
-                        break
                     if next_token == ")":
                         break
 
+                    # Stop at function names (they'll be processed separately)
+                    if next_token in operators["functions"]:
+                        break
+
+                    if is_operator:
+                        if next_token == ".":
+                            pass  # continue collecting
+                        elif skipped_of and next_token in ("+", "-") and token in _MULTI_ARG_OF_FUNCS:
+                            # "of" chains: replace +/- with , for multi-arg functions
+                            # e.g., mean*1+2+3 -> mean(1,2,3)
+                            # Restricted to multi-arg functions; for single-arg
+                            # functions like sqrt, "sqrt of 144 + 5" stays as sqrt(144)+5.
+                            output_tokens.append(",")
+                            i += 1
+                            continue
+                        else:
+                            break
+
                     output_tokens.append(next_token)
                     i += 1
-
-                    if next_token == ".":
-                        continue
 
                 output_tokens.append(")")
         else:
@@ -3573,21 +4161,6 @@ def convert_from_human_handler(
     return tokens, is_valid
 
 
-def _handle_negative_token(
-    tokens: list,
-    index: int,
-    patterns: Mapping[str, Pattern[str]],
-) -> tuple[list, list]:
-    """Handle negative token patterns like 'five-six' or '5.-2'."""
-    if index < 2 or index >= len(tokens) or (index - 1) >= len(tokens) or (index - 2) >= len(tokens):
-        return tokens, []
-    temp = tokens[index].split("-")
-    tokens[index - 2] = f"{tokens[index - 2]}.{temp[0]}"
-    tokens[index - 1] = ""
-    tokens[index] = f"-{temp[1]}"
-    return tokens, [index - 1]
-
-
 def _should_split_number_minus(token: str) -> bool:
     """Check if token matches pattern: digit-sequence minus digit-sequence."""
     return bool(re.match(r"^\d+-\d+$", token))
@@ -3598,55 +4171,22 @@ def _should_split_double_minus(token: str) -> bool:
     return bool(re.match(r"^\d+--\d+$", token))
 
 
-def _should_handle_inline_negative(
-    tokens: list, index: int, patterns: Mapping[str, Pattern[str]]
-) -> bool:
-    """Check if token should be handled as inline negative."""
-    return bool(
-        index >= 2
-        and patterns["inline_negative"].match(tokens[index])
-        and patterns["point"].match(tokens[index - 1])
-        and not check_if_number(tokens[index - 2])["bool"]
-    )
-
-
-def _should_handle_decimal_negative(
-    tokens: list, index: int, patterns: Mapping[str, Pattern[str]]
-) -> bool:
-    """Check if token should be handled as decimal negative."""
-    return bool(
-        index >= 2
-        and patterns["negative"].search(tokens[index])
-        and patterns["point"].match(tokens[index - 1])
-        and check_if_number(tokens[index - 2])["bool"]
-    )
-
-
 def split_at_operators(
     expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]
 ) -> list:
     """Split an expression string at operator boundaries."""
-    # Escape operators for splitting
     for symbol in operators["symbols"]:
         if symbol != "-":
             expression = expression.replace(symbol, f"\\{symbol}\\")
 
     tokens = [t.strip() for t in expression.split("\\") if t.strip()]
 
-    indices_to_remove = []
-
     for i in range(len(tokens)):
         is_num = check_if_number(tokens[i])["bool"]
         is_op = patterns["operators"].match(tokens[i]) is not None
 
         if not is_num and not is_op:
-            if _should_handle_inline_negative(tokens, i, patterns):
-                tokens, removed = _handle_negative_token(tokens, i, patterns)
-                indices_to_remove.extend(removed)
-            elif _should_handle_decimal_negative(tokens, i, patterns):
-                tokens, removed = _handle_negative_token(tokens, i, patterns)
-                indices_to_remove.extend(removed)
-            elif _should_split_number_minus(tokens[i]):
+            if _should_split_number_minus(tokens[i]):
                 token = tokens[i]
                 parts = token.split("-", 1)
                 tokens[i] = parts[0]
@@ -3661,12 +4201,6 @@ def split_at_operators(
             elif _should_split_number_sequence(tokens[i]):
                 parts = tokens[i].split()
                 tokens[i:i+1] = parts
-            elif i > 0 and tokens[i][:1] != "-" and tokens[i - 1] != ".":
-                tokens[i] = tokens[i].replace("-", "")
-
-    if indices_to_remove:
-        for idx in reversed(indices_to_remove):
-            tokens.pop(idx)
 
     return tokens
 
@@ -3722,6 +4256,9 @@ def _combine_consecutive_numbers(
     2. Collect the full sequence of number + number + number...
     3. Use combine_number_parts to properly combine them
     4. Output any non-number or unit-having tokens as-is
+
+    Preserves the original token text so leading zeros (e.g., "0.015")
+    are not lost when re-emitting.
     """
     if not tokens:
         return tokens
@@ -3742,14 +4279,16 @@ def _combine_consecutive_numbers(
             i += 1
             continue
 
-        number_parts = [num_info["converted"]]
+        number_parts: list[tuple[Any, str]] = [(num_info["converted"], token)]
+        original_tokens: list[str] = [token]
 
         while True:
             if i + 1 < len(tokens):
                 next_token = tokens[i + 1]
                 next_is_num = check_if_number(next_token)["bool"] and _is_pure_number(next_token)
                 if next_is_num:
-                    number_parts.append(check_if_number(next_token)["converted"])
+                    number_parts.append((check_if_number(next_token)["converted"], next_token))
+                    original_tokens.append(next_token)
                     i += 1
                 else:
                     break
@@ -3757,10 +4296,14 @@ def _combine_consecutive_numbers(
                 break
 
         if len(number_parts) > 1:
-            combined = _finish_number_group(number_parts, patterns)
-            result.extend(combined)
+            values = [v for v, _ in number_parts]
+            combined = _finish_number_group(values, patterns)
+            if len(combined) == 1 and combined[0] == "+".join(original_tokens):
+                result.append(combined[0])
+            else:
+                result.extend(combined)
         else:
-            result.append(str(number_parts[0]))
+            result.append(original_tokens[0])
 
         i += 1
 
@@ -3782,6 +4325,71 @@ def _should_split_number_sequence(token: str) -> bool:
         stripped = part.strip('+-')
         if not stripped.replace('.', '').replace('e', '').replace('E', '').isdigit():
             return False
+
+
+# Module-level binary-word validation. Detects <value> not/in/to/as/into <value>
+# patterns and raises a clear error (e.g., "5 not 6" -> SyntaxError rather than
+# the silent "5~6" that would be produced by naive word substitution).
+_BINARY_WORD_PATTERN = re.compile(
+    r"(\d+(?:\.\d+)?|\([^)]*\))\s+"
+    r"(not|in|to|as|into)\s+"
+    r"(\d+(?:\.\d+)?)",
+    flags=re.IGNORECASE,
+)
+
+
+# Module-level set of function names that participate in implicit multiplication.
+# Used by the whitespace-removal loop to insert '*' between a digit/') and a
+# function name, and (in apply_math_functions) to swap leading numbers into
+# the function's argument list when the function takes exactly one argument.
+_IMPLICIT_MUL_FUNCS: set[str] = {
+    "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
+    "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
+    "exp", "abs", "factorial", "fact", "cbrt", "floor",
+    "ceil", "round", "sign", "mean", "median", "mode",
+    "std", "variance", "gcd", "lcm", "perm", "comb",
+    "nPr", "nCr", "isprime", "nextprime", "prevprime",
+    "primefactors", "random", "randint", "gauss", "sum",
+    "max", "min", "hypot", "clamp",
+}
+
+# Subset of _IMPLICIT_MUL_FUNCS that take exactly one argument. Used by
+# apply_math_functions to detect "<num> <func>" -> "<func>(<num>)" swap.
+_SINGLE_ARG_IMPLICIT_MUL: set[str] = {
+    "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
+    "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
+    "exp", "abs", "factorial", "fact", "cbrt", "floor",
+    "ceil", "round", "sign", "isprime", "nextprime",
+    "prevprime", "random", "gauss", "hypot", "primefactors",
+    "randint",
+}
+
+# Subset of _IMPLICIT_MUL_FUNCS that take multiple arguments. Used by
+# apply_math_functions to allow "of" chains like "mean of 1+2+3" ->
+# "mean(1,2,3)". Single-arg functions keep "+" / "-" as real operators
+# (e.g., "sqrt of 144 + 5" -> "sqrt(144) + 5").
+_MULTI_ARG_OF_FUNCS: set[str] = {
+    "mean", "median", "mode", "std", "variance",
+    "gcd", "lcm", "perm", "comb", "nPr", "nCr",
+    "sum", "max", "min", "clamp",
+}
+
+
+def _binary_word_check(expr: str) -> None:
+    """Raise ValueError if expr contains <value> not/in/to/as/into <value>.
+
+    These words are reserved for unary bitwise NOT or unit conversion. When
+    they appear between two numeric values (e.g., "5 not 6", "1 in 2"), we
+    would produce invalid Python (e.g., "5~6", "1IN2") and the meaning is
+    ambiguous. Raises a clear error instead.
+    """
+    m = _BINARY_WORD_PATTERN.search(expr)
+    if m:
+        raise ValueError(
+            f"Syntax error: '{m.group(2).lower()}' is not a binary operator in this context. "
+            f"Use parentheses for unary 'not' (e.g., '~(5+6)'); "
+            f"for unit conversion, follow the pattern '<value> in <unit>'."
+        )
     return True
 
 
@@ -3832,28 +4440,65 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
                 for scale_word in scale_words:
                     key = f"{word} {scale_word}"
                     _MULTI_WORD_NUMBERS[key] = str(int(num_val) * int(scale_val))
+    # Add combinations of tens + ones + scale: "twenty one hundred" -> 2100,
+    # "fifty six thousand" -> 56000, "thirty two million" -> 32000000, etc.
+    for tens_val, tens_words in _NUMBER_WORDS_TENS.items():
+        for ones_val, ones_words in {**_NUMBER_WORDS_SINGLE, **_NUMBER_WORDS_TEENS}.items():
+            for scale_val, scale_words in _NUMBER_SCALES.items():
+                for tens_word in tens_words:
+                    for ones_word in ones_words:
+                        for scale_word in scale_words:
+                            key = f"{tens_word} {ones_word} {scale_word}"
+                            _MULTI_WORD_NUMBERS[key] = str(
+                                (int(tens_val) + int(ones_val)) * int(scale_val)
+                            )
     for phrase, replacement in sorted(_MULTI_WORD_NUMBERS.items(), key=lambda x: len(x[0]), reverse=True):
         expression = re.sub(r"\b" + re.escape(phrase) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
     # Strip "and" as a filler word in NL number expressions
     expression = re.sub(r"\band\b", "", expression, flags=re.IGNORECASE)
 
-    # Handle "word percent" patterns before word_to_all converts "percent" to "%"
-    # e.g., "fifty percent of 200" -> "50/100*200" -> "0.5*200"
-    word_to_number = operators.get("word_to_number", {})
-    def _replace_percent_word(m):
-        word = m.group(1).lower()
-        if word in word_to_number:
-            return str(float(word_to_number[word]) / 100)
-        return m.group(0)
-    expression = re.sub(r"\b(\w+)\s+percent\b", _replace_percent_word, expression, flags=re.IGNORECASE)
+    _binary_word_check(expression)
+
+    _DIGIT_SCALES: dict[str, str] = {
+        "thousand": "1000",
+        "million": "1000000",
+        "billion": "1000000000000",
+        "trillion": "1000000000000000000",
+        "quadrillion": "1000000000000000000",
+    }
+    for scale_word, scale_val in _DIGIT_SCALES.items():
+        expression = re.sub(
+            r"\b(\d+(?:\.\d+)?)\s+" + re.escape(scale_word) + r"\b",
+            lambda m, sv=scale_val: f"{m.group(1)}*{sv}",
+            expression,
+            flags=re.IGNORECASE,
+        )
+
+    # Replace single number words with digits BEFORE _join_number_parts runs
+    # This ensures "forty four" → "40 4" → "40+4" (correct) instead of remaining as words
+    _ALL_NUMBER_WORDS: dict[str, str] = {}
+    for val, words in NUMBER_WORDS.items():
+        for word in words:
+            _ALL_NUMBER_WORDS[word] = val
+    for word, replacement in sorted(_ALL_NUMBER_WORDS.items(), key=lambda x: len(x[0]), reverse=True):
+        expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
     # Use combined word replacement for efficiency (single pass)
     # Use word boundaries to avoid replacing parts of words
     word_to_all = operators.get("word_to_all", {})
+    _binary_word_check(expression)
     for word, replacement in sorted(word_to_all.items(), key=lambda x: len(x[0]), reverse=True):
-        # Use regex with word boundaries to only match whole words
-        expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression)
+        # Special case: don't convert "in"/"into" when it appears to be a unit suffix
+        # (preceded by a digit, no following unit, or followed by something that
+        # isn't a unit). E.g., "5 in" or "5 in to cm" where "in" is a unit, not a keyword.
+        if word.lower() in ("in", "into") and re.search(
+            r"\d\s+" + re.escape(word) + r"(?:\s*$|\s+(?!\d))",
+            expression,
+            flags=re.IGNORECASE,
+        ):
+            continue
+        expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
     # Handle "N percent" -> "N/100" AFTER word_to_all substitutions
     # This allows NL words like "fifty" to be converted to digits first
@@ -3864,17 +4509,43 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     # Handle compound unit conversions after stripping
     # e.g., "60mi/h in m/s" -> "convert(60*mi/h,m/s)"
-    # The / in unit names would be tokenized as division, so we must handle this first
+    # e.g., "30 km/h in mph" -> "convert(30*km/h,mph)"
+    # The / in unit names would be tokenized as division, so we must handle this first.
+    # Note: "in"/"to" may have been replaced with "IN"/"TO" already; handle both forms.
+    # Also accept the optional "*" between the number and the unit (from
+    # the bare compound unit handling below).
     _COMPOUND_UNITS = ["km/h", "mi/h", "m/s", "km/s", "mi/s"]
+    # Also allow single units as targets (e.g., "30 km/h in mph")
+    _SINGLE_UNITS_FOR_CONVERSION = ["mph", "kph", "knot", "ft/s", "ft/min"]
     for from_unit in _COMPOUND_UNITS:
-        for to_unit in _COMPOUND_UNITS:
+        for to_unit in _COMPOUND_UNITS + _SINGLE_UNITS_FOR_CONVERSION:
             if from_unit != to_unit:
-                pattern = rf"(\d+(?:\.\d+)?)\s*{re.escape(from_unit)}\s+(?:in|to)\s+{re.escape(to_unit)}"
+                pattern = rf"(\d+(?:\.\d+)?)\s*\*?\s*{re.escape(from_unit)}\s*(?:in|to|IN|TO)\s*{re.escape(to_unit)}"
                 replacement_fn = lambda m, fu=from_unit, tu=to_unit: f"convert({m.group(1)}*{fu},{tu})"
                 expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
 
+    # Handle bare compound unit expressions: "30 km/h" -> "30*km/h"
+    # (without this, "/h" would be tokenized as division and the unit interpretation
+    # would be lost). Only insert "*" between the number and the compound unit.
+    for unit in _COMPOUND_UNITS:
+        pattern = rf"(\d+(?:\.\d+)?)(\s*)({re.escape(unit)})\b"
+        expression = re.sub(pattern, lambda m: f"{m.group(1)}*{m.group(3)}", expression, flags=re.IGNORECASE)
+
+    # Handle "<num> <unit> / <unit>" expressions (e.g., "5 km / h") - convert
+    # to a form the evaluator can handle without naming `h` as a Planck constant.
+    # We emit convert(N*unit1, base_unit) / convert(1*unit2, base_unit2) form.
+    _COMPOUND_SPLIT_PAIRS: list[tuple[str, str]] = [
+        ("km", "h"), ("mi", "h"), ("m", "s"), ("km", "s"), ("mi", "s"),
+        ("km", "hr"), ("mi", "hr"), ("m", "sec"), ("km", "sec"), ("mi", "sec"),
+        ("km", "min"), ("mi", "min"),
+    ]
+    for u1, u2 in _COMPOUND_SPLIT_PAIRS:
+        pattern = rf"(\d+(?:\.\d+)?)\s*{re.escape(u1)}\s*/\s*{re.escape(u2)}\b"
+        replacement_fn = lambda m, uu1=u1, uu2=u2: f"({m.group(1)}*{uu1})/({uu2})"
+        expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
+
     # Convert percentages (e.g., 50% -> 0.5)
-    expression = re.sub(r"(\d+(?:\.\d+)?)%", lambda m: str(float(m.group(1)) / 100), expression)
+    expression = re.sub(r"(\d+(?:\.\d+)?)\s*%", lambda m: str(float(m.group(1)) / 100), expression)
 
     # Convert 'i' suffix to 'j' for complex numbers (e.g., 3+4i -> 3+4j)
     # Match: number followed by 'i' (not preceded by another letter)
@@ -3882,29 +4553,92 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Handle standalone 'i' preceded by operators or at start
     expression = re.sub(r"(^|[+\-*/(])i\b", r"\g<1>1j", expression)
 
+    # Handle angle mode: <number> degrees -> <number>*pi/180
+    # This makes sin(30 degrees) interpret the argument as degrees rather than radians.
+    # Must be done BEFORE the 'i' -> 'j' substitution (no conflict) and BEFORE
+    # whitespace removal. Use word boundaries and case-insensitive matching.
+    expression = re.sub(
+        r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b",
+        lambda m: f"({m.group(1)}*pi/180)",
+        expression,
+        flags=re.IGNORECASE,
+    )
+
     # Join space-separated number sequences with + for proper evaluation
     # This must happen BEFORE whitespace removal so we get "3+100+20+2" instead of "3100202"
     expression = _join_number_parts(expression)
 
     # Replace whitespace outside parentheses with nothing
     # Preserve whitespace inside parentheses to separate function args
+    # Also insert * between function names and following digits (e.g., "sqrt 144" -> "sqrt*144")
+    # And between a digit/`) and a function name (e.g., "5 sin" -> "5*sin", "2 sqrt 9" -> "2*sqrt 9")
     result = []
     depth = 0
-    for char in expression:
+    prev_was_func_end = False
+    i = 0
+    n = len(expression)
+    while i < n:
+        char = expression[i]
         if char == "(":
+            if result and result[-1] == ")":
+                # Implicit multiplication: ")(" -> ")*("
+                result.append("*")
             depth += 1
             if depth > MAX_NESTING_DEPTH:
                 raise ValueError(f"Expression nesting too deep (max {MAX_NESTING_DEPTH})")
             result.append(char)
+            prev_was_func_end = False
+            i += 1
         elif char == ")":
             depth -= 1
             result.append(char)
+            prev_was_func_end = False
+            i += 1
         elif char.isspace():
             if depth > 0:
                 result.append(char)  # Keep space inside parentheses
             # Skip space outside parentheses
+            i += 1
         else:
+            # Detect: digit or ")" followed by a function name token (e.g., "5 sin" -> "5*sin")
+            if char.isalpha() and result and result[-1] in "0123456789)":
+                # Look ahead to see if current alpha sequence matches an implicit-mul function
+                trail: list[str] = []
+                j = i
+                while j < n and (expression[j].isalpha() or expression[j].isdigit()):
+                    trail.append(expression[j])
+                    j += 1
+                candidate = "".join(trail)
+                # Skip if the candidate is a unit alias (e.g., "30 min" -> "30min", not "30*min()")
+                if candidate in _IMPLICIT_MUL_FUNCS and candidate not in UNIT_ALIASES and candidate.lower() not in UNIT_ALIASES:
+                    result.append("*")
+                    for c in candidate:
+                        result.append(c)
+                    i = j
+                    prev_was_func_end = candidate in _IMPLICIT_MUL_FUNCS
+                    continue
+
+            if prev_was_func_end and char.isdigit():
+                result.append("*")
+            if result and result[-1] == ")" and (char.isdigit() or char == "("):
+                # Implicit multiplication: ")(" or ")<digit>" -> ")*(" or ")*<digit>"
+                # (e.g., "(2+3)4" -> "(2+3)*4", "(2+3)(4+5)" -> "(2+3)*(4+5)")
+                result.append("*")
             result.append(char)
+            # Check if we just completed a function name
+            if char.isalpha():
+                # Look back to see if the current alpha sequence is a function name
+                trail = []
+                for c in reversed(result):
+                    if c.isalpha():
+                        trail.append(c)
+                    else:
+                        break
+                cand = "".join(reversed(trail))
+                prev_was_func_end = cand in _IMPLICIT_MUL_FUNCS
+            else:
+                prev_was_func_end = False
+            i += 1
 
     expression = "".join(result)
 
@@ -3918,47 +4652,72 @@ def _join_number_parts(expression: str) -> str:
     (or simple expressions evaluating to numbers) and joins them with +.
     This ensures "three hundred twenty two" -> 3+100+20+2 -> 125,
     not 3100202.
+
+    Also inserts implicit '*' between adjacent number and non-number non-operator
+    tokens (e.g., "sqrt 144" -> "sqrt*144", "2 sqrt 9" -> "2*sqrt*9").
+    Operators like '+', '-', '*', '/', '&', '|', '^' are passed through unchanged.
+    Unit aliases (e.g., 'm', 'min', 'kg') are NOT treated as function names, so
+    no '*' is inserted between a number and a unit (deferred to _preprocess_units).
     """
     tokens = expression.split()
     if len(tokens) <= 1:
         return expression
 
-    result = []
+    _OPERATOR_TOKENS: set[str] = {
+        "+", "-", "*", "/", "**", "%", "&", "|", "^", "<<", ">>", "~",
+        "IN", "TO", "MOD",
+    }
+
+    def _is_digit_token(tok: str) -> bool:
+        stripped = tok.strip('+-')
+        return stripped.replace('.', '').replace('e', '').replace('E', '').isdigit()
+
+    def _is_unit_token(tok: str) -> bool:
+        return tok in UNIT_ALIASES or tok.lower() in UNIT_ALIASES
+
+    result: list[str] = []
     current_number_seq: list[str] = []
 
-    for token in tokens:
-        if token in ('+', '-'):
-            if current_number_seq:
-                if len(current_number_seq) == 1:
-                    result.append(current_number_seq[0])
-                else:
-                    result.append('+'.join(current_number_seq))
-                current_number_seq = []
-            result.append(token)
-        else:
-            stripped = token.strip('+-')
-            if stripped.replace('.', '').replace('e', '').replace('E', '').isdigit():
-                current_number_seq.append(token)
-            else:
-                if current_number_seq:
-                    if len(current_number_seq) == 1:
-                        result.append(current_number_seq[0])
-                    else:
-                        result.append('+'.join(current_number_seq))
-                    current_number_seq = []
-                result.append(token)
-
-    if current_number_seq:
+    def _flush_number_seq() -> None:
+        if not current_number_seq:
+            return
         if len(current_number_seq) == 1:
             result.append(current_number_seq[0])
         else:
             result.append('+'.join(current_number_seq))
+        current_number_seq.clear()
 
+    prev_kind: str | None = None
+
+    for token in tokens:
+        if token in _OPERATOR_TOKENS:
+            _flush_number_seq()
+            result.append(token)
+            prev_kind = "op"
+        elif _is_digit_token(token):
+            if prev_kind == "other" and not _is_unit_token(token):
+                result.append("*")
+            current_number_seq.append(token)
+            prev_kind = "num"
+        else:
+            _flush_number_seq()
+            if prev_kind == "num":
+                result.append("*")
+            result.append(token)
+            prev_kind = "other"
+
+    _flush_number_seq()
     return ''.join(result)
 
 
 def _preprocess_units(expression: str) -> str:
-    """Preprocess expression to add multiplication before units."""
+    """Preprocess expression to add multiplication before units.
+
+    Emits the canonical form of each unit (via UNIT_ALIASES) so that the
+    evaluator's visit_Name lookup is deterministic. E.g., "5in" -> "5*inch"
+    (canonical 'inch' instead of alias 'in'), "10 m" -> "10*m", etc.
+    Also handles cases where '*' is already present (e.g., "5*in" -> "5*inch").
+    """
     result = []
     i = 0
     depth = 0
@@ -3998,16 +4757,60 @@ def _preprocess_units(expression: str) -> str:
                     found_unit = False
                     for unit in units:
                         if remaining.startswith(unit):
+                            # Emit the canonical form (e.g., "in" -> "inch") so
+                            # the evaluator doesn't depend on the alias ordering.
+                            canonical = UNIT_ALIASES.get(unit, unit)
                             result.append(num)
                             result.append("*")
-                            result.append(unit)
+                            result.append(canonical)
                             i += len(unit)
                             found_unit = True
                             break
+                    # Handle lowercase temperature units (f, c, k)
+                    if not found_unit and remaining:
+                        first_char = remaining[0]
+                        if first_char.lower() in _LOWERCASE_TEMP_UNITS:
+                            result.append(num)
+                            result.append("*")
+                            result.append(_LOWERCASE_TEMP_UNITS[first_char.lower()])
+                            i += 1
+                            found_unit = True
                     if not found_unit:
                         result.append(num)
             else:
                 result.append(num)
+        elif char == "*" and result and result[-1].isdigit() and i + 1 < len(expression):
+            # "*" preceded by a digit. Check if the next alpha-only token is a
+            # unit alias. Find the longest prefix that matches a unit alias.
+            # (E.g., for "5*inTOcm", find "in" even though "i" alone isn't a unit.)
+            result.append("*")
+            i += 1
+            unit_tok = ""
+            j = i
+            best_end = i
+            while j < len(expression) and expression[j].isalpha():
+                candidate = expression[i:j + 1]
+                if candidate in UNIT_ALIASES:
+                    unit_tok = candidate
+                    best_end = j + 1
+                    j += 1
+                else:
+                    j += 1
+                    # Don't break; keep trying longer prefixes in case a longer
+                    # one matches (e.g., "in" matches even though "i" doesn't).
+                    # But stop if we've clearly passed any plausible unit length
+                    # (units are typically <= 20 chars).
+                    if j - i > 25:
+                        break
+            if unit_tok:
+                canonical = UNIT_ALIASES.get(unit_tok, unit_tok)
+                result.append(canonical)
+                i = best_end
+            else:
+                # Not a unit alias; emit as-is
+                if i < len(expression) and expression[i].isalpha():
+                    result.append(expression[i])
+                    i += 1
         else:
             result.append(char)
             i += 1
@@ -4018,57 +4821,185 @@ def _preprocess_units(expression: str) -> str:
 def _handle_unit_conversion_from_tokens(tokens: list) -> list:
     """Handle unit conversion patterns from tokens like ['2 meters', 'in', 'feet'].
 
-    Detects patterns like: [number+unit, 'in'/'to'/'into'/'as', target_unit]
-    Converts to: ['convert(number*unit,target_unit)']
+    Detects patterns like:
+    - [number+unit, 'in'/'to'/'into'/'as', target_unit] -> convert(number*unit, target_unit)
+    - [number, 'in'/'to'/'into'/'as', target_unit] -> convert(number, target_unit) (treated as multiply)
+    - [number, '*', unit, 'in'/'to'/'into'/'as', target_unit] -> convert(number*unit, target_unit)
+      (e.g., from "5 in to cm" -> tokens ['5', '*', 'in', 'TO', 'cm'])
     """
     if len(tokens) < 3:
         return tokens
 
-    # Look for pattern: token with number+unit followed by conversion word followed by unit
-    conversion_words = {"in", "to", "into", "as"}
-
     for i in range(len(tokens) - 2):
-        # Check if tokens[i] ends with a unit (has number prefix)
         token = tokens[i]
+        from_unit = None
+        from_unit_normalized = None
+        num_part = None
+        advance = 1  # How many tokens to skip after the conversion
         for unit in _UNITS_BY_LENGTH:
             if token.endswith(unit):
                 num_part = token[: -len(unit)]
                 if num_part and num_part[-1].isdigit():
-                    # Found number+unit pattern
                     from_unit = unit
                     from_unit_normalized = UNIT_ALIASES.get(from_unit, from_unit)
+                    break
+        if from_unit is None:
+            last_char = token[-1:] if token else ""
+            if last_char.lower() in _LOWERCASE_TEMP_UNITS:
+                candidate_num = token[:-1]
+                if candidate_num and candidate_num[-1].isdigit():
+                    from_unit = last_char
+                    from_unit_normalized = _LOWERCASE_TEMP_UNITS[last_char.lower()]
+                    num_part = candidate_num
 
-                    # Check conversion word (uppercase from operator split)
-                    conv_word = tokens[i + 1].upper()
-                    if conv_word in {"IN", "TO"}:
-                        # Check target unit
-                        to_token = tokens[i + 2]
-                        to_unit_normalized = None
+        # Pattern: <num> '*' <unit> <IN/TO> <target>  (e.g., ['5', '*', 'in', 'TO', 'cm'])
+        if (
+            from_unit is None
+            and token
+            and (token[0].isdigit() or token[0] == "-")
+            and token[-1].isdigit()
+            and i + 2 < len(tokens)
+            and tokens[i + 1] == "*"
+        ):
+            unit_token = tokens[i + 2]
+            if unit_token in UNIT_ALIASES or unit_token.lower() in UNIT_ALIASES:
+                from_unit = unit_token
+                from_unit_normalized = UNIT_ALIASES.get(unit_token, unit_token)
+                if from_unit_normalized == unit_token:
+                    from_unit_normalized = UNIT_ALIASES.get(unit_token.lower(), unit_token)
+                num_part = token
+                advance = 3  # Skip '*' and the unit token
 
-                        for unit2 in _UNITS_BY_LENGTH:
-                            if to_token == unit2 or to_token.endswith(unit2):
-                                to_unit_normalized = UNIT_ALIASES.get(unit2, unit2)
-                                break
+        # Bare-number source: e.g., tokens[i] is just "1" (no unit suffix)
+        bare_number = False
+        if from_unit is None and token and (token[0].isdigit() or token[0] == "-") and token[-1].isdigit():
+            try:
+                float(token)
+                bare_number = True
+                num_part = token
+                from_unit_normalized = ""
+            except ValueError:
+                pass
 
-                        if to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
+        if from_unit is not None or bare_number:
+            next_idx = i + advance
+            if next_idx >= len(tokens):
+                continue
+            conv_word = tokens[next_idx].upper()
+            if conv_word in {"IN", "TO"}:
+                to_idx = next_idx + 1
+                if to_idx >= len(tokens):
+                    continue
+                to_token = tokens[to_idx]
+                to_unit_normalized = None
 
-                            cat1 = get_unit_category(from_unit_normalized)
-                            cat2 = get_unit_category(to_unit_normalized)
+                for unit2 in _UNITS_BY_LENGTH:
+                    if to_token == unit2 or to_token.endswith(unit2):
+                        to_unit_normalized = UNIT_ALIASES.get(unit2, unit2)
+                        break
+                if to_unit_normalized is None and to_token.lower() in _LOWERCASE_TEMP_UNITS:
+                    to_unit_normalized = _LOWERCASE_TEMP_UNITS[to_token.lower()]
 
-                            if (
-                                cat1
-                                and cat2
-                                and are_units_compatible(from_unit_normalized, to_unit_normalized)
-                            ):
-                                # Replace the three tokens with the convert function
-                                new_tokens = (
-                                    tokens[:i]
-                                    + [
-                                        f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
-                                    ]
-                                    + tokens[i + 3 :]
-                                )
-                                return new_tokens
+                if bare_number:
+                    if to_unit_normalized:
+                        new_tokens = (
+                            tokens[:i]
+                            + [f"{num_part}*{to_unit_normalized}"]
+                            + tokens[next_idx + 2:]
+                        )
+                        return new_tokens
+                elif to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
+
+                    cat1 = get_unit_category(from_unit_normalized)
+                    cat2 = get_unit_category(to_unit_normalized)
+
+                    if (
+                        cat1
+                        and cat2
+                        and are_units_compatible(from_unit_normalized, to_unit_normalized)
+                    ):
+                        new_tokens = (
+                            tokens[:i]
+                            + [
+                                f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
+                            ]
+                            + tokens[next_idx + 2:]
+                        )
+                        return new_tokens
+
+    return tokens
+
+    for i in range(len(tokens) - 2):
+        token = tokens[i]
+        from_unit = None
+        from_unit_normalized = None
+        num_part = None
+        for unit in _UNITS_BY_LENGTH:
+            if token.endswith(unit):
+                num_part = token[: -len(unit)]
+                if num_part and num_part[-1].isdigit():
+                    from_unit = unit
+                    from_unit_normalized = UNIT_ALIASES.get(from_unit, from_unit)
+                    break
+        if from_unit is None:
+            last_char = token[-1:] if token else ""
+            if last_char.lower() in _LOWERCASE_TEMP_UNITS:
+                candidate_num = token[:-1]
+                if candidate_num and candidate_num[-1].isdigit():
+                    from_unit = last_char
+                    from_unit_normalized = _LOWERCASE_TEMP_UNITS[last_char.lower()]
+                    num_part = candidate_num
+
+        # Bare-number source: e.g., tokens[i] is just "1" (no unit suffix)
+        bare_number = False
+        if from_unit is None and token and (token[0].isdigit() or token[0] == "-") and token[-1].isdigit():
+            try:
+                float(token)
+                bare_number = True
+                num_part = token
+                from_unit_normalized = ""
+            except ValueError:
+                pass
+
+        if from_unit is not None or bare_number:
+            conv_word = tokens[i + 1].upper()
+            if conv_word in {"IN", "TO"}:
+                to_token = tokens[i + 2]
+                to_unit_normalized = None
+
+                for unit2 in _UNITS_BY_LENGTH:
+                    if to_token == unit2 or to_token.endswith(unit2):
+                        to_unit_normalized = UNIT_ALIASES.get(unit2, unit2)
+                        break
+                if to_unit_normalized is None and to_token.lower() in _LOWERCASE_TEMP_UNITS:
+                    to_unit_normalized = _LOWERCASE_TEMP_UNITS[to_token.lower()]
+
+                if bare_number:
+                    if to_unit_normalized:
+                        new_tokens = (
+                            tokens[:i]
+                            + [f"{num_part}*{to_unit_normalized}"]
+                            + tokens[i + 3:]
+                        )
+                        return new_tokens
+                elif to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
+
+                    cat1 = get_unit_category(from_unit_normalized)
+                    cat2 = get_unit_category(to_unit_normalized)
+
+                    if (
+                        cat1
+                        and cat2
+                        and are_units_compatible(from_unit_normalized, to_unit_normalized)
+                    ):
+                        new_tokens = (
+                            tokens[:i]
+                            + [
+                                f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
+                            ]
+                            + tokens[i + 3:]
+                        )
+                        return new_tokens
 
     return tokens
 
@@ -4097,6 +5028,9 @@ def normalize_expression(
         return f"Error: Input too long (max {MAX_INPUT_LENGTH} characters)", 2
 
     expression = normalize(expression, operators, patterns)
+
+    if len(expression) > MAX_NORMALIZED_LENGTH:
+        return f"Error: Normalized expression too long (max {MAX_NORMALIZED_LENGTH} characters)", 2
     tokens = split_at_operators(expression, operators, patterns)
     tokens, is_valid = convert_from_human_handler(tokens, operators, patterns, expression)
 
@@ -4134,7 +5068,11 @@ def run(
         tuple: (result, exit_code) - result is the evaluated value or None on error
     """
     original = expression
-    joined, exit_code = normalize_expression(expression, operators, patterns)
+    try:
+        joined, exit_code = normalize_expression(expression, operators, patterns)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return None, 1
 
     if exit_code != 0:
         if exit_code == 2:
@@ -22307,7 +23245,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "outputSchema": {
             "type": "object",
             "properties": {
-                "result": {"type": "string", "description": "Evaluation result as string"},
+                "value": {"type": "string", "description": "Evaluation result as string"},
                 "type": {"type": "string", "description": "Python type name of the result"},
             },
         },
@@ -23797,7 +24735,6 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "normalization": {
                     "type": "string",
                     "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"],
-                    "default": None,
                     "description": "Normalization form (default: policy-specific)",
                 },
             },
@@ -24110,106 +25047,134 @@ MAX_TEXT_LENGTH = 100_000
 MAX_EXPRESSION_LENGTH = 10_000
 MAX_LIST_ITEMS = 10_000
 MAX_REGEX_SAMPLES = 100
+REGEX_TIMEOUT_SECONDS = 5
+MAX_CONCURRENT_SPAWNED = 4
+
+# Module-level semaphore that caps how many worker processes can be in flight
+# at once. multiprocessing.spawn is ~150-300 ms per call, and unbounded
+# concurrent spawns can exhaust file descriptors and CPU. Acquire before any
+# Process() is created in validate_regex and math_eval (via evaluate_with_timeout).
+_SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(MAX_CONCURRENT_SPAWNED)
+
+PHYSICAL_CONSTANTS = {
+    "na": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
+    "avogadro": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
+    "avogadros": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
+    "r": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
+    "gasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
+    "idealgasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
+    "h": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
+    "planck": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
+    "planckconstant": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
+    "k": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
+    "boltzmann": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
+    "boltzmannconstant": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
+    "c": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+    "c0": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+    "speedoflight": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+    "speedoflightvacuum": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
+    "elementarycharge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
+    "echarge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
+    "f": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
+    "faraday": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
+    "faradayconstant": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
+    "u": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
+    "amu": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
+    "atomicmassunit": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
+    "epsilon0": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
+    "vacuumpermittivity": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
+    "mu0": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
+    "vacuumpermeability": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
+    "g": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
+    "standardgravity": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
+    "G": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
+    "gravitationalconstant": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
+    "rydberg": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
+    "rydbergconstant": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
+    "stefan": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
+    "stefanboltzmann": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
+    "planckbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
+    "hbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
+    "reducedplanck": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
+    "me": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
+    "electronmass": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
+    "mp": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
+    "protonmass": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
+    "mn": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
+    "neutronmass": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
+    "re": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
+    "electronradius": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
+    "alpha": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
+    "finestructure": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
+    "wien": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
+    "wienconstant": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
+}
+
+
+def _regex_test_worker(
+    pattern: str,
+    samples: list[str],
+    flags: list[str] | None,
+    ignore_case: bool,
+    multiline: bool,
+    dotall: bool,
+    ascii: bool,
+    result_queue: multiprocessing.Queue,
+) -> None:
+    """Run regex test in a child process. Must be top-level for pickling."""
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+    except (ImportError, ValueError, OSError):
+        pass
+    try:
+        result = _regex_test(pattern, samples, flags, ignore_case, multiline, dotall, ascii)
+        result_queue.put(("ok", result))
+    except Exception as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
 
 
 def _sanitize_error(message: str) -> str:
-    """Remove non-ASCII characters from error messages."""
-    return message.encode("ascii", "replace").decode("ascii")
+    """Sanitize error messages by removing non-ASCII, file paths, and Python internals.
+
+    Patterns are anchored to traceback-like contexts so unrelated prose
+    containing the substrings "line 5" or "File" is preserved. Input is
+    also capped at 8192 bytes to bound the cost of regex substitution on
+    very large error messages.
+    """
+    text = message[:8192]
+    text = text.encode("ascii", "replace").decode("ascii")
+    text = re.sub(r'File\s+["\'][^"\']*["\'],\s*line\s+\d+', 'File "<redacted>", line <redacted>', text)
+    text = re.sub(r'(?:in\s+)<[^>]+>', 'in <module>', text)
+    text = re.sub(r'[A-Za-z_][\w.]*\s*=\s*["\'][^"\']*["\']', '<var>=<redacted>', text)
+    return text
 
 
 def _get_tool_tier(name: str) -> int:
     """Get the tier for a tool (1, 2, or 3)."""
-    from schemas import TOOL_SCHEMAS
     return TOOL_SCHEMAS.get(name, {}).get("tier", 3)
 
 
-def apply_detail_defaults(
-    detail: str,
-    min_items: int,
-    default_items: int,
-    max_items: int,
-) -> tuple[int, str]:
-    """Apply detail level to determine effective limit.
+def _require_str(value: Any, name: str, tool: str) -> dict | None:
+    """Validate that ``value`` is a non-overlong string.
 
-    Args:
-        detail: Detail level ("summary", "normal", or "full")
-        min_items: Minimum allowed items
-        default_items: Default items for "normal" detail
-        max_items: Maximum allowed items
-
-    Returns:
-        Tuple of (effective_limit, detail_used)
+    Returns a standard error envelope on failure, or None if valid.
+    Used at the top of every public tool that takes a string to convert
+    a TypeError from ``len()`` into a clean ``invalid_arguments`` response.
     """
-    if detail == "summary":
-        effective = min_items
-        detail_used = "summary"
-    elif detail == "full":
-        effective = max_items
-        detail_used = "full"
-    else:
-        effective = default_items
-        detail_used = "normal"
-
-    if effective > max_items:
-        effective = max_items
-        detail_used = "max"
-    elif effective < min_items:
-        effective = min_items
-        detail_used = "min"
-
-    return effective, detail_used
-
-
-def truncate_list(
-    items: list,
-    max_items: int,
-    detail: str,
-) -> tuple[list, list[str]]:
-    """Truncate a list based on detail level.
-
-    Args:
-        items: List to truncate
-        max_items: Maximum items to return
-        detail: Detail level
-
-    Returns:
-        Tuple of (truncated_list, limits_applied_msgs)
-    """
-    limits_applied: list[str] = []
-    effective_limit, detail_used = apply_detail_defaults(detail, 1, 100, max_items)
-
-    if len(items) > effective_limit:
-        truncated = items[:effective_limit]
-        limits_applied.append(f"max_items={effective_limit} (detail={detail_used})")
-        return truncated, limits_applied
-
-    return items, limits_applied
-
-
-def truncate_text(
-    text: str,
-    max_chars: int,
-    detail: str,
-) -> tuple[str, list[str]]:
-    """Truncate text based on detail level.
-
-    Args:
-        text: Text to truncate
-        max_chars: Maximum characters to return
-        detail: Detail level
-
-    Returns:
-        Tuple of (truncated_text, limits_applied_msgs)
-    """
-    limits_applied: list[str] = []
-    effective_limit, detail_used = apply_detail_defaults(detail, 100, 1000, max_chars)
-
-    if len(text) > effective_limit:
-        truncated = text[:effective_limit]
-        limits_applied.append(f"max_chars={effective_limit} (detail={detail_used})")
-        return truncated, limits_applied
-
-    return text, limits_applied
+    if not isinstance(value, str):
+        return _error_response(
+            "invalid_arguments",
+            f"{name} must be a string, got {type(value).__name__}",
+            tool=tool,
+        )
+    if len(value) > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"{name} length {len(value)} exceeds {MAX_TEXT_LENGTH}",
+            tool=tool,
+        )
+    return None
 
 
 def _error_response(
@@ -24238,14 +25203,21 @@ def _success_response(
     machine_code: str | None = None,
     recommended_next_tool: str | list[str] | None = None,
 ) -> dict:
-    """Create a standardized success envelope."""
+    """Create a standardized success envelope.
+
+    The ``warnings`` and ``limits_applied`` keys are omitted when empty
+    to keep successful responses compact. Callers that explicitly pass
+    a list (even empty) get the key; ``None`` or omitted args omit it.
+    """
     envelope: dict[str, Any] = {
         "ok": True,
         "tool": tool,
         "result": result,
-        "warnings": warnings or [],
-        "limits_applied": limits_applied or [],
     }
+    if warnings is not None:
+        envelope["warnings"] = warnings
+    if limits_applied is not None:
+        envelope["limits_applied"] = limits_applied
     if findings:
         envelope["findings"] = findings
     if machine_code is not None:
@@ -24268,19 +25240,25 @@ def math_eval(expression: str) -> dict:
         return _error_response("invalid_arguments", f"expression must be a string, got {type(expression).__name__}", tool="math_eval")
     if len(expression) > MAX_EXPRESSION_LENGTH:
         return _error_response("input_too_large", f"Expression exceeds maximum length of {MAX_EXPRESSION_LENGTH}", tool="math_eval")
+    _SPAWN_SEMAPHORE.acquire()
     try:
         result = evaluate_with_timeout(expression, timeout=5.0)
         if hasattr(result, 'value'):
             result_val = result.value
         else:
             result_val = result
-        return _success_response({"result": str(result_val), "type": type(result_val).__name__}, tool="math_eval")
+        return _success_response(
+            {"value": str(result_val), "type": type(result_val).__name__},
+            tool="math_eval",
+        )
     except TimeoutError:
         return _error_response("timeout", "Expression evaluation timed out", ["Try a simpler expression"], tool="math_eval")
     except EvaluationError as e:
         return _error_response("evaluation_error", str(e), ["Check expression syntax"], tool="math_eval")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="math_eval")
+    finally:
+        _SPAWN_SEMAPHORE.release()
 
 
 def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
@@ -24294,12 +25272,35 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
     Returns:
         Success response with conversion result.
     """
+    import math
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return _error_response(
+            "invalid_arguments",
+            f"value must be a finite number, got {type(value).__name__}",
+            tool="unit_convert",
+        )
+    value = float(value)
+    if not math.isfinite(value):
+        return _error_response(
+            "invalid_arguments",
+            f"Value must be a finite number, got {value}",
+            tool="unit_convert",
+        )
     try:
 
         if not is_unit(from_unit):
             return _error_response("invalid_arguments", f"Unknown unit: {from_unit}", tool="unit_convert")
         if not is_unit(to_unit):
             return _error_response("invalid_arguments", f"Unknown unit: {to_unit}", tool="unit_convert")
+
+        if get_unit_category(from_unit) == "temperature" and get_unit_category(to_unit) == "temperature":
+            result = convert_temperature(value, from_unit, to_unit)
+            return _success_response({
+                "value": result,
+                "from_unit": from_unit,
+                "to_unit": to_unit,
+                "factor": None,
+            }, tool="unit_convert")
 
         factor = get_conversion_factor(from_unit, to_unit)
         result = value * factor
@@ -24366,69 +25367,15 @@ def constant_lookup(name: str) -> dict:
         if len(name) > MAX_TEXT_LENGTH:
             return _error_response("input_too_large", f"Name length {len(name)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}", tool="constant_lookup")
 
-        constants = {
-            "na": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-            "avogadro": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-            "avogadros": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-            "r": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-            "gasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-            "idealgasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-            "h": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-            "planck": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-            "planckconstant": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-            "k": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-            "boltzmann": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-            "boltzmannconstant": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-            "c": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-            "c0": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-            "speedoflight": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-            "speedoflightvacuum": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-            "elementarycharge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
-            "echarge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
-            "f": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-            "faraday": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-            "faradayconstant": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-            "u": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-            "amu": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-            "atomicmassunit": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-            "epsilon0": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
-            "vacuumpermittivity": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
-            "mu0": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
-            "vacuumpermeability": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
-            "g": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
-            "standardgravity": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
-            "G": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
-            "gravitationalconstant": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
-            "rydberg": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
-            "rydbergconstant": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
-            "stefan": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
-            "stefanboltzmann": {"value": 5.670374419e-8, "symbol": "σ-", "name": "Stefan-Boltzmann constant"},
-            "planckbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-            "hbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-            "reducedplanck": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-            "me": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
-            "electronmass": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
-            "mp": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
-            "protonmass": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
-            "mn": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
-            "neutronmass": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
-            "re": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
-            "electronradius": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
-            "alpha": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
-            "finestructure": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
-            "wien": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
-            "wienconstant": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
-        }
-
         key = name.lower()
-        if key not in constants:
+        if key not in PHYSICAL_CONSTANTS:
             return _error_response("invalid_arguments", f"Unknown constant: {name}", tool="constant_lookup")
 
         return _success_response({
             "name": name,
-            "value": constants[key]["value"],
-            "symbol": constants[key]["symbol"],
-            "display_name": constants[key]["name"],
+            "value": PHYSICAL_CONSTANTS[key]["value"],
+            "symbol": PHYSICAL_CONSTANTS[key]["symbol"],
+            "display_name": PHYSICAL_CONSTANTS[key]["name"],
         }, tool="constant_lookup")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="constant_lookup")
@@ -24444,13 +25391,8 @@ def text_measure(text: str, detail: str = "normal") -> dict:
     Returns:
         Success envelope with metrics, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_measure",
-        )
+    if (err := _require_str(text, "text", "text_measure")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -24516,12 +25458,10 @@ def _mcp_text_equal(
             tool="text_equal",
         )
 
-    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
-            tool="text_equal",
-        )
+    if (err := _require_str(a, "a", "text_equal")) is not None:
+        return err
+    if (err := _require_str(b, "b", "text_equal")) is not None:
+        return err
 
     try:
         result = _text_equal(a, b, normalization, casefold, trim,
@@ -24552,11 +25492,22 @@ def text_diff_explain(
     Returns:
         Success envelope with diff explanation, or error envelope.
     """
-    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
+    if (err := _require_str(a, "a", "text_diff_explain")) is not None:
+        return err
+    if (err := _require_str(b, "b", "text_diff_explain")) is not None:
+        return err
+
+    MAX_DIFFS = 10_000
+    if max_diffs < 0:
         return _error_response(
-            "input_too_large",
-            f"Input exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            "invalid_arguments",
+            f"max_diffs must be non-negative, got {max_diffs}",
+            tool="text_diff_explain",
+        )
+    if max_diffs > MAX_DIFFS:
+        return _error_response(
+            "invalid_arguments",
+            f"max_diffs {max_diffs} exceeds {MAX_DIFFS}",
             tool="text_diff_explain",
         )
 
@@ -24597,13 +25548,8 @@ def text_inspect(
     Returns:
         Success envelope with inspection result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_inspect",
-        )
+    if (err := _require_str(text, "text", "text_inspect")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -24684,21 +25630,45 @@ def text_count(
     Returns:
         Success envelope with count result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_count",
-        )
+    if (err := _require_str(text, "text", "text_count")) is not None:
+        return err
 
-    if target is not None and len(target) != 1 and count_mode != "substring":
-        return _error_response(
-            "invalid_arguments",
-            "target must be a single character",
-            ["Provide a single character or None for frequency table"],
-            tool="text_count",
-        )
+    MAX_TARGET_LENGTH = 1000
+    if target is not None:
+        if not isinstance(target, str):
+            return _error_response(
+                "invalid_arguments",
+                f"target must be a string, got {type(target).__name__}",
+                tool="text_count",
+            )
+        if len(target) > MAX_TARGET_LENGTH:
+            return _error_response(
+                "input_too_large",
+                f"target length {len(target)} exceeds {MAX_TARGET_LENGTH}",
+                tool="text_count",
+            )
+        if count_mode != "substring":
+            if count_mode == "byte" and len(target.encode("utf-8")) != 1:
+                return _error_response(
+                    "invalid_arguments",
+                    "target must be a single byte for count_mode='byte'",
+                    ["Provide a single-byte target"],
+                    tool="text_count",
+                )
+            elif count_mode == "grapheme" and count_graphemes(target) != 1:
+                return _error_response(
+                    "invalid_arguments",
+                    "target must be a single grapheme for count_mode='grapheme'",
+                    ["Provide a single-grapheme target"],
+                    tool="text_count",
+                )
+            elif count_mode == "codepoint" and len(target) != 1:
+                return _error_response(
+                    "invalid_arguments",
+                    "target must be a single codepoint for count_mode='codepoint'",
+                    ["Provide a single-codepoint target"],
+                    tool="text_count",
+                )
 
     valid_normalizations = {"raw", "NFC", "NFKC"}
     if normalization not in valid_normalizations:
@@ -24735,13 +25705,8 @@ def validate_brackets(text: str, pairs: dict[str, str] | None = None) -> dict:
     Returns:
         Success envelope with bracket check result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="validate_brackets",
-        )
+    if (err := _require_str(text, "text", "validate_brackets")) is not None:
+        return err
 
     if pairs is not None and not isinstance(pairs, dict):
         return _error_response(
@@ -24766,13 +25731,8 @@ def validate_json(text: str) -> dict:
     Returns:
         Success envelope with validation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="validate_json",
-        )
+    if (err := _require_str(text, "text", "validate_json")) is not None:
+        return err
 
     try:
         result = _validate_json(text)
@@ -24811,13 +25771,8 @@ def validate_toml(text: str, detail: str = "normal") -> dict:
     Returns:
         Success envelope with validation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="validate_toml",
-        )
+    if (err := _require_str(text, "text", "validate_toml")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -24871,11 +25826,22 @@ def json_compare(
     Returns:
         Success envelope with comparison result, or error envelope.
     """
-    if len(a) > MAX_TEXT_LENGTH or len(b) > MAX_TEXT_LENGTH:
+    if (err := _require_str(a, "a", "json_compare")) is not None:
+        return err
+    if (err := _require_str(b, "b", "json_compare")) is not None:
+        return err
+
+    MAX_DIFFS = 10_000
+    if max_diffs < 0:
         return _error_response(
-            "input_too_large",
-            f"Input exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            "invalid_arguments",
+            f"max_diffs must be non-negative, got {max_diffs}",
+            tool="json_compare",
+        )
+    if max_diffs > MAX_DIFFS:
+        return _error_response(
+            "invalid_arguments",
+            f"max_diffs {max_diffs} exceeds {MAX_DIFFS}",
             tool="json_compare",
         )
 
@@ -24955,11 +25921,83 @@ def validate_regex(
             tool="validate_regex",
         )
 
+    if not isinstance(pattern, str):
+        return _error_response(
+            "invalid_arguments",
+            f"pattern must be a string, got {type(pattern).__name__}",
+            tool="validate_regex",
+        )
+    if not isinstance(samples, list):
+        return _error_response(
+            "invalid_arguments",
+            f"samples must be a list, got {type(samples).__name__}",
+            tool="validate_regex",
+        )
+
+    safety = _regex_safety_check(pattern)
+    if safety.get("risk") in ("high", "medium"):
+        return _error_response(
+            "unsafe_pattern",
+            f"Pattern has {safety.get('risk', 'unknown')} risk of catastrophic backtracking",
+            [
+                "Try a simpler pattern or break it into smaller parts",
+                "Use the regex_safety_check tool for detailed analysis and suggestions",
+            ],
+            tool="validate_regex",
+        )
+
+    ctx = multiprocessing.get_context("spawn")
+    queue: multiprocessing.Queue = ctx.Queue()
+    proc: multiprocessing.Process | None = None
     try:
-        result = _regex_test(pattern, samples, flags, ignore_case, multiline, dotall, ascii)
-        return _success_response(result, tool="validate_regex")
+        _SPAWN_SEMAPHORE.acquire()
+        try:
+            proc = ctx.Process(
+                target=_regex_test_worker,
+                args=(pattern, samples, flags, ignore_case, multiline, dotall, ascii, queue),
+            )
+            proc.start()
+        except BaseException:
+            _SPAWN_SEMAPHORE.release()
+            raise
+
+        try:
+            status, value = queue.get(timeout=REGEX_TIMEOUT_SECONDS)
+        except Exception:
+            return _error_response(
+                "timeout",
+                f"Regex evaluation timed out after {REGEX_TIMEOUT_SECONDS} seconds",
+                ["Try a simpler pattern or fewer samples"],
+                tool="validate_regex",
+            )
+        finally:
+            try:
+                queue.close()
+            except Exception:
+                pass
+            try:
+                queue.join_thread()
+            except Exception:
+                pass
+            if proc is not None:
+                if proc.is_alive():
+                    proc.terminate()
+                    proc.join(timeout=2)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=1)
+                try:
+                    proc.close()
+                except Exception:
+                    pass
+
+        if status == "error":
+            return _error_response("internal_error", value, tool="validate_regex")
+        return _success_response(value, tool="validate_regex")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="validate_regex")
+    finally:
+        _SPAWN_SEMAPHORE.release()
 
 
 def json_extract(
@@ -24979,11 +26017,25 @@ def json_extract(
     Returns:
         Success envelope with extraction result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
+    if (err := _require_str(text, "text", "json_extract")) is not None:
+        return err
+
+    if not isinstance(max_output_chars, int) or isinstance(max_output_chars, bool):
         return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            "invalid_arguments",
+            f"max_output_chars must be a non-negative integer, got {type(max_output_chars).__name__}",
+            tool="json_extract",
+        )
+    if max_output_chars < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"max_output_chars must be non-negative, got {max_output_chars}",
+            tool="json_extract",
+        )
+    if max_output_chars > MAX_TEXT_LENGTH:
+        return _error_response(
+            "invalid_arguments",
+            f"max_output_chars {max_output_chars} exceeds {MAX_TEXT_LENGTH}",
             tool="json_extract",
         )
 
@@ -25025,13 +26077,8 @@ def json_shape(text: str, max_depth: int = 4, max_keys: int = 100, max_array_ite
     Returns:
         Success envelope with shape result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="json_shape",
-        )
+    if (err := _require_str(text, "text", "json_shape")) is not None:
+        return err
 
     if max_depth < 1:
         return _error_response(
@@ -25054,6 +26101,28 @@ def json_shape(text: str, max_depth: int = 4, max_keys: int = 100, max_array_ite
             "invalid_arguments",
             f"max_array_items must be at least 1, got {max_array_items}",
             ["Set max_array_items to 1 or higher"],
+            tool="json_shape",
+        )
+
+    MAX_SHAPE_DEPTH = 32
+    MAX_SHAPE_KEYS = 10_000
+    MAX_SHAPE_ARRAY_ITEMS = 10_000
+    if max_depth > MAX_SHAPE_DEPTH:
+        return _error_response(
+            "invalid_arguments",
+            f"max_depth {max_depth} exceeds {MAX_SHAPE_DEPTH}",
+            tool="json_shape",
+        )
+    if max_keys > MAX_SHAPE_KEYS:
+        return _error_response(
+            "invalid_arguments",
+            f"max_keys {max_keys} exceeds {MAX_SHAPE_KEYS}",
+            tool="json_shape",
+        )
+    if max_array_items > MAX_SHAPE_ARRAY_ITEMS:
+        return _error_response(
+            "invalid_arguments",
+            f"max_array_items {max_array_items} exceeds {MAX_SHAPE_ARRAY_ITEMS}",
             tool="json_shape",
         )
 
@@ -25114,6 +26183,18 @@ def regex_finditer(
             tool="regex_finditer",
         )
 
+    safety = _regex_safety_check(pattern)
+    if safety.get("risk") in ("high", "medium"):
+        return _error_response(
+            "unsafe_pattern",
+            f"Pattern has {safety.get('risk', 'unknown')} risk of catastrophic backtracking",
+            [
+                "Try a simpler pattern or break it into smaller parts",
+                "Use the regex_safety_check tool for detailed analysis and suggestions",
+            ],
+            tool="regex_finditer",
+        )
+
     try:
         result = _regex_finditer(pattern, text, flags, max_matches, include_line_column, include_groups)
         return _success_response(result, tool="regex_finditer")
@@ -25170,11 +26251,28 @@ def validate_schema_light(text: str, schema: dict, detail: str = "normal") -> di
     Returns:
         Success envelope with validation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
+    if (err := _require_str(text, "text", "validate_schema_light")) is not None:
+        return err
+
+    MAX_SCHEMA_LENGTH = 100_000
+    if not isinstance(schema, dict):
+        return _error_response(
+            "invalid_arguments",
+            f"schema must be a dict, got {type(schema).__name__}",
+            tool="validate_schema_light",
+        )
+    try:
+        schema_size = len(json.dumps(schema))
+    except (TypeError, ValueError) as e:
+        return _error_response(
+            "invalid_arguments",
+            f"schema is not JSON-serializable: {e}",
+            tool="validate_schema_light",
+        )
+    if schema_size > MAX_SCHEMA_LENGTH:
         return _error_response(
             "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            f"schema length {schema_size} exceeds {MAX_SCHEMA_LENGTH}",
             tool="validate_schema_light",
         )
 
@@ -25245,6 +26343,15 @@ def _mcp_list_compare(
             "input_too_large",
             f"List length exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
             [f"Maximum {MAX_LIST_ITEMS} items per list"],
+            tool="list_compare",
+        )
+
+    total_chars = sum(len(s) for s in a) + sum(len(s) for s in b)
+    if total_chars > MAX_TEXT_LENGTH * 2:
+        return _error_response(
+            "input_too_large",
+            f"Total string length {total_chars} exceeds maximum",
+            [f"Maximum combined string length is {MAX_TEXT_LENGTH * 2} characters"],
             tool="list_compare",
         )
 
@@ -25382,13 +26489,8 @@ def text_truncate(text: str, max_graphemes: int) -> dict:
     Returns:
         Success envelope with truncation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_truncate",
-        )
+    if (err := _require_str(text, "text", "text_truncate")) is not None:
+        return err
 
     if max_graphemes < 0:
         return _error_response(
@@ -25430,13 +26532,8 @@ def _mcp_text_transform(text: str, operations: list[str], detail: str = "normal"
     Returns:
         Success envelope with transformation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_transform",
-        )
+    if (err := _require_str(text, "text", "text_transform")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -25490,11 +26587,19 @@ def _mcp_text_position(
     Returns:
         Success envelope with position result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
+    if (err := _require_str(text, "text", "text_position")) is not None:
+        return err
+
+    if line_base not in (0, 1):
         return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            "invalid_arguments",
+            f"line_base must be 0 or 1, got {line_base}",
+            tool="text_position",
+        )
+    if column_base not in (0, 1):
+        return _error_response(
+            "invalid_arguments",
+            f"column_base must be 0 or 1, got {column_base}",
             tool="text_position",
         )
 
@@ -25553,13 +26658,8 @@ def _mcp_escape_text(text: str, mode: str, detail: str = "normal") -> dict:
     Returns:
         Success envelope with escape result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="escape_text",
-        )
+    if (err := _require_str(text, "text", "escape_text")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -25616,13 +26716,8 @@ def _mcp_unescape_text(text: str, mode: str, detail: str = "normal") -> dict:
     Returns:
         Success envelope with unescape result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="unescape_text",
-        )
+    if (err := _require_str(text, "text", "unescape_text")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -25680,13 +26775,8 @@ def _mcp_text_hash(
     Returns:
         Success envelope with hash result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_hash",
-        )
+    if (err := _require_str(text, "text", "text_hash")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -25731,13 +26821,8 @@ def path_analyze_mcp(path: str, style: str = "auto", detail: str = "normal") -> 
     Returns:
         Success envelope with path analysis result, or error envelope.
     """
-    if len(path) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Path length {len(path)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_analyze",
-        )
+    if (err := _require_str(path, "path", "path_analyze")) is not None:
+        return err
 
     valid_styles = {"auto", "posix", "windows"}
     if style not in valid_styles:
@@ -25815,13 +26900,8 @@ def _mcp_path_normalize(
     Returns:
         Success envelope with path normalization result, or error envelope.
     """
-    if len(path) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Path length {len(path)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_normalize",
-        )
+    if (err := _require_str(path, "path", "path_normalize")) is not None:
+        return err
 
     valid_platforms = {"posix", "windows"}
     if platform not in valid_platforms:
@@ -25860,21 +26940,10 @@ def path_compare_mcp(
     Returns:
         Success envelope with comparison result, or error envelope.
     """
-    if len(left) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Left path length {len(left)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_compare",
-        )
-
-    if len(right) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Right path length {len(right)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_compare",
-        )
+    if (err := _require_str(left, "left", "path_compare")) is not None:
+        return err
+    if (err := _require_str(right, "right", "path_compare")) is not None:
+        return err
 
     valid_platforms = {"posix", "windows"}
     if platform not in valid_platforms:
@@ -25911,21 +26980,10 @@ def path_scope_check_mcp(
     Returns:
         Success envelope with scope check result, or error envelope.
     """
-    if len(root) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Root path length {len(root)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_scope_check",
-        )
-
-    if len(target) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Target path length {len(target)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="path_scope_check",
-        )
+    if (err := _require_str(root, "root", "path_scope_check")) is not None:
+        return err
+    if (err := _require_str(target, "target", "path_scope_check")) is not None:
+        return err
 
     valid_platforms = {"posix", "windows"}
     if platform not in valid_platforms:
@@ -25958,13 +27016,8 @@ def _mcp_identifier_analyze(
     Returns:
         Success envelope with analysis result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="identifier_analyze",
-        )
+    if (err := _require_str(text, "text", "identifier_analyze")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -26026,19 +27079,22 @@ def _mcp_text_window(
     Returns:
         Success envelope with text_window result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_window",
-        )
+    if (err := _require_str(text, "text", "text_window")) is not None:
+        return err
 
     if context_lines < 0:
         return _error_response(
             "invalid_arguments",
             f"context_lines must be non-negative, got {context_lines}",
             ["Set context_lines to 0 or higher"],
+            tool="text_window",
+        )
+
+    MAX_CONTEXT_LINES = 10_000
+    if context_lines > MAX_CONTEXT_LINES:
+        return _error_response(
+            "invalid_arguments",
+            f"context_lines {context_lines} exceeds {MAX_CONTEXT_LINES}",
             tool="text_window",
         )
 
@@ -26082,13 +27138,8 @@ def json_canonicalize(
     Returns:
         Success envelope with canonicalization result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="json_canonicalize",
-        )
+    if (err := _require_str(text, "text", "json_canonicalize")) is not None:
+        return err
 
     if indent is not None and (indent < 0 or indent > 100):
         return _error_response(
@@ -26124,13 +27175,8 @@ def json_query(text: str, pointer: str = "") -> dict:
     Returns:
         Success envelope with query result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="json_query",
-        )
+    if (err := _require_str(text, "text", "json_query")) is not None:
+        return err
 
     try:
         result = _json_query(text, pointer)
@@ -26165,19 +27211,10 @@ def glob_match_mcp(
             tool="glob_match",
         )
 
-    if len(pattern) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
-            tool="glob_match",
-        )
-
-    if len(path) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
-            tool="glob_match",
-        )
+    if (err := _require_str(pattern, "pattern", "glob_match")) is not None:
+        return err
+    if (err := _require_str(path, "path", "glob_match")) is not None:
+        return err
 
     try:
         result = _glob_match(pattern, path, platform, case_sensitive)
@@ -26205,13 +27242,8 @@ def text_fingerprint_mcp(
     Returns:
         Success envelope with fingerprint result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_fingerprint",
-        )
+    if (err := _require_str(text, "text", "text_fingerprint")) is not None:
+        return err
 
     valid_unicode = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
     if unicode not in valid_unicode:
@@ -26343,13 +27375,8 @@ def markdown_structure_mcp(
     Returns:
         Success envelope with Markdown structure, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="markdown_structure",
-        )
+    if (err := _require_str(text, "text", "markdown_structure")) is not None:
+        return err
 
     try:
         result = _markdown_structure(
@@ -26379,13 +27406,8 @@ def code_fence_extract_mcp(
     Returns:
         Success envelope with extracted code blocks, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="code_fence_extract",
-        )
+    if (err := _require_str(text, "text", "code_fence_extract")) is not None:
+        return err
 
     try:
         result = _code_fence_extract(
@@ -26422,19 +27444,10 @@ def version_compare_mcp(
             tool="version_compare",
         )
 
-    if len(a) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
-            tool="version_compare",
-        )
-
-    if len(b) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input exceeds maximum length of {MAX_TEXT_LENGTH}",
-            tool="version_compare",
-        )
+    if (err := _require_str(a, "a", "version_compare")) is not None:
+        return err
+    if (err := _require_str(b, "b", "version_compare")) is not None:
+        return err
 
     try:
         result = _version_compare(a, b, scheme)
@@ -26458,13 +27471,8 @@ def toml_shape_mcp(
     Returns:
         Success envelope with shape result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="toml_shape",
-        )
+    if (err := _require_str(text, "text", "toml_shape")) is not None:
+        return err
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -26612,13 +27620,8 @@ def _mcp_text_replace_check(
     Returns:
         Success envelope with replace check result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="text_replace_check",
-        )
+    if (err := _require_str(text, "text", "text_replace_check")) is not None:
+        return err
 
     valid_modes = {"exact", "nfc", "nfkc", "casefold", "whitespace_collapse"}
     if mode not in valid_modes:
@@ -26642,6 +27645,14 @@ def _mcp_text_replace_check(
         return _error_response(
             "invalid_arguments",
             f"max_preview_chars must be non-negative, got {max_preview_chars}",
+            tool="text_replace_check",
+        )
+
+    MAX_PREVIEW_CHARS = 100_000
+    if max_preview_chars > MAX_PREVIEW_CHARS:
+        return _error_response(
+            "invalid_arguments",
+            f"max_preview_chars {max_preview_chars} exceeds {MAX_PREVIEW_CHARS}",
             tool="text_replace_check",
         )
 
@@ -26678,14 +27689,33 @@ def _mcp_line_range_extract(
     Returns:
         Success envelope with line range extract result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
+    if (err := _require_str(text, "text", "line_range_extract")) is not None:
+        return err
+
+    if not isinstance(start_line, int) or isinstance(start_line, bool):
         return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
+            "invalid_arguments",
+            f"start_line must be an int, got {type(start_line).__name__}",
             tool="line_range_extract",
         )
-
+    if not isinstance(end_line, int) or isinstance(end_line, bool):
+        return _error_response(
+            "invalid_arguments",
+            f"end_line must be an int, got {type(end_line).__name__}",
+            tool="line_range_extract",
+        )
+    if start_line < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"start_line must be non-negative, got {start_line}",
+            tool="line_range_extract",
+        )
+    if end_line < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"end_line must be non-negative, got {end_line}",
+            tool="line_range_extract",
+        )
     if start_line > end_line:
         return _error_response(
             "invalid_arguments",
@@ -26773,13 +27803,8 @@ def _mcp_shell_split(
     Returns:
         Success envelope with parsed argv and features, or error envelope.
     """
-    if len(command) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Command length {len(command)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="shell_split",
-        )
+    if (err := _require_str(command, "command", "shell_split")) is not None:
+        return err
 
     valid_shells = {"posix"}
     if shell not in valid_shells:
@@ -26862,6 +27887,21 @@ def shell_argv_compare(
             tool="argv_compare",
         )
 
+    # XOR validation: each side must be either a *_command OR an *_argv,
+    # not both (and not neither).
+    if (left_command is not None) == (left_argv is not None):
+        return _error_response(
+            "invalid_arguments",
+            "Provide exactly one of left_command or left_argv, not both",
+            tool="argv_compare",
+        )
+    if (right_command is not None) == (right_argv is not None):
+        return _error_response(
+            "invalid_arguments",
+            "Provide exactly one of right_command or right_argv, not both",
+            tool="argv_compare",
+        )
+
     if left_command is not None and len(left_command) > MAX_TEXT_LENGTH:
         return _error_response(
             "input_too_large",
@@ -26924,13 +27964,8 @@ def dotenv_validate_mcp(
     Returns:
         Success envelope with validation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="dotenv_validate",
-        )
+    if (err := _require_str(text, "text", "dotenv_validate")) is not None:
+        return err
 
     valid_policies = {"warn", "error", "allow"}
     if duplicate_policy not in valid_policies:
@@ -26945,6 +27980,38 @@ def dotenv_validate_mcp(
         return _error_response(
             "input_too_large",
             f"key_pattern length {len(key_pattern)} exceeds 1000",
+            tool="dotenv_validate",
+        )
+
+    try:
+        pattern_safety = _regex_safety_check(key_pattern)
+    except re.error as e:
+        return _error_response(
+            "invalid_arguments",
+            f"key_pattern is not a valid regular expression: {e}",
+            ["Fix the regex syntax in key_pattern"],
+            tool="dotenv_validate",
+        )
+    except ValueError as e:
+        return _error_response(
+            "invalid_arguments",
+            f"key_pattern safety check failed: {e}",
+            tool="dotenv_validate",
+        )
+    # Other exception types (TypeError, AttributeError, etc.) propagate as
+    # internal errors so they are not silently swallowed.
+    if not pattern_safety.get("valid_pattern", True):
+        return _error_response(
+            "invalid_arguments",
+            f"key_pattern is not a valid regular expression: {pattern_safety.get('error', 'unknown')}",
+            ["Fix the regex syntax in key_pattern"],
+            tool="dotenv_validate",
+        )
+    if pattern_safety.get("risk") in ("high", "medium"):
+        return _error_response(
+            "unsafe_pattern",
+            f"key_pattern has {pattern_safety.get('risk', 'unknown')} risk of catastrophic backtracking",
+            ["Use a simpler regex pattern for key_pattern"],
             tool="dotenv_validate",
         )
 
@@ -26975,13 +28042,8 @@ def ini_validate_mcp(
     Returns:
         Success envelope with validation result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="ini_validate",
-        )
+    if (err := _require_str(text, "text", "ini_validate")) is not None:
+        return err
 
     valid_policies = {"warn", "error", "allow"}
     if duplicate_policy not in valid_policies:
@@ -27091,13 +28153,8 @@ def unicode_policy_check_mcp(
     Returns:
         Success envelope with policy check result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="unicode_policy_check",
-        )
+    if (err := _require_str(text, "text", "unicode_policy_check")) is not None:
+        return err
 
     valid_policies = {
         "identifier_strict", "filename_safe", "source_code",
@@ -27144,13 +28201,8 @@ def canonicalize_text_mcp(
     Returns:
         Success envelope with canonicalization result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="canonicalize_text",
-        )
+    if (err := _require_str(text, "text", "canonicalize_text")) is not None:
+        return err
 
     valid_profiles = {
         "source_file_identity", "identifier_compare", "human_label_compare",
@@ -27318,10 +28370,10 @@ def version_constraint_check_mcp(
             })
 
         machine_code: str | None = None
-        if result.get("findings"):
-            machine_code = "CONSTRAINT_NOTE"
-        elif not result.get("satisfies"):
+        if not result.get("satisfies"):
             machine_code = "CONSTRAINT_NOT_SATISFIED"
+        elif findings:
+            machine_code = "CONSTRAINT_NOTE"
 
         return _success_response(
             result,
@@ -27348,13 +28400,8 @@ def cargo_toml_inspect_mcp(
     Returns:
         Success envelope with Cargo.toml inspection result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="cargo_toml_inspect",
-        )
+    if (err := _require_str(text, "text", "cargo_toml_inspect")) is not None:
+        return err
 
     try:
         result = _cargo_toml_inspect(text, check_workspace, check_dependencies)
@@ -27420,13 +28467,8 @@ def prompt_input_inspect_mcp(
     Returns:
         Success envelope with inspection result, or error envelope.
     """
-    if len(text) > MAX_TEXT_LENGTH:
-        return _error_response(
-            "input_too_large",
-            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
-            [f"Maximum input length is {MAX_TEXT_LENGTH} characters"],
-            tool="prompt_input_inspect",
-        )
+    if (err := _require_str(text, "text", "prompt_input_inspect")) is not None:
+        return err
 
     valid_checks = {
         "unicode_hidden", "bidi", "html_comments", "markdown_links",
@@ -27540,6 +28582,8 @@ TOOL_HANDLERS: dict[str, Any] = {
 }
 
 MAX_REQUEST_BYTES = 1_000_000
+MAX_OUTPUT_BYTES = 1_000_000
+MAX_REQUESTS_PER_SECOND = 10
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:
@@ -27640,6 +28684,49 @@ def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
     return None
 
 
+def _validate_arguments_schema(name: str, arguments: dict[str, Any]) -> str | None:
+    """Validate arguments against the tool's inputSchema from TOOL_SCHEMAS.
+
+    Returns None if valid, or an error message string if invalid.
+    """
+    schema = TOOL_SCHEMAS.get(name, {}).get("inputSchema")
+    if not schema:
+        return None
+
+    props = schema.get("properties", {})
+    required = schema.get("required", [])
+
+    for field in required:
+        if field not in arguments:
+            return f"Missing required argument: {field}"
+
+    for key, value in arguments.items():
+        if key not in props:
+            continue
+        prop = props[key]
+        expected_type = prop.get("type")
+        if expected_type is None:
+            continue
+
+        type_map = {
+            "string": str,
+            "number": (int, float),
+            "integer": int,
+            "boolean": bool,
+            "array": list,
+            "object": dict,
+        }
+        python_type = type_map.get(expected_type)
+        if python_type is not None and not isinstance(value, python_type):
+            return f"Argument '{key}' must be {expected_type}, got {type(value).__name__}"
+
+        enum_values = prop.get("enum")
+        if enum_values is not None and value not in enum_values:
+            return f"Argument '{key}' must be one of: {', '.join(str(v) for v in enum_values)}"
+
+    return None
+
+
 def _handle_call_tool(request: dict) -> dict:
     """Handle a tools/call MCP request."""
     params = request.get("params", {})
@@ -27648,6 +28735,8 @@ def _handle_call_tool(request: dict) -> dict:
 
     name = params.get("name", "")
     arguments = params.get("arguments", {})
+    if not isinstance(name, str) or not name:
+        return _invalid_request(request.get("id"), "Invalid params: missing tool name")
     if not isinstance(arguments, dict):
         return _invalid_request(request.get("id"), "Invalid arguments: expected object")
 
@@ -27678,6 +28767,17 @@ def _handle_call_tool(request: dict) -> dict:
             },
         }
 
+    schema_error = _validate_arguments_schema(name, arguments)
+    if schema_error is not None:
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32602,
+                "message": f"Invalid arguments for tool '{name}': {schema_error}",
+            },
+        }
+
     try:
         result = handler(**arguments)
 
@@ -27693,6 +28793,29 @@ def _handle_call_tool(request: dict) -> dict:
                 },
             }
 
+        serialized = json.dumps(result)
+        if len(serialized.encode("utf-8")) > MAX_OUTPUT_BYTES:
+            truncated = {
+                "ok": False,
+                "tool": name,
+                "error_type": "output_too_large",
+                "error": f"Output exceeds {MAX_OUTPUT_BYTES} bytes and was truncated",
+                "hints": ["Try reducing input size or using a summary/detail option"],
+                "warnings": ["Output was truncated due to size limit"],
+            }
+            return {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(truncated),
+                        }
+                    ]
+                },
+            }
+
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
@@ -27700,14 +28823,14 @@ def _handle_call_tool(request: dict) -> dict:
                 "content": [
                     {
                         "type": "text",
-                        "text": json.dumps(result),
+                        "text": serialized,
                     }
                 ]
             },
         }
 
     except Exception as e:
-        message = str(e).replace('\n', ' ')[:200]
+        message = _sanitize_error(str(e))[:200]
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
@@ -27721,10 +28844,18 @@ def _handle_call_tool(request: dict) -> dict:
 def _handle_list_tools(request: dict) -> dict:
     """Handle a tools/list MCP request with optional filtering."""
     params = request.get("params", {})
+    request_id = request.get("id")
 
-    tier_filter: int | None = params.get("tier")
-    tags_filter: list[str] | None = params.get("tags")
-    names_filter: list[str] | None = params.get("names")
+    tier_filter = params.get("tier")
+    tags_filter = params.get("tags")
+    names_filter = params.get("names")
+
+    if tier_filter is not None and not isinstance(tier_filter, int):
+        return _invalid_request(request_id, "Invalid 'tier' parameter: expected integer")
+    if tags_filter is not None and not isinstance(tags_filter, list):
+        return _invalid_request(request_id, "Invalid 'tags' parameter: expected array")
+    if names_filter is not None and not isinstance(names_filter, list):
+        return _invalid_request(request_id, "Invalid 'names' parameter: expected array")
 
     tools = []
     for name, schema in TOOL_SCHEMAS.items():
@@ -27779,7 +28910,10 @@ def handle_request(request: Any) -> dict | None:
     if not isinstance(request, dict):
         return _invalid_request(None, "Invalid Request: expected JSON object")
 
-    method = request.get("method", "")
+    if "method" not in request:
+        return _invalid_request(request.get("id"), "Invalid Request: missing 'method'")
+
+    method = request["method"]
 
     if method == "tools/list":
         return _handle_list_tools(request)
@@ -27805,6 +28939,9 @@ def mcp_main() -> int:
 
     Reads JSON-RPC requests from stdin and writes responses to stdout.
     """
+    request_times: deque[float] = deque()
+    window = 1.0  # sliding window in seconds
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -27847,6 +28984,24 @@ def mcp_main() -> int:
             }
             print(json.dumps(response), flush=True)
             continue
+
+        now = time.monotonic()
+        while request_times and request_times[0] < now - window:
+            request_times.popleft()
+
+        if len(request_times) >= MAX_REQUESTS_PER_SECOND:
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id") if isinstance(request, dict) else None,
+                "error": {
+                    "code": -32600,
+                    "message": f"Rate limit exceeded: max {MAX_REQUESTS_PER_SECOND} requests per second",
+                },
+            }
+            print(json.dumps(response), flush=True)
+            continue
+
+        request_times.append(now)
 
         try:
             response = handle_request(request)
