@@ -87,7 +87,7 @@ _ANSI_ESCAPE_RE = re.compile(
 _ANSI_OSC_RE = re.compile(
     r"\x1b\]"           # ESC ]
     r".*?"              # any content
-    r"\x07" or r"(?:\x1b\\)",  # ST (BEL or ESC \)
+    r"(?:\x07|\x1b\\)",  # ST (BEL or ESC \)
 )
 
 # Terminal control sequences (C1 controls, CSI sequences)

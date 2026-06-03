@@ -418,15 +418,15 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "pt": 0.473176473,
         "pint": 0.473176473,
         "pints": 0.473176473,
-        "cup": 0.2365882365,
-        "cups": 0.2365882365,
-        "floz": 0.0295735296,
-        "fl oz": 0.0295735296,
-        "fluidounce": 0.0295735296,
-        "fluidounces": 0.0295735296,
-        "tbsp": 0.0147867678,
-        "tablespoon": 0.0147867678,
-        "tablespoons": 0.0147867678,
+        "cup": 0.23658823632,
+        "cups": 0.23658823632,
+        "floz": 0.02957352954,
+        "fl oz": 0.02957352954,
+        "fluidounce": 0.02957352954,
+        "fluidounces": 0.02957352954,
+        "tbsp": 0.01478676477,
+        "tablespoon": 0.01478676477,
+        "tablespoons": 0.01478676477,
         "tsp": 0.00492892159,
         "teaspoon": 0.00492892159,
         "teaspoons": 0.00492892159,
@@ -651,6 +651,8 @@ def _build_unit_conversions() -> dict[tuple[str, str], float]:
         unit_factors = {unit: factor for unit, factor in units.items()}
 
         for from_unit, from_factor in unit_factors.items():
+            if from_unit == "in":
+                continue
             for to_unit, to_factor in unit_factors.items():
                 if from_unit != to_unit:
                     key = (from_unit, to_unit)
@@ -1246,7 +1248,6 @@ UNIT_CATEGORIES: dict[str, str] = {
     "ps": "time",
     "min": "time",
     "h": "time",
-    "hr": "time",
     "d": "time",
     "wk": "time",
     "yr": "time",
@@ -1324,11 +1325,9 @@ UNIT_CATEGORIES: dict[str, str] = {
     "V": "voltage",
     "kV": "voltage",
     "mV": "voltage",
-    "uV": "voltage",
     "μV": "voltage",
     "A": "current",
     "mA": "current",
-    "uA": "current",
     "μA": "current",
     "rad": "angle",
     "deg": "angle",
@@ -1337,10 +1336,8 @@ UNIT_CATEGORIES: dict[str, str] = {
     "F": "temperature",
     "R": "temperature",
     "m/s": "speed",
-    "mps": "speed",
     "km/h": "speed",
     "mph": "speed",
-    "mi/h": "speed",
     "kn": "speed",
     "mach": "speed",
     "m2": "area",
@@ -1488,7 +1485,7 @@ def _check_result_size(result: Any) -> Any:
         if not math.isfinite(result.value):
             raise EvaluationError("Result too large")
         if isinstance(result.value, int) and not isinstance(result.value, bool):
-            if len(str(result.value)) > MAX_RESULT_DIGITS:
+            if _int_digit_count(result.value) > MAX_RESULT_DIGITS:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
     if isinstance(result, complex):
         if math.isnan(result.real) or math.isnan(result.imag) or math.isinf(result.real) or math.isinf(result.imag):
@@ -1497,7 +1494,7 @@ def _check_result_size(result: Any) -> Any:
         if math.isnan(result) or math.isinf(result):
             raise EvaluationError("Result too large")
     if isinstance(result, int) and not isinstance(result, bool):
-        if len(str(result)) > MAX_RESULT_DIGITS:
+        if _int_digit_count(result) > MAX_RESULT_DIGITS:
             raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
     return result
 
@@ -1524,6 +1521,12 @@ def load_user_config() -> None:
     - A ``(factor, category)`` tuple ``{"xu": (0.1, "length")}`` (preferred):
       the category is recorded explicitly so the unit can be added to or
       subtracted from other units in the same category.
+
+    Trust boundary note: This function imports eggcalc_config from the
+    current working directory. In production deployments (e.g., MCP server),
+    the CWD must be controlled by the deployment operator, not by end users.
+    An attacker who can place a malicious eggcalc_config.py in the CWD gains
+    arbitrary code execution through the import.
     """
     global _config_loaded
     try:
@@ -1589,6 +1592,8 @@ def _entry_size(key: str, value: Any) -> int:
 
     Uses the key length and the str() of the value as a simple proxy.
     """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return len(key) + _int_digit_count(value)
     return len(key) + len(str(value))
 
 
@@ -1693,7 +1698,7 @@ def _safe_pow(base: float, exp: float) -> float:
     """Safe power function with exponent limits to prevent DoS."""
     if abs(exp) > MAX_EXPONENT:
         raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
-    if base < 0 and exp != int(exp):
+    if not isinstance(base, complex) and base < 0 and exp != int(exp):
         raise EvaluationError("Cannot raise negative number to non-integer power")
     try:
         result = pow(base, exp)
@@ -1705,6 +1710,16 @@ def _safe_pow(base: float, exp: float) -> float:
     if abs(result) > MAX_RESULT_VALUE:
         raise EvaluationError("Result too large")
     return result
+
+
+def _int_digit_count(n: int) -> int:
+    """Count digits of an integer, safely handling Python 3.11+ str() limits."""
+    try:
+        return len(str(n))
+    except ValueError:
+        # Python 3.11+ raises ValueError for integers with >4300 str digits
+        # Use bit_length as an upper bound: digits <= bit_length * log10(2) + 1
+        return int(n.bit_length() * math.log10(2)) + 1
 
 
 def _safe_factorial(n: int) -> int:
@@ -1720,7 +1735,7 @@ def _safe_factorial(n: int) -> int:
     if n > MAX_FACTORIAL:
         raise EvaluationError(f"factorial input too large (max {MAX_FACTORIAL})")
     result = math.factorial(n)
-    if len(str(result)) > MAX_RESULT_DIGITS:
+    if _int_digit_count(result) > MAX_RESULT_DIGITS:
         raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
     return result
 
@@ -1974,7 +1989,7 @@ def _perm(n: int, r: int | None = None) -> int:
         raise EvaluationError("perm requires non-negative input")
     if r is None:
         result = math.factorial(n)
-        if len(str(result)) > MAX_RESULT_DIGITS:
+        if _int_digit_count(result) > MAX_RESULT_DIGITS:
             raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
         return result
     r = int(r)
@@ -2826,6 +2841,20 @@ class Evaluator(ast.NodeVisitor):
         self._memory = Memory()
         self._user_variables: dict[str, Any] = {}
         self._var_lock = threading.Lock()
+        self._depth = 0
+
+    def visit(self, node: ast.AST) -> Any:
+        """Visit a node with depth tracking to prevent deep recursion."""
+        self._depth += 1
+        if self._depth > MAX_NESTING_DEPTH:
+            self._depth -= 1
+            raise EvaluationError(
+                f"Expression too deeply nested (max {MAX_NESTING_DEPTH})"
+            )
+        try:
+            return super().visit(node)
+        finally:
+            self._depth -= 1
 
     def _parse_unit(self, text: str) -> tuple[float, str | None]:
         """Parse a string that may contain a number and unit."""
@@ -2982,7 +3011,7 @@ class Evaluator(ast.NodeVisitor):
             raise EvaluationError("Result too large")
 
         if op_class in (ast.LShift, ast.RShift):
-            if isinstance(result, int) and len(str(result)) > MAX_RESULT_DIGITS:
+            if isinstance(result, int) and _int_digit_count(result) > MAX_RESULT_DIGITS:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
 
         # Compound unit detection for division:
@@ -3029,6 +3058,23 @@ class Evaluator(ast.NodeVisitor):
         if isinstance(operand, UnitValue):
             return UnitValue(result, operand.unit)
         return result
+
+    def visit_Attribute(self, node: ast.Attribute) -> Any:
+        """Visit an attribute access node (e.g., (1+2j).real)."""
+        value = self.visit(node.value)
+        attr = node.attr
+        if attr in ("real", "imag", "conjugate"):
+            if isinstance(value, UnitValue):
+                raw = value.value
+            else:
+                raw = value
+            if attr == "real":
+                return raw.real if isinstance(raw, complex) else raw
+            elif attr == "imag":
+                return raw.imag if isinstance(raw, complex) else 0.0
+            elif attr == "conjugate":
+                return raw.conjugate() if isinstance(raw, complex) else raw
+        raise EvaluationError(f"Unsupported attribute access: '{attr}'")
 
     def visit_Call(self, node: ast.Call) -> Any:
         """Visit a function call node."""
@@ -3238,31 +3284,34 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
     """
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
+    proc: multiprocessing.Process | None = None
     proc = ctx.Process(target=_evaluate_with_timeout_worker, args=(expression, queue))
     proc.start()
 
     try:
         status, value = queue.get(timeout=timeout)
     except Exception:
-        proc.terminate()
-        proc.join(timeout=2)
-        # If the process is still alive after terminate+join, force-kill it
-        # to ensure we don't leak a child process.
+        raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
+    finally:
         try:
-            if proc.is_alive():
-                proc.kill()
-                proc.join(timeout=2)
+            queue.close()
         except Exception:
             pass
-        raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
-
-    try:
-        proc.join(timeout=2)
-        if proc.is_alive():
-            proc.kill()
-            proc.join(timeout=2)
-    finally:
-        pass
+        try:
+            queue.join_thread()
+        except Exception:
+            pass
+        if proc is not None:
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=2)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=1)
+            try:
+                proc.close()
+            except Exception:
+                pass
 
     if status == "error":
         raise EvaluationError(value)
@@ -4008,21 +4057,6 @@ def apply_math_functions(
     - 5 factorial -> factorial(5)  (implicit-mul swap: leading number becomes the arg)
     - 5 sin -> sin(5)
     """
-    _SINGLE_ARG_IMPLICIT_MUL: set[str] = {
-        "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
-        "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
-        "exp", "abs", "factorial", "fact", "cbrt", "floor",
-        "ceil", "round", "sign", "isprime", "nextprime",
-        "prevprime", "random", "gauss", "hypot", "primefactors",
-        "randint",
-    }
-
-    _MULTI_ARG_OF_FUNCS: set[str] = {
-        "mean", "median", "mode", "std", "variance",
-        "gcd", "lcm", "perm", "comb", "nPr", "nCr",
-        "sum", "max", "min", "clamp",
-    }
-
     def _is_pure_num_token(tok: str) -> bool:
         stripped = tok.strip("+-")
         return stripped.isdigit() and not any(c.isalpha() for c in stripped)
@@ -4325,6 +4359,7 @@ def _should_split_number_sequence(token: str) -> bool:
         stripped = part.strip('+-')
         if not stripped.replace('.', '').replace('e', '').replace('E', '').isdigit():
             return False
+    return True
 
 
 # Module-level binary-word validation. Detects <value> not/in/to/as/into <value>
@@ -4463,9 +4498,9 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     _DIGIT_SCALES: dict[str, str] = {
         "thousand": "1000",
         "million": "1000000",
-        "billion": "1000000000000",
-        "trillion": "1000000000000000000",
-        "quadrillion": "1000000000000000000",
+        "billion": "1000000000",
+        "trillion": "1000000000000",
+        "quadrillion": "1000000000000000",
     }
     for scale_word, scale_val in _DIGIT_SCALES.items():
         expression = re.sub(
@@ -4924,80 +4959,6 @@ def _handle_unit_conversion_from_tokens(tokens: list) -> list:
                                 f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
                             ]
                             + tokens[next_idx + 2:]
-                        )
-                        return new_tokens
-
-    return tokens
-
-    for i in range(len(tokens) - 2):
-        token = tokens[i]
-        from_unit = None
-        from_unit_normalized = None
-        num_part = None
-        for unit in _UNITS_BY_LENGTH:
-            if token.endswith(unit):
-                num_part = token[: -len(unit)]
-                if num_part and num_part[-1].isdigit():
-                    from_unit = unit
-                    from_unit_normalized = UNIT_ALIASES.get(from_unit, from_unit)
-                    break
-        if from_unit is None:
-            last_char = token[-1:] if token else ""
-            if last_char.lower() in _LOWERCASE_TEMP_UNITS:
-                candidate_num = token[:-1]
-                if candidate_num and candidate_num[-1].isdigit():
-                    from_unit = last_char
-                    from_unit_normalized = _LOWERCASE_TEMP_UNITS[last_char.lower()]
-                    num_part = candidate_num
-
-        # Bare-number source: e.g., tokens[i] is just "1" (no unit suffix)
-        bare_number = False
-        if from_unit is None and token and (token[0].isdigit() or token[0] == "-") and token[-1].isdigit():
-            try:
-                float(token)
-                bare_number = True
-                num_part = token
-                from_unit_normalized = ""
-            except ValueError:
-                pass
-
-        if from_unit is not None or bare_number:
-            conv_word = tokens[i + 1].upper()
-            if conv_word in {"IN", "TO"}:
-                to_token = tokens[i + 2]
-                to_unit_normalized = None
-
-                for unit2 in _UNITS_BY_LENGTH:
-                    if to_token == unit2 or to_token.endswith(unit2):
-                        to_unit_normalized = UNIT_ALIASES.get(unit2, unit2)
-                        break
-                if to_unit_normalized is None and to_token.lower() in _LOWERCASE_TEMP_UNITS:
-                    to_unit_normalized = _LOWERCASE_TEMP_UNITS[to_token.lower()]
-
-                if bare_number:
-                    if to_unit_normalized:
-                        new_tokens = (
-                            tokens[:i]
-                            + [f"{num_part}*{to_unit_normalized}"]
-                            + tokens[i + 3:]
-                        )
-                        return new_tokens
-                elif to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
-
-                    cat1 = get_unit_category(from_unit_normalized)
-                    cat2 = get_unit_category(to_unit_normalized)
-
-                    if (
-                        cat1
-                        and cat2
-                        and are_units_compatible(from_unit_normalized, to_unit_normalized)
-                    ):
-                        new_tokens = (
-                            tokens[:i]
-                            + [
-                                f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
-                            ]
-                            + tokens[i + 3:]
                         )
                         return new_tokens
 
@@ -24080,7 +24041,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
     },
     "json_query": {
-        "description": "Extract a value from JSON using RFC 6901 JSON Pointer. Navigate nested objects and arrays.",
+        "description": "Extract a value from JSON using RFC 6901 JSON Pointer. Navigate nested objects and arrays. Deprecated: use json_extract instead, which provides richer output including available_keys, missing_at, and detail levels.",
+        "deprecated": True,
         "tier": 1,
         "tags": ["json", "pointer", "extraction", "query", "rfc6901"],
         "inputSchema": {
@@ -25056,59 +25018,80 @@ MAX_CONCURRENT_SPAWNED = 4
 # Process() is created in validate_regex and math_eval (via evaluate_with_timeout).
 _SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(MAX_CONCURRENT_SPAWNED)
 
-PHYSICAL_CONSTANTS = {
-    "na": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-    "avogadro": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-    "avogadros": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-    "r": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-    "gasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-    "idealgasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-    "h": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-    "planck": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-    "planckconstant": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-    "k": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-    "boltzmann": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-    "boltzmannconstant": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-    "c": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-    "c0": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-    "speedoflight": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-    "speedoflightvacuum": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-    "elementarycharge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
-    "echarge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
-    "f": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-    "faraday": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-    "faradayconstant": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-    "u": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-    "amu": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-    "atomicmassunit": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-    "epsilon0": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
-    "vacuumpermittivity": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
-    "mu0": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
-    "vacuumpermeability": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
-    "g": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
-    "standardgravity": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
-    "G": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
-    "gravitationalconstant": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
-    "rydberg": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
-    "rydbergconstant": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
-    "stefan": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
-    "stefanboltzmann": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
-    "planckbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-    "hbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-    "reducedplanck": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-    "me": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
-    "electronmass": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
-    "mp": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
-    "protonmass": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
-    "mn": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
-    "neutronmass": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
-    "re": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
-    "electronradius": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
-    "alpha": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
-    "finestructure": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
-    "wien": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
-    "wienconstant": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
-}
+def _build_physical_constants() -> dict[str, dict[str, Any]]:
+    """Build PHYSICAL_CONSTANTS from Evaluator.CONSTANTS to prevent drift.
+
+    Values are sourced from the evaluator's canonical definitions. Metadata
+    (symbol, display name) is added here for MCP tool responses.
+    """
+
+    _CONSTANT_META: dict[str, tuple[str, str]] = {
+        # (symbol, display_name)
+        "na": ("N_A", "Avogadro constant"),
+        "avogadro": ("N_A", "Avogadro constant"),
+        "avogadros": ("N_A", "Avogadro constant"),
+        "r": ("R", "Gas constant"),
+        "gasconstant": ("R", "Gas constant"),
+        "idealgasconstant": ("R", "Gas constant"),
+        "h": ("h", "Planck constant"),
+        "planck": ("h", "Planck constant"),
+        "planckconstant": ("h", "Planck constant"),
+        "k": ("k_B", "Boltzmann constant"),
+        "boltzmann": ("k_B", "Boltzmann constant"),
+        "boltzmannconstant": ("k_B", "Boltzmann constant"),
+        "c": ("c", "Speed of light in vacuum"),
+        "c0": ("c", "Speed of light in vacuum"),
+        "speedoflight": ("c", "Speed of light in vacuum"),
+        "speedoflightvacuum": ("c", "Speed of light in vacuum"),
+        "elementarycharge": ("e", "Elementary charge"),
+        "echarge": ("e", "Elementary charge"),
+        "f": ("F", "Faraday constant"),
+        "faraday": ("F", "Faraday constant"),
+        "faradayconstant": ("F", "Faraday constant"),
+        "u": ("u", "Atomic mass unit"),
+        "amu": ("u", "Atomic mass unit"),
+        "atomicmassunit": ("u", "Atomic mass unit"),
+        "epsilon0": ("ε₀", "Vacuum permittivity"),
+        "vacuumpermittivity": ("ε₀", "Vacuum permittivity"),
+        "mu0": ("μ₀", "Vacuum permeability"),
+        "vacuumpermeability": ("μ₀", "Vacuum permeability"),
+        "g": ("gₙ", "Standard gravity"),
+        "standardgravity": ("gₙ", "Standard gravity"),
+        "G": ("G", "Gravitational constant"),
+        "gravitationalconstant": ("G", "Gravitational constant"),
+        "rydberg": ("R∞", "Rydberg constant"),
+        "rydbergconstant": ("R∞", "Rydberg constant"),
+        "stefan": ("σ", "Stefan-Boltzmann constant"),
+        "stefanboltzmann": ("σ", "Stefan-Boltzmann constant"),
+        "planckbar": ("ℏ", "Reduced Planck constant"),
+        "hbar": ("ℏ", "Reduced Planck constant"),
+        "reducedplanck": ("ℏ", "Reduced Planck constant"),
+        "me": ("mₑ", "Electron mass"),
+        "electronmass": ("mₑ", "Electron mass"),
+        "mp": ("mₚ", "Proton mass"),
+        "protonmass": ("mₚ", "Proton mass"),
+        "mn": ("mₙ", "Neutron mass"),
+        "neutronmass": ("mₙ", "Neutron mass"),
+        "re": ("rₑ", "Classical electron radius"),
+        "electronradius": ("rₑ", "Classical electron radius"),
+        "alpha": ("α", "Fine-structure constant"),
+        "finestructure": ("α", "Fine-structure constant"),
+        "wien": ("b", "Wien displacement constant"),
+        "wienconstant": ("b", "Wien displacement constant"),
+    }
+
+    result: dict[str, dict[str, Any]] = {}
+    for key, (symbol, display_name) in _CONSTANT_META.items():
+        if key in Evaluator.CONSTANTS:
+            result[key] = {
+                "value": Evaluator.CONSTANTS[key],
+                "symbol": symbol,
+                "name": display_name,
+            }
+    return result
+
+
+PHYSICAL_CONSTANTS = _build_physical_constants()
 
 
 def _regex_test_worker(
@@ -25243,14 +25226,17 @@ def math_eval(expression: str) -> dict:
     _SPAWN_SEMAPHORE.acquire()
     try:
         result = evaluate_with_timeout(expression, timeout=5.0)
-        if hasattr(result, 'value'):
-            result_val = result.value
+        if hasattr(result, 'value') and hasattr(result, 'unit'):
+            response_data: dict[str, Any] = {
+                "value": str(result.value),
+                "type": type(result.value).__name__,
+            }
+            if result.unit:
+                response_data["unit"] = result.unit
+                response_data["display"] = str(result)
         else:
-            result_val = result
-        return _success_response(
-            {"value": str(result_val), "type": type(result_val).__name__},
-            tool="math_eval",
-        )
+            response_data = {"value": str(result), "type": type(result).__name__}
+        return _success_response(response_data, tool="math_eval")
     except TimeoutError:
         return _error_response("timeout", "Expression evaluation timed out", ["Try a simpler expression"], tool="math_eval")
     except EvaluationError as e:
@@ -25364,8 +25350,8 @@ def constant_lookup(name: str) -> dict:
         Success response with constant value and symbol.
     """
     try:
-        if len(name) > MAX_TEXT_LENGTH:
-            return _error_response("input_too_large", f"Name length {len(name)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}", tool="constant_lookup")
+        if (err := _require_str(name, "name", "constant_lookup")) is not None:
+            return err
 
         key = name.lower()
         if key not in PHYSICAL_CONSTANTS:
@@ -27180,7 +27166,12 @@ def json_query(text: str, pointer: str = "") -> dict:
 
     try:
         result = _json_query(text, pointer)
-        return _success_response(result, tool="json_query")
+        return _success_response(
+            result,
+            tool="json_query",
+            warnings=["json_query is deprecated; use json_extract instead"],
+            recommended_next_tool="json_extract",
+        )
     except Exception as e:
         return _error_response("internal_error", str(e), tool="json_query")
 
@@ -28470,6 +28461,9 @@ def prompt_input_inspect_mcp(
     if (err := _require_str(text, "text", "prompt_input_inspect")) is not None:
         return err
 
+    if phrase_patterns is not None:
+        phrase_patterns = [str(p) for p in phrase_patterns]
+
     valid_checks = {
         "unicode_hidden", "bidi", "html_comments", "markdown_links",
         "ansi_escapes", "terminal_controls", "base64_like_blobs",
@@ -28695,10 +28689,16 @@ def _validate_arguments_schema(name: str, arguments: dict[str, Any]) -> str | No
 
     props = schema.get("properties", {})
     required = schema.get("required", [])
+    additional_allowed = schema.get("additionalProperties", False)
 
     for field in required:
         if field not in arguments:
             return f"Missing required argument: {field}"
+
+    if not additional_allowed:
+        unknown = set(arguments.keys()) - set(props.keys())
+        if unknown:
+            return f"Unexpected argument(s): {', '.join(sorted(unknown))}"
 
     for key, value in arguments.items():
         if key not in props:
@@ -28830,7 +28830,7 @@ def _handle_call_tool(request: dict) -> dict:
         }
 
     except Exception as e:
-        message = _sanitize_error(str(e))[:200]
+        message = _sanitize_error(str(e))[:500]
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
@@ -28878,6 +28878,7 @@ def _handle_list_tools(request: dict) -> dict:
             "inputSchema": schema["inputSchema"],
             "tier": schema.get("tier"),
             "tags": schema.get("tags", []),
+            "deprecated": schema.get("deprecated", False),
         })
 
     return {
@@ -29006,7 +29007,7 @@ def mcp_main() -> int:
         try:
             response = handle_request(request)
         except Exception as e:
-            message = str(e).replace('\n', ' ')[:200]
+            message = _sanitize_error(str(e))[:500]
             response = {
                 "jsonrpc": "2.0",
                 "id": request.get("id") if isinstance(request, dict) else None,

@@ -156,6 +156,12 @@ def load_user_config() -> None:
     - A ``(factor, category)`` tuple ``{"xu": (0.1, "length")}`` (preferred):
       the category is recorded explicitly so the unit can be added to or
       subtracted from other units in the same category.
+
+    Trust boundary note: This function imports eggcalc_config from the
+    current working directory. In production deployments (e.g., MCP server),
+    the CWD must be controlled by the deployment operator, not by end users.
+    An attacker who can place a malicious eggcalc_config.py in the CWD gains
+    arbitrary code execution through the import.
     """
     global _config_loaded
     try:
@@ -1915,31 +1921,34 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
     """
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
+    proc: multiprocessing.Process | None = None
     proc = ctx.Process(target=_evaluate_with_timeout_worker, args=(expression, queue))
     proc.start()
 
     try:
         status, value = queue.get(timeout=timeout)
     except Exception:
-        proc.terminate()
-        proc.join(timeout=2)
-        # If the process is still alive after terminate+join, force-kill it
-        # to ensure we don't leak a child process.
+        raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
+    finally:
         try:
-            if proc.is_alive():
-                proc.kill()
-                proc.join(timeout=2)
+            queue.close()
         except Exception:
             pass
-        raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
-
-    try:
-        proc.join(timeout=2)
-        if proc.is_alive():
-            proc.kill()
-            proc.join(timeout=2)
-    finally:
-        pass
+        try:
+            queue.join_thread()
+        except Exception:
+            pass
+        if proc is not None:
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=2)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=1)
+            try:
+                proc.close()
+            except Exception:
+                pass
 
     if status == "error":
         raise EvaluationError(value)

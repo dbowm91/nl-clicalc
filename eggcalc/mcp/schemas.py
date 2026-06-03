@@ -892,7 +892,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
     },
     "json_query": {
-        "description": "Extract a value from JSON using RFC 6901 JSON Pointer. Navigate nested objects and arrays.",
+        "description": "Extract a value from JSON using RFC 6901 JSON Pointer. Navigate nested objects and arrays. Deprecated: use json_extract instead, which provides richer output including available_keys, missing_at, and detail levels.",
+        "deprecated": True,
         "tier": 1,
         "tags": ["json", "pointer", "extraction", "query", "rfc6901"],
         "inputSchema": {

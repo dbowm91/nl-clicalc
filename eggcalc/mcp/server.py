@@ -255,10 +255,16 @@ def _validate_arguments_schema(name: str, arguments: dict[str, Any]) -> str | No
 
     props = schema.get("properties", {})
     required = schema.get("required", [])
+    additional_allowed = schema.get("additionalProperties", False)
 
     for field in required:
         if field not in arguments:
             return f"Missing required argument: {field}"
+
+    if not additional_allowed:
+        unknown = set(arguments.keys()) - set(props.keys())
+        if unknown:
+            return f"Unexpected argument(s): {', '.join(sorted(unknown))}"
 
     for key, value in arguments.items():
         if key not in props:
@@ -390,7 +396,7 @@ def _handle_call_tool(request: dict) -> dict:
         }
 
     except Exception as e:
-        message = _sanitize_error(str(e))[:200]
+        message = _sanitize_error(str(e))[:500]
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
@@ -438,6 +444,7 @@ def _handle_list_tools(request: dict) -> dict:
             "inputSchema": schema["inputSchema"],
             "tier": schema.get("tier"),
             "tags": schema.get("tags", []),
+            "deprecated": schema.get("deprecated", False),
         })
 
     return {
@@ -566,7 +573,7 @@ def main() -> int:
         try:
             response = handle_request(request)
         except Exception as e:
-            message = _sanitize_error(str(e))[:200]
+            message = _sanitize_error(str(e))[:500]
             response = {
                 "jsonrpc": "2.0",
                 "id": request.get("id") if isinstance(request, dict) else None,

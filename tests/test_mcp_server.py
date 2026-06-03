@@ -90,6 +90,42 @@ class TestToolsCall:
         assert content["result"]["value"] == "8"
         assert content["result"]["type"] == "int"
 
+    def test_call_math_eval_with_units(self):
+        """math_eval should preserve unit information in response."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "30m + 100ft"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "unit" in content["result"]
+        assert content["result"]["unit"] == "m"
+        assert "display" in content["result"]
+        assert "m" in content["result"]["display"]
+
+    def test_call_math_eval_without_units(self):
+        """math_eval without units should not include unit field."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "2**10"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "unit" not in content["result"]
+        assert content["result"]["value"] == "1024"
+
     def test_call_text_measure_valid_input(self):
         response = handle_request({
             "jsonrpc": "2.0",

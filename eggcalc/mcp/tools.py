@@ -191,59 +191,81 @@ MAX_CONCURRENT_SPAWNED = 4
 # Process() is created in validate_regex and math_eval (via evaluate_with_timeout).
 _SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(MAX_CONCURRENT_SPAWNED)
 
-PHYSICAL_CONSTANTS = {
-    "na": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-    "avogadro": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-    "avogadros": {"value": 6.02214076e23, "symbol": "N_A", "name": "Avogadro constant"},
-    "r": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-    "gasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-    "idealgasconstant": {"value": 8.314462618, "symbol": "R", "name": "Gas constant"},
-    "h": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-    "planck": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-    "planckconstant": {"value": 6.62607015e-34, "symbol": "h", "name": "Planck constant"},
-    "k": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-    "boltzmann": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-    "boltzmannconstant": {"value": 1.380649e-23, "symbol": "k_B", "name": "Boltzmann constant"},
-    "c": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-    "c0": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-    "speedoflight": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-    "speedoflightvacuum": {"value": 299792458, "symbol": "c", "name": "Speed of light in vacuum"},
-    "elementarycharge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
-    "echarge": {"value": 1.602176634e-19, "symbol": "e", "name": "Elementary charge"},
-    "f": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-    "faraday": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-    "faradayconstant": {"value": 96485.33212, "symbol": "F", "name": "Faraday constant"},
-    "u": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-    "amu": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-    "atomicmassunit": {"value": 1.66053906660e-27, "symbol": "u", "name": "Atomic mass unit"},
-    "epsilon0": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
-    "vacuumpermittivity": {"value": 8.8541878128e-12, "symbol": "ε₀", "name": "Vacuum permittivity"},
-    "mu0": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
-    "vacuumpermeability": {"value": 1.25663706212e-6, "symbol": "μ₀", "name": "Vacuum permeability"},
-    "g": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
-    "standardgravity": {"value": 9.80665, "symbol": "gₙ", "name": "Standard gravity"},
-    "G": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
-    "gravitationalconstant": {"value": 6.67430e-11, "symbol": "G", "name": "Gravitational constant"},
-    "rydberg": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
-    "rydbergconstant": {"value": 10973731.568160, "symbol": "R∞", "name": "Rydberg constant"},
-    "stefan": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
-    "stefanboltzmann": {"value": 5.670374419e-8, "symbol": "σ", "name": "Stefan-Boltzmann constant"},
-    "planckbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-    "hbar": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-    "reducedplanck": {"value": 1.054571817e-34, "symbol": "ℏ", "name": "Reduced Planck constant"},
-    "me": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
-    "electronmass": {"value": 9.1093837015e-31, "symbol": "mₑ", "name": "Electron mass"},
-    "mp": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
-    "protonmass": {"value": 1.67262192369e-27, "symbol": "mₚ", "name": "Proton mass"},
-    "mn": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
-    "neutronmass": {"value": 1.67493e-27, "symbol": "mₙ", "name": "Neutron mass"},
-    "re": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
-    "electronradius": {"value": 2.817952326e-15, "symbol": "rₑ", "name": "Classical electron radius"},
-    "alpha": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
-    "finestructure": {"value": 7.2973525693e-3, "symbol": "α", "name": "Fine-structure constant"},
-    "wien": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
-    "wienconstant": {"value": 2.897771955e-3, "symbol": "b", "name": "Wien displacement constant"},
-}
+def _build_physical_constants() -> dict[str, dict[str, Any]]:
+    """Build PHYSICAL_CONSTANTS from Evaluator.CONSTANTS to prevent drift.
+
+    Values are sourced from the evaluator's canonical definitions. Metadata
+    (symbol, display name) is added here for MCP tool responses.
+    """
+    from ..evaluator import Evaluator
+
+    _CONSTANT_META: dict[str, tuple[str, str]] = {
+        # (symbol, display_name)
+        "na": ("N_A", "Avogadro constant"),
+        "avogadro": ("N_A", "Avogadro constant"),
+        "avogadros": ("N_A", "Avogadro constant"),
+        "r": ("R", "Gas constant"),
+        "gasconstant": ("R", "Gas constant"),
+        "idealgasconstant": ("R", "Gas constant"),
+        "h": ("h", "Planck constant"),
+        "planck": ("h", "Planck constant"),
+        "planckconstant": ("h", "Planck constant"),
+        "k": ("k_B", "Boltzmann constant"),
+        "boltzmann": ("k_B", "Boltzmann constant"),
+        "boltzmannconstant": ("k_B", "Boltzmann constant"),
+        "c": ("c", "Speed of light in vacuum"),
+        "c0": ("c", "Speed of light in vacuum"),
+        "speedoflight": ("c", "Speed of light in vacuum"),
+        "speedoflightvacuum": ("c", "Speed of light in vacuum"),
+        "elementarycharge": ("e", "Elementary charge"),
+        "echarge": ("e", "Elementary charge"),
+        "f": ("F", "Faraday constant"),
+        "faraday": ("F", "Faraday constant"),
+        "faradayconstant": ("F", "Faraday constant"),
+        "u": ("u", "Atomic mass unit"),
+        "amu": ("u", "Atomic mass unit"),
+        "atomicmassunit": ("u", "Atomic mass unit"),
+        "epsilon0": ("ε₀", "Vacuum permittivity"),
+        "vacuumpermittivity": ("ε₀", "Vacuum permittivity"),
+        "mu0": ("μ₀", "Vacuum permeability"),
+        "vacuumpermeability": ("μ₀", "Vacuum permeability"),
+        "g": ("gₙ", "Standard gravity"),
+        "standardgravity": ("gₙ", "Standard gravity"),
+        "G": ("G", "Gravitational constant"),
+        "gravitationalconstant": ("G", "Gravitational constant"),
+        "rydberg": ("R∞", "Rydberg constant"),
+        "rydbergconstant": ("R∞", "Rydberg constant"),
+        "stefan": ("σ", "Stefan-Boltzmann constant"),
+        "stefanboltzmann": ("σ", "Stefan-Boltzmann constant"),
+        "planckbar": ("ℏ", "Reduced Planck constant"),
+        "hbar": ("ℏ", "Reduced Planck constant"),
+        "reducedplanck": ("ℏ", "Reduced Planck constant"),
+        "me": ("mₑ", "Electron mass"),
+        "electronmass": ("mₑ", "Electron mass"),
+        "mp": ("mₚ", "Proton mass"),
+        "protonmass": ("mₚ", "Proton mass"),
+        "mn": ("mₙ", "Neutron mass"),
+        "neutronmass": ("mₙ", "Neutron mass"),
+        "re": ("rₑ", "Classical electron radius"),
+        "electronradius": ("rₑ", "Classical electron radius"),
+        "alpha": ("α", "Fine-structure constant"),
+        "finestructure": ("α", "Fine-structure constant"),
+        "wien": ("b", "Wien displacement constant"),
+        "wienconstant": ("b", "Wien displacement constant"),
+    }
+
+    result: dict[str, dict[str, Any]] = {}
+    for key, (symbol, display_name) in _CONSTANT_META.items():
+        if key in Evaluator.CONSTANTS:
+            result[key] = {
+                "value": Evaluator.CONSTANTS[key],
+                "symbol": symbol,
+                "name": display_name,
+            }
+    return result
+
+
+PHYSICAL_CONSTANTS = _build_physical_constants()
 
 
 def _regex_test_worker(
@@ -378,14 +400,17 @@ def math_eval(expression: str) -> dict:
     _SPAWN_SEMAPHORE.acquire()
     try:
         result = evaluate_with_timeout(expression, timeout=5.0)
-        if hasattr(result, 'value'):
-            result_val = result.value
+        if hasattr(result, 'value') and hasattr(result, 'unit'):
+            response_data: dict[str, Any] = {
+                "value": str(result.value),
+                "type": type(result.value).__name__,
+            }
+            if result.unit:
+                response_data["unit"] = result.unit
+                response_data["display"] = str(result)
         else:
-            result_val = result
-        return _success_response(
-            {"value": str(result_val), "type": type(result_val).__name__},
-            tool="math_eval",
-        )
+            response_data = {"value": str(result), "type": type(result).__name__}
+        return _success_response(response_data, tool="math_eval")
     except TimeoutError:
         return _error_response("timeout", "Expression evaluation timed out", ["Try a simpler expression"], tool="math_eval")
     except EvaluationError as e:
@@ -506,10 +531,8 @@ def constant_lookup(name: str) -> dict:
         Success response with constant value and symbol.
     """
     try:
-        name = _require_str(name, "name", "constant_lookup")
-
-        if len(name) > MAX_TEXT_LENGTH:
-            return _error_response("input_too_large", f"Name length {len(name)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}", tool="constant_lookup")
+        if (err := _require_str(name, "name", "constant_lookup")) is not None:
+            return err
 
         key = name.lower()
         if key not in PHYSICAL_CONSTANTS:
@@ -2324,7 +2347,12 @@ def json_query(text: str, pointer: str = "") -> dict:
 
     try:
         result = _json_query(text, pointer)
-        return _success_response(result, tool="json_query")
+        return _success_response(
+            result,
+            tool="json_query",
+            warnings=["json_query is deprecated; use json_extract instead"],
+            recommended_next_tool="json_extract",
+        )
     except Exception as e:
         return _error_response("internal_error", str(e), tool="json_query")
 

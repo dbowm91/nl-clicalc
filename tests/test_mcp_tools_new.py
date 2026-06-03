@@ -288,3 +288,122 @@ class TestToolRegistry:
     def test_all_handlers_callable(self):
         for name in ["text_replace_check", "line_range_extract", "line_range_compare"]:
             assert callable(TOOL_HANDLERS[name])
+
+
+class TestConstantLookupMCP:
+    """Test constant_lookup via MCP protocol."""
+
+    def test_valid_constant(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "constant_lookup",
+                "arguments": {"name": "avogadro"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["value"] == 6.02214076e23
+        assert content["result"]["symbol"] == "N_A"
+
+    def test_case_insensitive(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "constant_lookup",
+                "arguments": {"name": "AVOGADRO"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+
+    def test_non_string_name_returns_error(self):
+        """Schema validation catches non-string name before handler."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "constant_lookup",
+                "arguments": {"name": 123},
+            },
+        })
+        assert "error" in response
+        assert "must be string" in response["error"]["message"]
+
+    def test_none_name_returns_error(self):
+        """Schema validation catches None name before handler."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "constant_lookup",
+                "arguments": {"name": None},
+            },
+        })
+        assert "error" in response
+        assert "must be string" in response["error"]["message"]
+
+    def test_unknown_constant(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "constant_lookup",
+                "arguments": {"name": "nonexistent"},
+            },
+        })
+        assert "error" in response
+        assert "Unknown constant" in response["error"]["message"]
+
+    def test_missing_name_argument(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "constant_lookup",
+                "arguments": {},
+            },
+        })
+        assert "error" in response
+        assert "Missing required argument" in response["error"]["message"]
+
+    def test_direct_call_non_string(self):
+        """Direct handler call with non-string should return error envelope."""
+        from eggcalc.mcp.tools import constant_lookup
+        result = constant_lookup(123)
+        assert result["ok"] is False
+        assert "must be a string" in result["error"]
+
+    def test_direct_call_none(self):
+        """Direct handler call with None should return error envelope."""
+        from eggcalc.mcp.tools import constant_lookup
+        result = constant_lookup(None)
+        assert result["ok"] is False
+        assert "must be a string" in result["error"]
+
+    def test_all_aliases(self):
+        """Test all aliases for a constant return the same value."""
+        from eggcalc.mcp.tools import PHYSICAL_CONSTANTS
+        aliases = ["na", "avogadro", "avogadros"]
+        values = set()
+        for alias in aliases:
+            response = handle_request({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "constant_lookup",
+                    "arguments": {"name": alias},
+                },
+            })
+            content = json.loads(response["result"]["content"][0]["text"])
+            values.add(content["result"]["value"])
+        assert len(values) == 1
