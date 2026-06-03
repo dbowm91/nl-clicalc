@@ -1091,14 +1091,6 @@ def validate_regex(
     Returns:
         Success envelope with regex test results, or error envelope.
     """
-    if len(samples) > MAX_REGEX_SAMPLES:
-        return _error_response(
-            "input_too_large",
-            f"Number of samples {len(samples)} exceeds MAX_REGEX_SAMPLES {MAX_REGEX_SAMPLES}",
-            [f"Maximum {MAX_REGEX_SAMPLES} samples allowed"],
-            tool="validate_regex",
-        )
-
     if not isinstance(pattern, str):
         return _error_response(
             "invalid_arguments",
@@ -1109,6 +1101,14 @@ def validate_regex(
         return _error_response(
             "invalid_arguments",
             f"samples must be a list, got {type(samples).__name__}",
+            tool="validate_regex",
+        )
+
+    if len(samples) > MAX_REGEX_SAMPLES:
+        return _error_response(
+            "input_too_large",
+            f"Number of samples {len(samples)} exceeds MAX_REGEX_SAMPLES {MAX_REGEX_SAMPLES}",
+            [f"Maximum {MAX_REGEX_SAMPLES} samples allowed"],
             tool="validate_regex",
         )
 
@@ -1127,6 +1127,7 @@ def validate_regex(
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
     proc: multiprocessing.Process | None = None
+    released = False
     try:
         _SPAWN_SEMAPHORE.acquire()
         try:
@@ -1136,6 +1137,7 @@ def validate_regex(
             )
             proc.start()
         except BaseException:
+            released = True
             _SPAWN_SEMAPHORE.release()
             raise
 
@@ -1175,7 +1177,8 @@ def validate_regex(
     except Exception as e:
         return _error_response("internal_error", str(e), tool="validate_regex")
     finally:
-        _SPAWN_SEMAPHORE.release()
+        if not released:
+            _SPAWN_SEMAPHORE.release()
 
 
 def json_extract(
@@ -1337,6 +1340,19 @@ def regex_finditer(
     Returns:
         Success envelope with matches result, or error envelope.
     """
+    if not isinstance(text, str):
+        return _error_response(
+            "invalid_arguments",
+            f"text must be a string, got {type(text).__name__}",
+            tool="regex_finditer",
+        )
+    if not isinstance(pattern, str):
+        return _error_response(
+            "invalid_arguments",
+            f"pattern must be a string, got {type(pattern).__name__}",
+            tool="regex_finditer",
+        )
+
     if len(text) > MAX_TEXT_LENGTH_REGEX:
         return _error_response(
             "input_too_large",
@@ -1516,6 +1532,13 @@ def list_compare(
     Returns:
         Success envelope with comparison result, or error envelope.
     """
+    if not isinstance(a, list) or not isinstance(b, list):
+        return _error_response(
+            "invalid_arguments",
+            f"a and b must be lists, got {type(a).__name__} and {type(b).__name__}",
+            tool="list_compare",
+        )
+
     if len(a) > MAX_LIST_ITEMS or len(b) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
@@ -1712,6 +1735,13 @@ def text_transform(text: str, operations: list[str], detail: str = "normal") -> 
     """
     if (err := _require_str(text, "text", "text_transform")) is not None:
         return err
+
+    if not isinstance(operations, list):
+        return _error_response(
+            "invalid_arguments",
+            f"operations must be a list, got {type(operations).__name__}",
+            tool="text_transform",
+        )
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -1962,6 +1992,13 @@ def text_hash(
             "invalid_arguments",
             f"Unsupported detail level: {detail}",
             [f"Use one of: {', '.join(valid_details)}"],
+            tool="text_hash",
+        )
+
+    if algorithms is not None and not isinstance(algorithms, list):
+        return _error_response(
+            "invalid_arguments",
+            f"algorithms must be a list, got {type(algorithms).__name__}",
             tool="text_hash",
         )
 
@@ -2260,6 +2297,13 @@ def text_window(
     if (err := _require_str(text, "text", "text_window")) is not None:
         return err
 
+    if not isinstance(position, dict):
+        return _error_response(
+            "invalid_arguments",
+            f"position must be a dict, got {type(position).__name__}",
+            tool="text_window",
+        )
+
     if context_lines < 0:
         return _error_response(
             "invalid_arguments",
@@ -2473,6 +2517,13 @@ def identifier_inspect_mcp(
     Returns:
         Success envelope with inspection result, or error envelope.
     """
+    if not isinstance(identifiers, list):
+        return _error_response(
+            "invalid_arguments",
+            f"identifiers must be a list, got {type(identifiers).__name__}",
+            tool="identifier_inspect",
+        )
+
     if len(identifiers) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
@@ -2700,6 +2751,13 @@ def list_dedupe_mcp(
     Returns:
         Success envelope with deduped list, or error envelope.
     """
+    if not isinstance(items, list):
+        return _error_response(
+            "invalid_arguments",
+            f"items must be a list, got {type(items).__name__}",
+            tool="list_dedupe",
+        )
+
     if len(items) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
@@ -2748,6 +2806,13 @@ def list_sort_mcp(
     Returns:
         Success envelope with sorted list, or error envelope.
     """
+    if not isinstance(items, list):
+        return _error_response(
+            "invalid_arguments",
+            f"items must be a list, got {type(items).__name__}",
+            tool="list_sort",
+        )
+
     if len(items) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
@@ -2939,6 +3004,13 @@ def line_range_compare(
     Returns:
         Success envelope with line range compare result, or error envelope.
     """
+    if not isinstance(left_text, str) or not isinstance(right_text, str):
+        return _error_response(
+            "invalid_arguments",
+            f"left_text and right_text must be strings, got {type(left_text).__name__} and {type(right_text).__name__}",
+            tool="line_range_compare",
+        )
+
     for label, t in [("left_text", left_text), ("right_text", right_text)]:
         if len(t) > MAX_TEXT_LENGTH:
             return _error_response(
@@ -3018,6 +3090,13 @@ def shell_quote_join(
     Returns:
         Success envelope with quoted command and roundtrip status, or error envelope.
     """
+    if not isinstance(argv, list):
+        return _error_response(
+            "invalid_arguments",
+            f"argv must be a list, got {type(argv).__name__}",
+            tool="shell_quote_join",
+        )
+
     if len(argv) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
@@ -3082,6 +3161,19 @@ def shell_argv_compare(
         return _error_response(
             "invalid_arguments",
             "Provide exactly one of right_command or right_argv, not both",
+            tool="argv_compare",
+        )
+
+    if left_argv is not None and not isinstance(left_argv, list):
+        return _error_response(
+            "invalid_arguments",
+            f"left_argv must be a list, got {type(left_argv).__name__}",
+            tool="argv_compare",
+        )
+    if right_argv is not None and not isinstance(right_argv, list):
+        return _error_response(
+            "invalid_arguments",
+            f"right_argv must be a list, got {type(right_argv).__name__}",
             tool="argv_compare",
         )
 
@@ -3271,6 +3363,19 @@ def patch_apply_check_mcp(
         patch_apply_check as _patch_apply_check,
     )
 
+    if not isinstance(original_text, str):
+        return _error_response(
+            "invalid_arguments",
+            f"original_text must be a string, got {type(original_text).__name__}",
+            tool="patch_apply_check",
+        )
+    if not isinstance(patch_text, str):
+        return _error_response(
+            "invalid_arguments",
+            f"patch_text must be a string, got {type(patch_text).__name__}",
+            tool="patch_apply_check",
+        )
+
     if len(original_text) > MAX_ORIGINAL_LENGTH:
         return _error_response(
             "input_too_large",
@@ -3317,6 +3422,13 @@ def patch_summary_mcp(
     from ..exact.patch import (
         patch_summary as _patch_summary,
     )
+
+    if not isinstance(patch_text, str):
+        return _error_response(
+            "invalid_arguments",
+            f"patch_text must be a string, got {type(patch_text).__name__}",
+            tool="patch_summary",
+        )
 
     if len(patch_text) > MAX_PATCH_LENGTH:
         return _error_response(
@@ -3435,6 +3547,13 @@ def identifier_table_inspect_mcp(
     Returns:
         Success envelope with inspection result, or error envelope.
     """
+    if not isinstance(identifiers, list):
+        return _error_response(
+            "invalid_arguments",
+            f"identifiers must be a list, got {type(identifiers).__name__}",
+            tool="identifier_table_inspect",
+        )
+
     if len(identifiers) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
@@ -3515,6 +3634,19 @@ def version_constraint_check_mcp(
     Returns:
         Success envelope with constraint check result, or error envelope.
     """
+    if not isinstance(version, str):
+        return _error_response(
+            "invalid_arguments",
+            f"version must be a string, got {type(version).__name__}",
+            tool="version_constraint_check",
+        )
+    if not isinstance(constraint, str):
+        return _error_response(
+            "invalid_arguments",
+            f"constraint must be a string, got {type(constraint).__name__}",
+            tool="version_constraint_check",
+        )
+
     valid_schemes = {"semver", "cargo"}
     if scheme not in valid_schemes:
         return _error_response(
@@ -3665,6 +3797,13 @@ def prompt_input_inspect_mcp(
     """
     if (err := _require_str(text, "text", "prompt_input_inspect")) is not None:
         return err
+
+    if phrase_patterns is not None and not isinstance(phrase_patterns, list):
+        return _error_response(
+            "invalid_arguments",
+            f"phrase_patterns must be a list, got {type(phrase_patterns).__name__}",
+            tool="prompt_input_inspect",
+        )
 
     if phrase_patterns is not None:
         phrase_patterns = [str(p) for p in phrase_patterns]

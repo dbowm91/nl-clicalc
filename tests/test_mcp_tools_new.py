@@ -104,7 +104,8 @@ class TestTextReplaceCheckMCP:
                 "arguments": {"text": "a" * 100001, "old": "a", "new": "b"},
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
 
 class TestLineRangeExtractMCP:
@@ -165,7 +166,8 @@ class TestLineRangeExtractMCP:
                 "arguments": {"text": "hello", "start_line": 3, "end_line": 1},
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_input_too_large(self):
         response = handle_request({
@@ -177,7 +179,8 @@ class TestLineRangeExtractMCP:
                 "arguments": {"text": "a" * 100001, "start_line": 1, "end_line": 1},
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
 
 class TestLineRangeCompareMCP:
@@ -270,7 +273,8 @@ class TestLineRangeCompareMCP:
                 },
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
 
 class TestToolRegistry:
@@ -359,8 +363,8 @@ class TestConstantLookupMCP:
                 "arguments": {"name": "nonexistent"},
             },
         })
-        assert "error" in response
-        assert "Unknown constant" in response["error"]["message"]
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_missing_name_argument(self):
         response = handle_request({

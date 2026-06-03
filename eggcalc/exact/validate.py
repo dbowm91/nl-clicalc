@@ -1036,8 +1036,10 @@ def json_compare(
                 pass
         return True
 
-    def _compare_values(path: str, a_val: Any, b_val: Any) -> None:
+    def _compare_values(path: str, a_val: Any, b_val: Any, _depth: int = 0) -> None:
         nonlocal type_match
+        if _depth > 100:
+            return
         if len(diffs) >= max_diffs:
             return
 
@@ -1205,7 +1207,7 @@ def json_compare(
                 new_path = f"{path}/{orig_key_a}" if path else f"/{orig_key_a}"
                 if orig_key_a != orig_key_b:
                     new_path = f"{path}/{orig_key_a}->{orig_key_b}"
-                _compare_values(new_path, a_val[orig_key_a], b_val[orig_key_b])
+                _compare_values(new_path, a_val[orig_key_a], b_val[orig_key_b], _depth + 1)
 
         elif a_type == "array":
             if len(a_val) != len(b_val):
@@ -1226,10 +1228,10 @@ def json_compare(
                 if norm_a == norm_b:
                     return
                 for i in range(len(norm_a)):
-                    _compare_values(f"{path}/[{i}]", norm_a[i], norm_b[i])
+                    _compare_values(f"{path}/[{i}]", norm_a[i], norm_b[i], _depth + 1)
             else:
                 for i, (item_a, item_b) in enumerate(zip(a_val, b_val)):
-                    _compare_values(f"{path}/[{i}]", item_a, item_b)
+                    _compare_values(f"{path}/[{i}]", item_a, item_b, _depth + 1)
 
         else:
             if a_val != b_val:
@@ -2218,6 +2220,14 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
 
             pattern = schema_def.get("pattern")
             if pattern is not None:
+                is_safe, err_msg = _check_pattern_complexity(pattern)
+                if not is_safe:
+                    _add_violation(
+                        path,
+                        f"pattern '{pattern}' is unsafe: {err_msg}",
+                        "string",
+                        None,
+                    )
                 try:
                     if not re.match(pattern, value):
                         _add_violation(

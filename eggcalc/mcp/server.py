@@ -15,6 +15,7 @@ from collections import deque
 from typing import Any
 
 from .. import __version__
+from .. import evaluator as _evaluator
 from .schemas import TOOL_SCHEMAS
 from .tools import (
     _sanitize_error,
@@ -348,15 +349,15 @@ def _handle_call_tool(request: dict) -> dict:
     try:
         result = handler(**arguments)
 
-        # If result is an error envelope, return as error
+        # If result is an error envelope, return as MCP tool result with isError
         if isinstance(result, dict) and result.get("ok") is False:
+            serialized = json.dumps(result)
             return {
                 "jsonrpc": "2.0",
                 "id": request.get("id"),
-                "error": {
-                    "code": -32000,
-                    "message": result.get("error", "Unknown error"),
-                    "data": result,
+                "result": {
+                    "content": [{"type": "text", "text": serialized}],
+                    "isError": True,
                 },
             }
 
@@ -518,6 +519,7 @@ def main() -> int:
 
     Reads JSON-RPC requests from stdin and writes responses to stdout.
     """
+    _evaluator._mcp_mode = True
     request_times: deque[float] = deque()
     window = 1.0  # sliding window in seconds
 

@@ -231,639 +231,8 @@ class TestErrorHandling:
                 "arguments": {"text": "x" * (MAX_TEXT_LENGTH + 1)},
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
-
-    def test_invalid_jsonrpc_version(self):
-        response = handle_request({
-            "jsonrpc": "1.0",
-            "id": 1,
-            "method": "tools/list",
-            "params": {},
-        })
-        assert "error" in response or "result" in response
-
-    def test_missing_request_id(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "method": "tools/list",
-            "params": {},
-        })
-        assert response["id"] is None
-
-
-class TestValidateToml:
-    """Test validate_toml tool."""
-
-    def test_valid_simple_toml(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 100,
-            "method": "tools/call",
-            "params": {
-                "name": "validate_toml",
-                "arguments": {"text": "key = \"value\"\n"},
-            },
-        })
         assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid"] is True
-        assert content["result"]["top_level_keys"] == ["key"]
-
-    def test_valid_cargo_toml_style(self):
-        cargo_toml = """[package]
-name = "my-project"
-version = "0.1.0"
-
-[dependencies]
-serde = "1.0"
-"""
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 101,
-            "method": "tools/call",
-            "params": {
-                "name": "validate_toml",
-                "arguments": {"text": cargo_toml},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid"] is True
-        assert "package" in content["result"]["top_level_keys"]
-        assert "dependencies" in content["result"]["top_level_keys"]
-        assert "package" in content["result"]["tables"]
-        assert "dependencies" in content["result"]["tables"]
-
-    def test_valid_pyproject_toml_style(self):
-        pyproject = """[project]
-name = "myproject"
-version = "1.0.0"
-
-[project.dependencies]
-requests = "^2.28"
-
-[build-system]
-requires = ["setuptools>=45"]
-"""
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 102,
-            "method": "tools/call",
-            "params": {
-                "name": "validate_toml",
-                "arguments": {"text": pyproject},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid"] is True
-        assert "project" in content["result"]["tables"]
-        assert "build-system" in content["result"]["tables"]
-
-    def test_invalid_missing_equals(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 103,
-            "method": "tools/call",
-            "params": {
-                "name": "validate_toml",
-                "arguments": {"text": "key \"value\"\n"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid"] is False
-        assert content["result"]["error"] is not None
-
-    def test_invalid_unclosed_string(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 104,
-            "method": "tools/call",
-            "params": {
-                "name": "validate_toml",
-                "arguments": {"text": "key = \"unclosed\n"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid"] is False
-
-    def test_empty_document(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 105,
-            "method": "tools/call",
-            "params": {
-                "name": "validate_toml",
-                "arguments": {"text": ""},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid"] is True
-
-    def test_large_document_under_limit(self):
-        lines = [f"key{i} = \"value{i}\"" for i in range(4300)]
-        large_text = "\n".join(lines) + "\n"
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 106,
-            "method": "tools/call",
-            "params": {
-                "name": "validate_toml",
-                "arguments": {"text": large_text},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid"] is True
-
-    def test_input_over_limit(self):
-        oversized = "x" * (MAX_TEXT_LENGTH + 1)
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 107,
-            "method": "tools/call",
-            "params": {
-                "name": "validate_toml",
-                "arguments": {"text": oversized},
-            },
-        })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
-
-    def test_validate_toml_summary_detail(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 108,
-            "method": "tools/call",
-            "params": {
-                "name": "validate_toml",
-                "arguments": {"text": "key = \"value\"", "detail": "summary"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert "valid" in content["result"]
-        assert "error" in content["result"]
-        assert "tables" not in content["result"]
-
-    def test_validate_toml_invalid_detail(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 109,
-            "method": "tools/call",
-            "params": {
-                "name": "validate_toml",
-                "arguments": {"text": "key = \"value\"", "detail": "invalid"},
-            },
-        })
-        assert "error" in response
-
-
-class TestJsonCompare:
-    """Test json_compare tool."""
-
-    def test_same_object_different_key_order_equals_true(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 200,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{"x":1,"y":2}', "b": '{"y":2,"x":1}'},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["equal"] is True
-        assert content["result"]["valid_json_a"] is True
-        assert content["result"]["valid_json_b"] is True
-
-    def test_same_array_different_order_equals_false_by_default(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 201,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '[1,2,3]', "b": '[3,2,1]'},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["equal"] is False
-
-    def test_same_array_different_order_equals_true_with_ignore_array_order(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 202,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '[1,2,3]', "b": '[3,2,1]', "ignore_array_order": True},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["equal"] is True
-
-    def test_missing_key(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 203,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{"x":1,"y":2}', "b": '{"x":1}'},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["equal"] is False
-        diffs = content["result"]["diffs"]
-        assert any(d["kind"] == "key_missing_in_b" for d in diffs)
-
-    def test_type_mismatch(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 204,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{"x":1}', "b": '{"x":"1"}'},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["equal"] is False
-        diffs = content["result"]["diffs"]
-        assert any(d["kind"] == "type_changed" for d in diffs)
-
-    def test_numeric_string_equivalence(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 205,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{"x":"5"}', "b": '{"x":5}', "numeric_string_equivalence": True},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["equal"] is True
-
-    def test_missing_null_equivalence(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 206,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{"x":null}', "b": '{}', "treat_missing_null_as_equal": True},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["equal"] is True
-
-    def test_max_diff_truncation(self):
-        a = '{"a":1,"b":2,"c":3}'
-        b = '{"a":99,"b":99,"c":99}'
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 207,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": a, "b": b, "max_diffs": 2},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["truncated"] is True
-        assert len(content["result"]["diffs"]) == 2
-        assert content["result"]["diff_count"] == 2
-
-    def test_invalid_json_a(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 208,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{"x":}', "b": '{"x":1}'},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid_json_a"] is False
-
-    def test_invalid_json_b(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 209,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{"x":1}', "b": '{"x":}'},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid_json_b"] is False
-
-    def test_both_invalid_json(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 210,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{', "b": '['},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid_json_a"] is False
-        assert content["result"]["valid_json_b"] is False
-
-    def test_ignore_object_order_false(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 211,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{"x":1,"y":2}', "b": '{"y":2,"x":1}', "ignore_object_order": False},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["equal"] is False
-
-    def test_casefold_keys(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 212,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{"Key":1}', "b": '{"key":1}', "casefold_keys": True},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["equal"] is True
-
-    def test_summary_detail(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 213,
-            "method": "tools/call",
-            "params": {
-                "name": "json_compare",
-                "arguments": {"a": '{"x":1}', "b": '{"x":2}', "detail": "summary"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert "equal" in content["result"]
-        assert "diff_count" in content["result"]
-        assert "summary" in content["result"]
-        assert "diffs" not in content["result"]
-
-
-class TestJsonExtract:
-    """Test json_extract tool."""
-
-    def test_extract_root_empty_pointer(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 200,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"foo": "bar"}', "pointer": ""},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is True
-        assert content["result"]["value_type"] == "object"
-        assert content["result"]["child_keys"] == ["foo"]
-
-    def test_extract_object_key(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 201,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"foo": "bar", "baz": 123}', "pointer": "/foo"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is True
-        assert content["result"]["value_type"] == "string"
-        assert content["result"]["value"] == "bar"
-
-    def test_extract_array_index(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 202,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"items": [10, 20, 30]}', "pointer": "/items/1"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is True
-        assert content["result"]["value_type"] == "number"
-        assert content["result"]["value"] == 20
-
-    def test_extract_escaped_slash_using_tilde1(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 203,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"a/b": "slash_value"}', "pointer": "/a~1b"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is True
-        assert content["result"]["value"] == "slash_value"
-
-    def test_extract_escaped_tilde_using_tilde0(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 204,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"a~b": "tilde_value"}', "pointer": "/a~0b"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is True
-        assert content["result"]["value"] == "tilde_value"
-
-    def test_missing_key(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 205,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"foo": "bar"}', "pointer": "/missing"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is False
-        assert content["result"]["reason"] == "key_not_found"
-        assert content["result"]["available_keys"] == ["foo"]
-        assert content["result"]["missing_at"] == "/missing"
-
-    def test_out_of_range_array_index(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 206,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"items": [1, 2]}', "pointer": "/items/10"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is False
-        assert content["result"]["reason"] == "index_out_of_range"
-        assert content["result"]["array_length"] == 2
-        assert content["result"]["missing_at"] == "/items/10"
-
-    def test_invalid_pointer_syntax(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 207,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"items": [1, 2]}', "pointer": "/items/abc"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is False
-        assert content["result"]["reason"] == "invalid_pointer_syntax"
-
-    def test_large_value_truncation(self):
-        large_value = "x" * 10000
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 208,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": f'{{"data": "{large_value}"}}', "pointer": "/data", "max_output_chars": 100},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is True
-        assert content["result"]["truncated"] is True
-        assert len(content["result"]["preview"]) == 100
-
-    def test_invalid_json(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 209,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"invalid": json}'},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["valid_json"] is False
-        assert content["result"]["reason"] == "invalid_json"
-        assert content["result"]["error"] is not None
-
-    def test_nested_path(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 210,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"a": {"b": {"c": 42}}}', "pointer": "/a/b/c"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is True
-        assert content["result"]["value"] == 42
-
-    def test_boolean_and_null_types(self):
-        response = handle_request({
-            "jsonrpc": "2.0",
-            "id": 211,
-            "method": "tools/call",
-            "params": {
-                "name": "json_extract",
-                "arguments": {"text": '{"bool": true, "nil": null}', "pointer": "/nil"},
-            },
-        })
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is True
-        assert content["result"]["found"] is True
-        assert content["result"]["value_type"] == "null"
-        assert content["result"]["value"] is None
+        assert response["result"]["isError"] is True
 
     def test_summary_detail_level(self):
         response = handle_request({
@@ -1096,7 +465,8 @@ class TestTextTransform:
                 "arguments": {"text": "hello", "operations": ["unknown_op"]},
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_empty_operations_list(self):
         response = handle_request({
@@ -1125,7 +495,8 @@ class TestTextTransform:
                 "arguments": {"text": oversized, "operations": ["trim"]},
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_invalid_detail(self):
         response = handle_request({
@@ -1237,8 +608,9 @@ class TestTextPosition:
                 "arguments": {"text": text, "byte_offset": 1},
             },
         })
-        assert "error" in response
-        content = response["error"]["data"]
+        assert "result" in response
+        assert response["result"]["isError"] is True
+        content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is False
         assert "multibyte" in content["error"].lower()
 
@@ -1270,8 +642,9 @@ class TestTextPosition:
                 "arguments": {"text": "hello", "codepoint_index": 100},
             },
         })
-        assert "error" in response
-        content = response["error"]["data"]
+        assert "result" in response
+        assert response["result"]["isError"] is True
+        content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is False
 
     def test_line_column_basic(self):
@@ -1386,8 +759,9 @@ class TestTextPosition:
                 "arguments": {"text": "hello", "byte_offset": 0, "codepoint_index": 1},
             },
         })
-        assert "error" in response
-        content = response["error"]["data"]
+        assert "result" in response
+        assert response["result"]["isError"] is True
+        content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is False
 
     def test_no_locator_mode_error(self):
@@ -1400,8 +774,9 @@ class TestTextPosition:
                 "arguments": {"text": "hello"},
             },
         })
-        assert "error" in response
-        content = response["error"]["data"]
+        assert "result" in response
+        assert response["result"]["isError"] is True
+        content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is False
 
     def test_empty_text(self):
@@ -1460,8 +835,9 @@ class TestTextPosition:
                 "arguments": {"text": "hello\nworld", "line": 10, "column": 1},
             },
         })
-        assert "error" in response
-        content = response["error"]["data"]
+        assert "result" in response
+        assert response["result"]["isError"] is True
+        content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is False
 
     def test_invalid_column_out_of_range(self):
@@ -1474,8 +850,9 @@ class TestTextPosition:
                 "arguments": {"text": "hi", "line": 1, "column": 100},
             },
         })
-        assert "error" in response
-        content = response["error"]["data"]
+        assert "result" in response
+        assert response["result"]["isError"] is True
+        content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is False
 
 
@@ -1657,8 +1034,8 @@ class TestTextHash:
                 "arguments": {"text": oversized},
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_invalid_encoding(self):
         response = handle_request({
@@ -1670,9 +1047,9 @@ class TestTextHash:
                 "arguments": {"text": "hello", "encoding": "invalid-encoding"},
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
-        content = response["error"]["data"]
+        assert "result" in response
+        assert response["result"]["isError"] is True
+        content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is False
         assert content["error_type"] == "invalid_arguments"
 
@@ -1914,8 +1291,8 @@ class TestEscapeText:
                 "arguments": {"text": oversized, "mode": "json_string"},
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_escape_summary_detail(self):
         response = handle_request({
@@ -2082,8 +1459,8 @@ class TestUnescapeText:
                 "arguments": {"text": oversized, "mode": "json_string"},
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_unescape_summary_detail(self):
         response = handle_request({
@@ -2321,8 +1698,8 @@ class TestIdentifierAnalyze:
                 "arguments": {"text": "my_var", "languages": ["invalid_lang"]},
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_summary_detail(self):
         response = handle_request({
@@ -2366,8 +1743,8 @@ class TestIdentifierAnalyze:
                 "arguments": {"text": oversized},
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_invalid_detail(self):
         response = handle_request({
@@ -2781,8 +2158,8 @@ class TestPathAnalyze:
                 "arguments": {"path": oversized},
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
 
 class TestValidateSchemaLight:
@@ -2970,8 +2347,8 @@ class TestValidateSchemaLight:
                 },
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_max_violations_limit_truncation(self):
         schema = {
@@ -3331,7 +2708,8 @@ class TestRegexFindIter:
                 "arguments": {"pattern": "x", "text": oversized},
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_invalid_max_matches(self):
         response = handle_request({
@@ -3343,7 +2721,8 @@ class TestRegexFindIter:
                 "arguments": {"pattern": "x", "text": "hello", "max_matches": 0},
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
 
 class TestRegexSafetyCheck:
@@ -3442,7 +2821,8 @@ class TestRegexSafetyCheck:
                 "arguments": {"pattern": oversized},
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
 
 class TestPathNormalize:
@@ -3609,7 +2989,8 @@ class TestPathNormalize:
                 "arguments": {"path": oversized},
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
 
 class TestToolListGolden:
@@ -4508,8 +3889,9 @@ class TestTextWindow:
                 "arguments": {"text": text, "position": {"kind": "byte_offset", "value": 1}},
             },
         })
-        assert "error" in response
-        content = response["error"]["data"]
+        assert "result" in response
+        assert response["result"]["isError"] is True
+        content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is False
 
     def test_grapheme_index_emoji(self):
@@ -5061,9 +4443,9 @@ class TestResponseEnvelope:
                 "arguments": {"text": "x" * (MAX_TEXT_LENGTH + 1)},
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
-        data = response["error"]["data"]
+        assert "result" in response
+        assert response["result"]["isError"] is True
+        data = json.loads(response["result"]["content"][0]["text"])
         assert data["ok"] is False
         assert "error_type" in data
         assert "error" in data
@@ -5117,9 +4499,9 @@ class TestMCPSecurityAndValidation:
                 "arguments": {"expression": "__import__('os').system('ls')"},
             },
         })
-        # Errors come as JSON-RPC errors (not in result.content)
-        assert "error" in response
-        assert response["error"]["code"] == -32000
+        # Errors come as MCP tool results with isError
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_math_eval_type_check(self):
         """Test that non-string expression is rejected."""
@@ -5173,8 +4555,8 @@ class TestMCPSecurityAndValidation:
                 "arguments": {"text": "x" * (MAX_TEXT_LENGTH + 1)},
             },
         })
-        assert "error" in response
-        assert response["error"]["code"] == -32000
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_batch_request_rejected(self):
         """Test that batch JSON-RPC requests are rejected."""

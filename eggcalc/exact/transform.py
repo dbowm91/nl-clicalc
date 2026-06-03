@@ -366,6 +366,7 @@ def _escape_html_text(text: str) -> str:
     result = result.replace("<", "&lt;")
     result = result.replace(">", "&gt;")
     result = result.replace('"', "&quot;")
+    result = result.replace("'", "&#39;")
     return result
 
 

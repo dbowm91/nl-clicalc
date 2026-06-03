@@ -58,6 +58,7 @@ __all__ = [
 
 _lock = threading.Lock()
 _config_loaded = False
+_mcp_mode = False
 
 MAX_EXPONENT = 10000
 MAX_FACTORIAL = 1000
@@ -117,7 +118,11 @@ def _check_constant_unit_collisions() -> None:
 def _check_result_size(result: Any) -> Any:
     """Raise EvaluationError if a result has too many digits or is NaN/inf."""
     if isinstance(result, UnitValue):
-        if not math.isfinite(result.value):
+        if isinstance(result.value, complex):
+            if math.isnan(result.value.real) or math.isnan(result.value.imag) or \
+               math.isinf(result.value.real) or math.isinf(result.value.imag):
+                raise EvaluationError("Result too large")
+        elif not math.isfinite(result.value):
             raise EvaluationError("Result too large")
         if isinstance(result.value, int) and not isinstance(result.value, bool):
             if _int_digit_count(result.value) > MAX_RESULT_DIGITS:
@@ -213,6 +218,8 @@ def load_user_config() -> None:
 def _ensure_config_loaded() -> None:
     """Ensure user config is loaded (lazy loading)."""
     global _config_loaded
+    if _mcp_mode:
+        return
     if not _config_loaded:
         load_user_config()
 
@@ -338,7 +345,7 @@ def _safe_pow(base: float, exp: float) -> float:
         raise EvaluationError("Cannot raise negative number to non-integer power")
     try:
         result = pow(base, exp)
-    except OverflowError:
+    except (OverflowError, ZeroDivisionError):
         raise EvaluationError("Result too large") from None
     if isinstance(result, float):
         if math.isnan(result) or math.isinf(result):
@@ -680,6 +687,8 @@ def _lcm(*args: int) -> int:
 def _is_prime(n: int) -> bool:
     """Check if a number is prime."""
     n = int(n)
+    if n > 10**12:
+        raise EvaluationError("primality test not available for numbers > 10^12")
     if n < 2:
         return False
     if n == 2:
@@ -701,6 +710,8 @@ def _prime_factors(n: int) -> str:
     exponent (e.g. "2^2"). For n < 2, returns the number as a string.
     """
     n = int(n)
+    if n > 10**12:
+        raise EvaluationError("factorization not available for numbers > 10^12")
     if n < 2:
         return str(n)
 
@@ -916,9 +927,7 @@ _asinh = _complex_aware(math.asinh, cmath.asinh)
 _acosh = _complex_aware(math.acosh, cmath.acosh)
 _atanh = _complex_aware(math.atanh, cmath.atanh)
 def _cbrt_impl(x: float) -> float:
-    if x >= 0:
-        return x ** (1/3)
-    return -((-x) ** (1/3))
+    return math.copysign(abs(x) ** (1/3), x)
 
 
 _cbrt = _cbrt_impl
@@ -1771,7 +1780,10 @@ class Evaluator(ast.NodeVisitor):
             else:
                 args.append(result)
 
-        return self.FUNCTIONS[func_name](*args)
+        try:
+            return self.FUNCTIONS[func_name](*args)
+        except (ValueError, TypeError, ZeroDivisionError, OverflowError) as e:
+            raise EvaluationError(str(e)) from None
 
     def _validate_node(self, node: ast.AST) -> None:
         """Validate that a node is safe to evaluate."""

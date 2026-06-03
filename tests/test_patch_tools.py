@@ -290,7 +290,8 @@ class TestPatchApplyCheckMCP:
                 },
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
     def test_input_too_large_patch(self):
         response = handle_request({
@@ -305,7 +306,8 @@ class TestPatchApplyCheckMCP:
                 },
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
 
 class TestPatchSummaryMCP:
@@ -449,7 +451,8 @@ class TestPatchSummaryMCP:
                 },
             },
         })
-        assert "error" in response
+        assert "result" in response
+        assert response["result"]["isError"] is True
 
 
 class TestPatchToolRegistry:

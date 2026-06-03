@@ -414,9 +414,7 @@ def _rebuild_config() -> None:
         new_normalize, new_patterns = _build_config()
         NORMALIZE = new_normalize
         PATTERNS = new_patterns
-    # Clear the LRU cache outside the lock to avoid holding it during
-    # the (potentially slow) cache eviction.
-    check_if_number.cache_clear()
+        check_if_number.cache_clear()
 
 
 @lru_cache(maxsize=1024)
@@ -624,7 +622,7 @@ def convert_numbers(number_info: list, patterns: Mapping[str, Pattern[str]]) -> 
                 return number_info[0]
         return number_info[0]
 
-    return ""
+    return number_info[0]
 
 
 def apply_math_functions(
@@ -732,9 +730,11 @@ def apply_math_functions(
 
 def error_message(original: str, exception: BaseException, verbose: bool = False) -> None:
     """Print an error message based on the exception type."""
+    # Sanitize input for safe terminal display
+    safe_original = ''.join(c if c.isprintable() and c not in '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f' else '?' for c in original)
     exc_type = type(exception)
     if exc_type is ValueError:
-        print(f"Unrecognized command: '{original}'", file=sys.stderr)
+        print(f"Unrecognized command: '{safe_original}'", file=sys.stderr)
     elif exc_type is ZeroDivisionError:
         print(f"Can't divide by 0: '{original}'", file=sys.stderr)
     elif exc_type is EvaluationError:
@@ -772,8 +772,6 @@ def convert_from_human_handler(
             is_valid = True
         except ValueError:
             tokens[i] = tokens[i][0] if isinstance(tokens[i], dict) else tokens[i]
-            error_message(original, ValueError())
-            break
 
     return tokens, is_valid
 
@@ -1086,6 +1084,7 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         "billion": "1000000000",
         "trillion": "1000000000000",
         "quadrillion": "1000000000000000",
+        "quintillion": "1000000000000000000",
     }
     for scale_word, scale_val in _DIGIT_SCALES.items():
         expression = re.sub(
@@ -1677,7 +1676,11 @@ def _run_repl(show_expression: bool = True) -> int:
             history.clear()
             continue
 
-        result, exit_code = run(line, NORMALIZE, PATTERNS, "plain", show_expression)
+        try:
+            result, exit_code = run(line, NORMALIZE, PATTERNS, "plain", show_expression)
+        except KeyboardInterrupt:
+            print()
+            continue
 
         if exit_code == 0 and result is not None:
             history.append((line, result))
