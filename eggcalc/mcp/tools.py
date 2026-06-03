@@ -283,6 +283,8 @@ def _regex_test_worker(
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
     except (ImportError, ValueError, OSError):
+        # RLIMIT_AS may not be supported or enforced on all platforms (e.g., macOS).
+        # On failure, we rely solely on the time-based timeout for protection.
         pass
     try:
         result = _regex_test(pattern, samples, flags, ignore_case, multiline, dotall, ascii)

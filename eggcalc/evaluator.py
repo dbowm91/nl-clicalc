@@ -438,12 +438,30 @@ def _to_oct(x: int) -> str:
     return oct(x)
 
 
+_TEMP_UNIT_FLOAT_MAP: dict[float, str] = {
+    1.0: "K",
+    0.017453292519943295: "deg",
+}
+
+
 def _temp(value: float, from_unit: float | str, to_unit: float | str) -> float:
     """Convert temperature between units."""
     if isinstance(from_unit, float):
-        from_unit = {1.0: "K", 0.017453292519943295: "deg"}.get(from_unit, "K")
+        mapped = _TEMP_UNIT_FLOAT_MAP.get(from_unit)
+        if mapped is None:
+            raise EvaluationError(
+                f"Unrecognized temperature unit value: {from_unit}. "
+                f"Expected a unit name string (e.g., 'C', 'K', 'F') or a known constant."
+            )
+        from_unit = mapped
     if isinstance(to_unit, float):
-        to_unit = {1.0: "K", 0.017453292519943295: "deg"}.get(to_unit, "K")
+        mapped = _TEMP_UNIT_FLOAT_MAP.get(to_unit)
+        if mapped is None:
+            raise EvaluationError(
+                f"Unrecognized temperature unit value: {to_unit}. "
+                f"Expected a unit name string (e.g., 'C', 'K', 'F') or a known constant."
+            )
+        to_unit = mapped
     return convert_temperature(value, str(from_unit), str(to_unit))
 
 
@@ -468,11 +486,8 @@ def _convert(value: Any, to_unit: str | Any) -> Any:
         # Check for temperature conversions (special handling needed)
         cat = get_unit_category(value.unit) if value.unit else None
         if cat == "temperature" and value.unit:
-            try:
-                converted_val = convert_temperature(value.value, value.unit, to_unit)
-                return UnitValue(converted_val, to_unit)
-            except ValueError:
-                pass  # Fall through to regular conversion
+            converted_val = convert_temperature(value.value, value.unit, to_unit)
+            return UnitValue(converted_val, to_unit)
         return value.convert_to(to_unit)
     # If it's just a number without units, assume it's a dimensionless value
     # and try to convert (will fail if not a valid unit)
@@ -545,8 +560,6 @@ def _mode(*args: float) -> float:
     counts = Counter(args)
     max_count = max(counts.values())
     modes = [x for x, c in counts.items() if c == max_count]
-    if len(modes) > 1:
-        raise EvaluationError("Multiple modes found")
     return modes[0]
 
 
@@ -1881,6 +1894,8 @@ def _evaluate_with_timeout_worker(expr: str, result_queue: multiprocessing.Queue
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
     except (ImportError, ValueError, OSError):
+        # RLIMIT_AS may not be supported or enforced on all platforms (e.g., macOS).
+        # On failure, we rely solely on the time-based timeout for protection.
         pass
     try:
         _ensure_config_loaded()

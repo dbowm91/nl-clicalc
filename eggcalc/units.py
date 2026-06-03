@@ -109,8 +109,11 @@ class UnitValue:
         return UnitValue(other / self.value, None)
 
     def __pow__(self, other: Numeric) -> UnitValue:
-        if self.unit and isinstance(other, int):
-            return UnitValue(self.value**other, f"{self.unit}**{other}")
+        if self.unit:
+            if isinstance(other, int):
+                return UnitValue(self.value**other, f"{self.unit}**{other}")
+            if isinstance(other, float) and other.is_integer():
+                return UnitValue(self.value**other, f"{self.unit}**{int(other)}")
         return UnitValue(self.value**other, self.unit)
 
     def __neg__(self) -> UnitValue:

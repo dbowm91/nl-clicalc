@@ -1013,6 +1013,8 @@ def _binary_word_check(expr: str) -> None:
 
 def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str:
     """Normalize an expression by removing filler words and applying conversions."""
+    if len(expression) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input too long (max {MAX_INPUT_LENGTH} characters)")
     # Replace multi-word function names before whitespace removal collapses them
     # e.g., "square root" -> "sqrt", "cube root" -> "cbrt"
     _MULTI_WORD_FUNCTIONS = {

@@ -144,6 +144,7 @@ TOOL_HANDLERS: dict[str, Any] = {
 MAX_REQUEST_BYTES = 1_000_000
 MAX_OUTPUT_BYTES = 1_000_000
 MAX_REQUESTS_PER_SECOND = 10
+MAX_REQUEST_ID_LENGTH = 1024
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:
@@ -479,6 +480,15 @@ def handle_request(request: Any) -> dict | None:
 
     if "method" not in request:
         return _invalid_request(request.get("id"), "Invalid Request: missing 'method'")
+
+    request_id = request.get("id")
+    if request_id is not None:
+        id_str = str(request_id)
+        if len(id_str) > MAX_REQUEST_ID_LENGTH:
+            return _invalid_request(
+                None,
+                f"Invalid Request: 'id' exceeds maximum length of {MAX_REQUEST_ID_LENGTH}",
+            )
 
     method = request["method"]
 
