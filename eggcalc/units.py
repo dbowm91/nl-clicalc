@@ -55,7 +55,12 @@ class UnitValue:
         return abs(self.value - other.value) < FLOAT_EPSILON
 
     def __hash__(self) -> int:
-        return hash((round(self.value, 10), self.unit))
+        # Use 9 decimal places (coarser than FLOAT_EPSILON=1e-10) to
+        # guarantee the hash/equality contract: if __eq__ returns True
+        # (values within 1e-10), the hash must be identical. At 9 decimal
+        # places the rounding step is 1e-9, so values differing by < 1e-10
+        # always land in the same rounding bin.
+        return hash((round(self.value, 9), self.unit))
 
     def __add__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
@@ -617,6 +622,10 @@ def _build_unit_conversions() -> dict[tuple[str, str], float]:
         unit_factors = {unit: factor for unit, factor in units.items()}
 
         for from_unit, from_factor in unit_factors.items():
+            # Skip "in" (inches) as a from_unit because it conflicts with
+            # Python's `in` keyword in AST parsing. All callers normalize
+            # "in" to "inch" via UNIT_ALIASES before consulting this table,
+            # so "in" is never looked up as a from_unit in practice.
             if from_unit == "in":
                 continue
             for to_unit, to_factor in unit_factors.items():

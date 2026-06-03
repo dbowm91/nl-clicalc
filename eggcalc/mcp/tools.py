@@ -470,6 +470,15 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
                 "factor": None,
             }, tool="unit_convert")
 
+        from_cat = get_unit_category(from_unit)
+        to_cat = get_unit_category(to_unit)
+        if from_cat is not None and to_cat is not None and from_cat != to_cat:
+            return _error_response(
+                "conversion_error",
+                f"Cannot convert between incompatible categories: {from_cat} ({from_unit}) -> {to_cat} ({to_unit})",
+                tool="unit_convert",
+            )
+
         factor = get_conversion_factor(from_unit, to_unit)
         result = value * factor
 
