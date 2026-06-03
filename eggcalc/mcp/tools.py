@@ -506,6 +506,8 @@ def constant_lookup(name: str) -> dict:
         Success response with constant value and symbol.
     """
     try:
+        name = _require_str(name, "name", "constant_lookup")
+
         if len(name) > MAX_TEXT_LENGTH:
             return _error_response("input_too_large", f"Name length {len(name)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}", tool="constant_lookup")
 
@@ -3624,6 +3626,9 @@ def prompt_input_inspect_mcp(
     """
     if (err := _require_str(text, "text", "prompt_input_inspect")) is not None:
         return err
+
+    if phrase_patterns is not None:
+        phrase_patterns = [str(p) for p in phrase_patterns]
 
     valid_checks = {
         "unicode_hidden", "bidi", "html_comments", "markdown_links",

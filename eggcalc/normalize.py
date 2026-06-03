@@ -640,21 +640,6 @@ def apply_math_functions(
     - 5 factorial -> factorial(5)  (implicit-mul swap: leading number becomes the arg)
     - 5 sin -> sin(5)
     """
-    _SINGLE_ARG_IMPLICIT_MUL: set[str] = {
-        "sqrt", "sin", "cos", "tan", "asin", "acos", "atan",
-        "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
-        "exp", "abs", "factorial", "fact", "cbrt", "floor",
-        "ceil", "round", "sign", "isprime", "nextprime",
-        "prevprime", "random", "gauss", "hypot", "primefactors",
-        "randint",
-    }
-
-    _MULTI_ARG_OF_FUNCS: set[str] = {
-        "mean", "median", "mode", "std", "variance",
-        "gcd", "lcm", "perm", "comb", "nPr", "nCr",
-        "sum", "max", "min", "clamp",
-    }
-
     def _is_pure_num_token(tok: str) -> bool:
         stripped = tok.strip("+-")
         return stripped.isdigit() and not any(c.isalpha() for c in stripped)
@@ -957,6 +942,7 @@ def _should_split_number_sequence(token: str) -> bool:
         stripped = part.strip('+-')
         if not stripped.replace('.', '').replace('e', '').replace('E', '').isdigit():
             return False
+    return True
 
 
 # Module-level binary-word validation. Detects <value> not/in/to/as/into <value>
@@ -1095,9 +1081,9 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     _DIGIT_SCALES: dict[str, str] = {
         "thousand": "1000",
         "million": "1000000",
-        "billion": "1000000000000",
-        "trillion": "1000000000000000000",
-        "quadrillion": "1000000000000000000",
+        "billion": "1000000000",
+        "trillion": "1000000000000",
+        "quadrillion": "1000000000000000",
     }
     for scale_word, scale_val in _DIGIT_SCALES.items():
         expression = re.sub(
@@ -1557,81 +1543,6 @@ def _handle_unit_conversion_from_tokens(tokens: list) -> list:
                                 f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
                             ]
                             + tokens[next_idx + 2:]
-                        )
-                        return new_tokens
-
-    return tokens
-
-    for i in range(len(tokens) - 2):
-        token = tokens[i]
-        from_unit = None
-        from_unit_normalized = None
-        num_part = None
-        for unit in _UNITS_BY_LENGTH:
-            if token.endswith(unit):
-                num_part = token[: -len(unit)]
-                if num_part and num_part[-1].isdigit():
-                    from_unit = unit
-                    from_unit_normalized = UNIT_ALIASES.get(from_unit, from_unit)
-                    break
-        if from_unit is None:
-            last_char = token[-1:] if token else ""
-            if last_char.lower() in _LOWERCASE_TEMP_UNITS:
-                candidate_num = token[:-1]
-                if candidate_num and candidate_num[-1].isdigit():
-                    from_unit = last_char
-                    from_unit_normalized = _LOWERCASE_TEMP_UNITS[last_char.lower()]
-                    num_part = candidate_num
-
-        # Bare-number source: e.g., tokens[i] is just "1" (no unit suffix)
-        bare_number = False
-        if from_unit is None and token and (token[0].isdigit() or token[0] == "-") and token[-1].isdigit():
-            try:
-                float(token)
-                bare_number = True
-                num_part = token
-                from_unit_normalized = ""
-            except ValueError:
-                pass
-
-        if from_unit is not None or bare_number:
-            conv_word = tokens[i + 1].upper()
-            if conv_word in {"IN", "TO"}:
-                to_token = tokens[i + 2]
-                to_unit_normalized = None
-
-                for unit2 in _UNITS_BY_LENGTH:
-                    if to_token == unit2 or to_token.endswith(unit2):
-                        to_unit_normalized = UNIT_ALIASES.get(unit2, unit2)
-                        break
-                if to_unit_normalized is None and to_token.lower() in _LOWERCASE_TEMP_UNITS:
-                    to_unit_normalized = _LOWERCASE_TEMP_UNITS[to_token.lower()]
-
-                if bare_number:
-                    if to_unit_normalized:
-                        new_tokens = (
-                            tokens[:i]
-                            + [f"{num_part}*{to_unit_normalized}"]
-                            + tokens[i + 3:]
-                        )
-                        return new_tokens
-                elif to_unit_normalized and from_unit_normalized in UNIT_ALIASES:
-                    from .units import are_units_compatible, get_unit_category
-
-                    cat1 = get_unit_category(from_unit_normalized)
-                    cat2 = get_unit_category(to_unit_normalized)
-
-                    if (
-                        cat1
-                        and cat2
-                        and are_units_compatible(from_unit_normalized, to_unit_normalized)
-                    ):
-                        new_tokens = (
-                            tokens[:i]
-                            + [
-                                f"convert({num_part}*{from_unit_normalized},{to_unit_normalized})"
-                            ]
-                            + tokens[i + 3:]
                         )
                         return new_tokens
 

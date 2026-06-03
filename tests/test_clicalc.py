@@ -1184,5 +1184,117 @@ class TestWorkerReap:
         assert elapsed < 5.0, f"Timeout took {elapsed:.2f}s"
 
 
+class TestDigitScales:
+    """Verify _DIGIT_SCALES produces correct results."""
+
+    def test_billion_correct(self):
+        """'5 billion' should be 5_000_000_000, not 5_000_000_000_000."""
+        result, code = run("5 billion", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 5_000_000_000
+
+    def test_trillion_correct(self):
+        """'3 trillion' should be 3_000_000_000_000."""
+        result, code = run("3 trillion", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 3_000_000_000_000
+
+    def test_quadrillion_correct(self):
+        """'2 quadrillion' should be 2_000_000_000_000_000."""
+        result, code = run("2 quadrillion", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 2_000_000_000_000_000
+
+    def test_million_still_correct(self):
+        """'7 million' should still be 7_000_000."""
+        result, code = run("7 million", NORMALIZE, PATTERNS)
+        assert code == 0
+        val = result.value if isinstance(result, UnitValue) else result
+        assert val == 7_000_000
+
+
+class TestVisitAttribute:
+    """Verify standalone .real/.imag/.conjugate attribute access."""
+
+    def test_real_of_complex(self):
+        """(3+4j).real should be 3.0."""
+        result = evaluate("(3+4j).real")
+        assert abs(result - 3.0) < 1e-10
+
+    def test_imag_of_complex(self):
+        """(3+4j).imag should be 4.0."""
+        result = evaluate("(3+4j).imag")
+        assert abs(result - 4.0) < 1e-10
+
+    def test_real_of_real(self):
+        """(5).real should be 5."""
+        result = evaluate("(5).real")
+        assert result == 5
+
+    def test_imag_of_real(self):
+        """(5).imag should be 0.0."""
+        result = evaluate("(5).imag")
+        assert result == 0.0
+
+    def test_conjugate(self):
+        """(3+4j).conjugate should be (3-4j)."""
+        result = evaluate("(3+4j).conjugate")
+        assert isinstance(result, complex)
+        assert result == (3-4j)
+
+
+class TestComplexPower:
+    """Verify complex number exponentiation works."""
+
+    def test_i_squared(self):
+        """i**2 should be -1 (or close to it)."""
+        result = evaluate("i**2")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - (-1)) < 1e-10 or abs(val - (-1+0j)) < 1e-10
+
+    def test_j_squared(self):
+        """j**2 should be -1."""
+        result = evaluate("j**2")
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - (-1)) < 1e-10 or abs(val - (-1+0j)) < 1e-10
+
+    def test_complex_power(self):
+        """(1+1j)**2 should be 2j."""
+        result = evaluate("(1+1j)**2")
+        assert isinstance(result, complex)
+        assert abs(result - 2j) < 1e-10
+
+
+class TestLargeIntStrSafety:
+    """Verify large integer str() doesn't raise ValueError."""
+
+    def test_large_shift_result(self):
+        """1 << 14300 should not raise ValueError."""
+        result = evaluate("1 << 14300")
+        assert result is not None
+        assert isinstance(result, int)
+        assert result > 0
+
+    def test_large_factorial(self):
+        """factorial(1000) should not raise ValueError."""
+        result = evaluate("factorial(1000)")
+        assert result is not None
+        assert isinstance(result, int)
+
+
+class TestNestingDepth:
+    """Verify MAX_NESTING_DEPTH is enforced."""
+
+    def test_deep_nesting_rejected(self):
+        """Deeply nested expressions should raise EvaluationError."""
+        from eggcalc.evaluator import MAX_NESTING_DEPTH
+        expr = "1+" * (MAX_NESTING_DEPTH + 10) + "1"
+        with pytest.raises(EvaluationError, match="deeply nested"):
+            evaluate(expr)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

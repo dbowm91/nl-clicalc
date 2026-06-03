@@ -381,15 +381,15 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "pt": 0.473176473,
         "pint": 0.473176473,
         "pints": 0.473176473,
-        "cup": 0.2365882365,
-        "cups": 0.2365882365,
-        "floz": 0.0295735296,
-        "fl oz": 0.0295735296,
-        "fluidounce": 0.0295735296,
-        "fluidounces": 0.0295735296,
-        "tbsp": 0.0147867678,
-        "tablespoon": 0.0147867678,
-        "tablespoons": 0.0147867678,
+        "cup": 0.23658823632,
+        "cups": 0.23658823632,
+        "floz": 0.02957352954,
+        "fl oz": 0.02957352954,
+        "fluidounce": 0.02957352954,
+        "fluidounces": 0.02957352954,
+        "tbsp": 0.01478676477,
+        "tablespoon": 0.01478676477,
+        "tablespoons": 0.01478676477,
         "tsp": 0.00492892159,
         "teaspoon": 0.00492892159,
         "teaspoons": 0.00492892159,
@@ -614,6 +614,8 @@ def _build_unit_conversions() -> dict[tuple[str, str], float]:
         unit_factors = {unit: factor for unit, factor in units.items()}
 
         for from_unit, from_factor in unit_factors.items():
+            if from_unit == "in":
+                continue
             for to_unit, to_factor in unit_factors.items():
                 if from_unit != to_unit:
                     key = (from_unit, to_unit)
@@ -1209,7 +1211,6 @@ UNIT_CATEGORIES: dict[str, str] = {
     "ps": "time",
     "min": "time",
     "h": "time",
-    "hr": "time",
     "d": "time",
     "wk": "time",
     "yr": "time",
@@ -1287,11 +1288,9 @@ UNIT_CATEGORIES: dict[str, str] = {
     "V": "voltage",
     "kV": "voltage",
     "mV": "voltage",
-    "uV": "voltage",
     "μV": "voltage",
     "A": "current",
     "mA": "current",
-    "uA": "current",
     "μA": "current",
     "rad": "angle",
     "deg": "angle",
@@ -1300,10 +1299,8 @@ UNIT_CATEGORIES: dict[str, str] = {
     "F": "temperature",
     "R": "temperature",
     "m/s": "speed",
-    "mps": "speed",
     "km/h": "speed",
     "mph": "speed",
-    "mi/h": "speed",
     "kn": "speed",
     "mach": "speed",
     "m2": "area",

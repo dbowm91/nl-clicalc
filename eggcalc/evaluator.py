@@ -120,7 +120,7 @@ def _check_result_size(result: Any) -> Any:
         if not math.isfinite(result.value):
             raise EvaluationError("Result too large")
         if isinstance(result.value, int) and not isinstance(result.value, bool):
-            if len(str(result.value)) > MAX_RESULT_DIGITS:
+            if _int_digit_count(result.value) > MAX_RESULT_DIGITS:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
     if isinstance(result, complex):
         if math.isnan(result.real) or math.isnan(result.imag) or math.isinf(result.real) or math.isinf(result.imag):
@@ -129,7 +129,7 @@ def _check_result_size(result: Any) -> Any:
         if math.isnan(result) or math.isinf(result):
             raise EvaluationError("Result too large")
     if isinstance(result, int) and not isinstance(result, bool):
-        if len(str(result)) > MAX_RESULT_DIGITS:
+        if _int_digit_count(result) > MAX_RESULT_DIGITS:
             raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
     return result
 
@@ -221,6 +221,8 @@ def _entry_size(key: str, value: Any) -> int:
 
     Uses the key length and the str() of the value as a simple proxy.
     """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return len(key) + _int_digit_count(value)
     return len(key) + len(str(value))
 
 
@@ -326,7 +328,7 @@ def _safe_pow(base: float, exp: float) -> float:
     """Safe power function with exponent limits to prevent DoS."""
     if abs(exp) > MAX_EXPONENT:
         raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
-    if base < 0 and exp != int(exp):
+    if not isinstance(base, complex) and base < 0 and exp != int(exp):
         raise EvaluationError("Cannot raise negative number to non-integer power")
     try:
         result = pow(base, exp)
@@ -338,6 +340,16 @@ def _safe_pow(base: float, exp: float) -> float:
     if abs(result) > MAX_RESULT_VALUE:
         raise EvaluationError("Result too large")
     return result
+
+
+def _int_digit_count(n: int) -> int:
+    """Count digits of an integer, safely handling Python 3.11+ str() limits."""
+    try:
+        return len(str(n))
+    except ValueError:
+        # Python 3.11+ raises ValueError for integers with >4300 str digits
+        # Use bit_length as an upper bound: digits <= bit_length * log10(2) + 1
+        return int(n.bit_length() * math.log10(2)) + 1
 
 
 def _safe_factorial(n: int) -> int:
@@ -353,7 +365,7 @@ def _safe_factorial(n: int) -> int:
     if n > MAX_FACTORIAL:
         raise EvaluationError(f"factorial input too large (max {MAX_FACTORIAL})")
     result = math.factorial(n)
-    if len(str(result)) > MAX_RESULT_DIGITS:
+    if _int_digit_count(result) > MAX_RESULT_DIGITS:
         raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
     return result
 
@@ -607,7 +619,7 @@ def _perm(n: int, r: int | None = None) -> int:
         raise EvaluationError("perm requires non-negative input")
     if r is None:
         result = math.factorial(n)
-        if len(str(result)) > MAX_RESULT_DIGITS:
+        if _int_digit_count(result) > MAX_RESULT_DIGITS:
             raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
         return result
     r = int(r)
@@ -1459,6 +1471,20 @@ class Evaluator(ast.NodeVisitor):
         self._memory = Memory()
         self._user_variables: dict[str, Any] = {}
         self._var_lock = threading.Lock()
+        self._depth = 0
+
+    def visit(self, node: ast.AST) -> Any:
+        """Visit a node with depth tracking to prevent deep recursion."""
+        self._depth += 1
+        if self._depth > MAX_NESTING_DEPTH:
+            self._depth -= 1
+            raise EvaluationError(
+                f"Expression too deeply nested (max {MAX_NESTING_DEPTH})"
+            )
+        try:
+            return super().visit(node)
+        finally:
+            self._depth -= 1
 
     def _parse_unit(self, text: str) -> tuple[float, str | None]:
         """Parse a string that may contain a number and unit."""
@@ -1615,7 +1641,7 @@ class Evaluator(ast.NodeVisitor):
             raise EvaluationError("Result too large")
 
         if op_class in (ast.LShift, ast.RShift):
-            if isinstance(result, int) and len(str(result)) > MAX_RESULT_DIGITS:
+            if isinstance(result, int) and _int_digit_count(result) > MAX_RESULT_DIGITS:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
 
         # Compound unit detection for division:
@@ -1662,6 +1688,23 @@ class Evaluator(ast.NodeVisitor):
         if isinstance(operand, UnitValue):
             return UnitValue(result, operand.unit)
         return result
+
+    def visit_Attribute(self, node: ast.Attribute) -> Any:
+        """Visit an attribute access node (e.g., (1+2j).real)."""
+        value = self.visit(node.value)
+        attr = node.attr
+        if attr in ("real", "imag", "conjugate"):
+            if isinstance(value, UnitValue):
+                raw = value.value
+            else:
+                raw = value
+            if attr == "real":
+                return raw.real if isinstance(raw, complex) else raw
+            elif attr == "imag":
+                return raw.imag if isinstance(raw, complex) else 0.0
+            elif attr == "conjugate":
+                return raw.conjugate() if isinstance(raw, complex) else raw
+        raise EvaluationError(f"Unsupported attribute access: '{attr}'")
 
     def visit_Call(self, node: ast.Call) -> Any:
         """Visit a function call node."""

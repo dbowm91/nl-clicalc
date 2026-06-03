@@ -421,5 +421,19 @@ class TestApplyMathFunctionsSwap:
         assert out == ["2", "*", "sqrt", "(", "9", ")"]
 
 
+class TestShouldSplitNumberSequence:
+    """Verify _should_split_number_sequence returns True for valid inputs."""
+
+    def test_returns_true_for_numeric_parts(self):
+        """Function should return True when all parts are numeric."""
+        from eggcalc.normalize import _should_split_number_sequence
+        assert _should_split_number_sequence("1 2 3") is True
+
+    def test_returns_false_for_non_numeric(self):
+        """Function should return False when parts contain non-numeric."""
+        from eggcalc.normalize import _should_split_number_sequence
+        assert _should_split_number_sequence("1 abc 3") is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

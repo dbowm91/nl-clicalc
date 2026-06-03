@@ -566,7 +566,7 @@ def main() -> int:
         try:
             response = handle_request(request)
         except Exception as e:
-            message = str(e).replace('\n', ' ')[:200]
+            message = _sanitize_error(str(e))[:200]
             response = {
                 "jsonrpc": "2.0",
                 "id": request.get("id") if isinstance(request, dict) else None,
