@@ -5764,3 +5764,86 @@ class TestMathEvalEdgeCases:
         content = json.loads(response["result"]["content"][0]["text"])
         # Should return error, not crash
         assert "ok" in content
+
+    def test_extremely_long_expression(self):
+        """Extremely long expression should succeed or return clean error."""
+        expr = "1+" * 500 + "1"
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9204,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": expr},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert "ok" in content
+
+
+class TestValidateRegexInputValidation:
+    """Test validate_regex input validation for non-string samples."""
+
+    def test_non_string_samples_returns_error(self):
+        """validate_regex rejects non-string samples with clear error."""
+        from eggcalc.mcp.tools import validate_regex
+        result = validate_regex(".*", [123, True, None], None)
+        assert result["ok"] is False
+        assert "All samples must be strings" in result["error"]
+
+    def test_string_samples_pass_validation(self):
+        """String samples pass the type check (may fail on pattern match)."""
+        from eggcalc.mcp.tools import validate_regex
+        result = validate_regex("\\d+", ["hello", "world"], None)
+        assert result["ok"] is True
+        assert result["result"]["valid_pattern"] is True
+        for r in result["result"]["results"]:
+            assert r["fullmatch"] is False
+
+
+class TestListCompareOrderedNormalization:
+    """Test list_compare ordered mode with normalization options."""
+
+    def test_ordered_mode_respects_casefold(self):
+        """Ordered mode with casefold ignores case differences."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9300,
+            "method": "tools/call",
+            "params": {
+                "name": "list_compare",
+                "arguments": {
+                    "a": ["Hello", "World"],
+                    "b": ["hello", "world"],
+                    "mode": "ordered",
+                    "casefold": True,
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is True
+        for item in content["result"]["aligned"]:
+            assert item["op"] == "equal"
+
+    def test_ordered_mode_respects_normalization(self):
+        """Ordered mode with NFC normalization treats precomposed and decomposed as equal."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9301,
+            "method": "tools/call",
+            "params": {
+                "name": "list_compare",
+                "arguments": {
+                    "a": ["caf\u00e9"],
+                    "b": ["cafe\u0301"],
+                    "mode": "ordered",
+                    "normalization": "NFC",
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["equal"] is True

@@ -182,6 +182,9 @@ MAX_TEXT_LENGTH = 100_000
 MAX_EXPRESSION_LENGTH = 10_000
 MAX_LIST_ITEMS = 10_000
 MAX_REGEX_SAMPLES = 100
+MAX_PATTERN_LENGTH_REGEX = 1000
+MAX_MATCHES_REGEX = 100
+MAX_TEXT_LENGTH_REGEX = 100_000
 REGEX_TIMEOUT_SECONDS = 5
 MAX_CONCURRENT_SPAWNED = 4
 
@@ -1152,6 +1155,15 @@ def validate_regex(
             tool="validate_regex",
         )
 
+    non_str_samples = [i for i, s in enumerate(samples) if not isinstance(s, str)]
+    if non_str_samples:
+        return _error_response(
+            "invalid_arguments",
+            "All samples must be strings",
+            [f"Non-string items at indices: {non_str_samples[:5]}"],
+            tool="validate_regex",
+        )
+
     if len(pattern) > MAX_PATTERN_LENGTH_REGEX:
         return _error_response(
             "input_too_large",
@@ -1360,11 +1372,6 @@ def json_shape(text: str, max_depth: int = 4, max_keys: int = 100, max_array_ite
         return _success_response(result, tool="json_shape")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="json_shape")
-
-
-MAX_TEXT_LENGTH_REGEX = 100_000
-MAX_PATTERN_LENGTH_REGEX = 1000
-MAX_MATCHES_REGEX = 100
 
 
 def regex_finditer(
@@ -1715,6 +1722,18 @@ def list_compare(
             equal = raw_result["same_unordered"]
 
         if mode == "ordered":
+            import unicodedata
+
+            def _transform_ordered(s: str) -> str:
+                result = s
+                if trim:
+                    result = result.strip()
+                if normalization != "raw":
+                    result = unicodedata.normalize(normalization, result)
+                if casefold:
+                    result = result.casefold()
+                return result
+
             aligned = []
             max_len = max(len(a), len(b))
             for i in range(max_len):
@@ -1722,7 +1741,7 @@ def list_compare(
                     aligned.append({"op": "insert", "b_index": i, "b": b[i]})
                 elif i >= len(b):
                     aligned.append({"op": "delete", "a_index": i, "a": a[i]})
-                elif a[i] != b[i]:
+                elif a[i] != b[i] and _transform_ordered(a[i]) != _transform_ordered(b[i]):
                     aligned.append({"op": "replace", "a_index": i, "a": a[i], "b_index": i, "b": b[i]})
                 else:
                     aligned.append({"op": "equal", "a_index": i, "a": a[i], "b_index": i, "b": b[i]})

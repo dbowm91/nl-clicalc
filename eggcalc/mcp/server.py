@@ -330,6 +330,10 @@ def _validate_value_against_schema(
 
     # Recursive validation for arrays
     if expected_type == "array" and isinstance(value, list):
+        max_items = prop.get("maxItems")
+        if max_items is not None and len(value) > max_items:
+            return f"Argument '{path}' has {len(value)} items, exceeds maxItems {max_items}"
+
         items_schema = prop.get("items")
         if items_schema:
             for i, item in enumerate(value):
