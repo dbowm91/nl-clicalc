@@ -327,7 +327,7 @@ def _sanitize_error(message: str) -> str:
     text = text.encode("ascii", "replace").decode("ascii")
     text = re.sub(r'File\s+["\'][^"\']*["\'],\s*line\s+\d+', 'File "<redacted>", line <redacted>', text)
     text = re.sub(r'(?:in\s+)<[^>]+>', 'in <module>', text)
-    text = re.sub(r'[A-Za-z_][\w.]*\s*=\s*["\'][^"\']*["\']', '<var>=<redacted>', text)
+    text = re.sub(r'^\s*[A-Za-z_]\w*\s*=\s*["\'][^"\']*["\']', '<var>=<redacted>', text, flags=re.MULTILINE)
     return text
 
 
@@ -421,7 +421,6 @@ def math_eval(expression: str) -> dict:
         return _error_response("invalid_arguments", f"expression must be a string, got {type(expression).__name__}", tool="math_eval")
     if len(expression) > MAX_EXPRESSION_LENGTH:
         return _error_response("input_too_large", f"Expression exceeds maximum length of {MAX_EXPRESSION_LENGTH}", tool="math_eval")
-    _SPAWN_SEMAPHORE.acquire()
     try:
         result = evaluate_with_timeout(expression, timeout=5.0)
         if hasattr(result, 'value') and hasattr(result, 'unit'):
@@ -441,8 +440,6 @@ def math_eval(expression: str) -> dict:
         return _error_response("evaluation_error", str(e), ["Check expression syntax"], tool="math_eval")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="math_eval")
-    finally:
-        _SPAWN_SEMAPHORE.release()
 
 
 def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:

@@ -59,6 +59,8 @@ __all__ = [
 _lock = threading.Lock()
 _config_loaded = False
 _mcp_mode = False
+_MAX_CONCURRENT_EVAL_SPAWNS = 4
+_EVAL_SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(_MAX_CONCURRENT_EVAL_SPAWNS)
 
 MAX_EXPONENT = 10000
 MAX_FACTORIAL = 1000
@@ -348,9 +350,9 @@ def _safe_pow(base: float, exp: float) -> float:
             raise EvaluationError("Cannot raise negative number to non-integer power")
     try:
         result = pow(base, exp)
-    except (OverflowError, ZeroDivisionError):
-        if base == 0:
-            raise EvaluationError("Cannot raise zero to a negative power") from None
+    except ZeroDivisionError:
+        raise EvaluationError("Cannot raise zero to a negative power") from None
+    except OverflowError:
         raise EvaluationError("Result too large") from None
     if isinstance(result, float):
         if math.isnan(result) or math.isinf(result):
@@ -376,7 +378,7 @@ def _safe_factorial(n: int) -> int:
     if isinstance(n, float):
         if not n.is_integer():
             raise EvaluationError("factorial requires integer input")
-        if abs(n) > MAX_FACTORIAL * 10:
+        if abs(n) > MAX_FACTORIAL:
             raise EvaluationError(f"factorial input too large (max {MAX_FACTORIAL})")
     n = int(n)
     if n < 0:
@@ -397,11 +399,20 @@ def _mean(*args: float) -> float:
 
 
 def _std(*args: float) -> float:
-    """Calculate standard deviation."""
+    """Calculate population standard deviation."""
     if len(args) < 2:
         raise EvaluationError("std requires at least two arguments")
     m = sum(args) / len(args)
     variance = sum((x - m) ** 2 for x in args) / len(args)
+    return math.sqrt(variance)
+
+
+def _std_sample(*args: float) -> float:
+    """Calculate sample standard deviation (n-1 denominator)."""
+    if len(args) < 2:
+        raise EvaluationError("std_sample requires at least two arguments")
+    m = sum(args) / len(args)
+    variance = sum((x - m) ** 2 for x in args) / (len(args) - 1)
     return math.sqrt(variance)
 
 
@@ -1411,6 +1422,8 @@ class Evaluator(ast.NodeVisitor):
         "median": _median,
         "mode": _mode,
         "std": _std,
+        "std_sample": _std_sample,
+        "stds": _std_sample,
         "variance": _variance,
         "var": _variance,
         "variance_sample": _variance_sample,
@@ -1976,6 +1989,9 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
     evaluation in a separate process that can be reliably terminated.
     A ThreadPoolExecutor's future.cancel() does NOT stop a running thread.
 
+    Concurrency is bounded by _EVAL_SPAWN_SEMAPHORE to prevent fork-bomb
+    scenarios when multiple callers invoke this function simultaneously.
+
     Args:
         expression: A raw expression string (with spaces, natural language, etc.)
         timeout: Maximum time in seconds (default: 5.0)
@@ -1998,8 +2014,13 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
     proc: multiprocessing.Process | None = None
-    proc = ctx.Process(target=_evaluate_with_timeout_worker, args=(expression, queue))
-    proc.start()
+    _EVAL_SPAWN_SEMAPHORE.acquire()
+    try:
+        proc = ctx.Process(target=_evaluate_with_timeout_worker, args=(expression, queue))
+        proc.start()
+    except Exception:
+        _EVAL_SPAWN_SEMAPHORE.release()
+        raise
 
     try:
         status, value = queue.get(timeout=timeout)
@@ -2025,6 +2046,7 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
                 proc.close()
             except Exception:
                 pass
+        _EVAL_SPAWN_SEMAPHORE.release()
 
     if status == "error":
         raise EvaluationError(value)
