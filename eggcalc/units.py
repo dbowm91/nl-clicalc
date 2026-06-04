@@ -66,18 +66,26 @@ class UnitValue:
         if isinstance(other, UnitValue):
             if not are_units_compatible(self.unit, other.unit):
                 raise ValueError(f"Cannot add incompatible units: {self.unit} + {other.unit}")
-            if self.unit == other.unit or other.unit is None or self.unit is None:
+            if self.unit == other.unit:
                 result = self.value + other.value
+                out_unit = self.unit
+            elif other.unit is None:
+                result = self.value + other.value
+                out_unit = self.unit
+            elif self.unit is None:
+                result = self.value + other.value
+                out_unit = other.unit
             else:
                 converted = other.convert_to(self.unit)
                 result = self.value + converted.value
+                out_unit = self.unit
         else:
             raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
         if isinstance(result, float) and not math.isfinite(result):
             raise OverflowError("Result too large")
         if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
             raise OverflowError("Result too large")
-        return UnitValue(result, self.unit)
+        return UnitValue(result, out_unit)
     def __radd__(self, other: Numeric) -> UnitValue:
         return self.__add__(other)
 
@@ -85,18 +93,26 @@ class UnitValue:
         if isinstance(other, UnitValue):
             if not are_units_compatible(self.unit, other.unit):
                 raise ValueError(f"Cannot subtract incompatible units: {self.unit} - {other.unit}")
-            if self.unit == other.unit or other.unit is None or self.unit is None:
+            if self.unit == other.unit:
                 result = self.value - other.value
+                out_unit = self.unit
+            elif other.unit is None:
+                result = self.value - other.value
+                out_unit = self.unit
+            elif self.unit is None:
+                result = self.value - other.value
+                out_unit = other.unit
             else:
                 converted = other.convert_to(self.unit)
                 result = self.value - converted.value
+                out_unit = self.unit
         else:
             raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
         if isinstance(result, float) and not math.isfinite(result):
             raise OverflowError("Result too large")
         if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
             raise OverflowError("Result too large")
-        return UnitValue(result, self.unit)
+        return UnitValue(result, out_unit)
 
     def __rsub__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
@@ -207,6 +223,9 @@ class UnitValue:
 
         if self.unit == target_unit:
             return UnitValue(self.value, target_unit)
+
+        if target_unit is None:
+            raise ValueError("Target unit cannot be None")
 
         if self.unit is None:
             raise ValueError("Cannot convert dimensionless value")
@@ -1012,6 +1031,11 @@ UNIT_ALIASES: dict[str, str] = {
     "atmospheres": "atm",
     "psi": "psi",
     "psia": "psi",
+    "mmHg": "mmHg",
+    "torr": "torr",
+    "inHg": "inHg",
+    "mmH2O": "mmH2O",
+    "inH2O": "inH2O",
     # Energy
     "J": "J",
     "joule": "J",
@@ -1122,6 +1146,7 @@ UNIT_ALIASES: dict[str, str] = {
     "meterspersecond": "m/s",
     "km/h": "km/h",
     "kph": "km/h",
+    "kmh": "km/h",
     "kilometerperhour": "km/h",
     "kilometersperhour": "km/h",
     "mph": "mph",

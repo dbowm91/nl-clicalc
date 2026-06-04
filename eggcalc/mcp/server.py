@@ -473,7 +473,8 @@ def _handle_call_tool(request: dict) -> dict:
                             "type": "text",
                             "text": json.dumps(truncated),
                         }
-                    ]
+                    ],
+                    "isError": True,
                 },
             }
 
@@ -595,6 +596,11 @@ def handle_request(request: Any) -> dict | None:
             )
 
     method = request["method"]
+    if not isinstance(method, str):
+        return _invalid_request(
+            request.get("id"),
+            "Invalid Request: 'method' must be a string",
+        )
 
     if method == "tools/list":
         return _handle_list_tools(request)

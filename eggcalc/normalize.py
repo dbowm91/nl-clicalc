@@ -120,7 +120,7 @@ OPERATOR_CONVERSIONS: dict[str, list[str]] = {
     "*": ["times", "multiplied by", "of"],  # "of" for "30% of 200"
     "/": ["divided by", "over", "per", "divide"],
     "**": ["raised to", "raised to the power of", "to the power of"],
-    ".": ["point"],
+    # "point" handled separately to avoid ".5" issues at expression start
     ",": [],
     "&": ["bitand", "bit and"],
     "|": ["OR", "or", "bitor", "bit or"],
@@ -128,7 +128,7 @@ OPERATOR_CONVERSIONS: dict[str, list[str]] = {
     "<<": ["left shift", "shift left", "lshift"],
     ">>": ["right shift", "shift right", "rshift"],
     "~": ["NOT", "not", "bitnot", "bit not"],
-    "%": ["mod", "modulo", "percent", "remainder"],
+    "%": ["mod", "modulo", "remainder"],
     # Unit conversion words - these get split out as tokens
     "IN": ["in", "into"],
     "TO": ["to", "as"],
@@ -1197,13 +1197,21 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         # Special case: don't convert "in"/"into" when it appears to be a unit suffix
         # (preceded by a digit, no following unit, or followed by something that
         # isn't a unit). E.g., "5 in" or "5 in to cm" where "in" is a unit, not a keyword.
-        if word.lower() in ("in", "into") and re.search(
-            r"\d\s+" + re.escape(word) + r"(?:\s*$|\s+(?!\d))",
-            expression,
-            flags=re.IGNORECASE,
-        ):
-            continue
+        if word.lower() in ("in", "into"):
+            # Preserve "in" as a unit (not keyword) when:
+            # 1. At end of expression ("5 in" = 5 inches), OR
+            # 2. Followed by a conversion keyword ("to"/"as") - e.g., "5 in to cm"
+            if re.search(
+                r"\d\s+" + re.escape(word) + r"(?:\s*$|\s+(?:to|as)\b)",
+                expression,
+                flags=re.IGNORECASE,
+            ):
+                continue
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
+
+    # Handle "point" as decimal separator: only when preceded by a digit or ')'
+    # This avoids ".5" at expression start while still allowing "5 point 3" -> "5.3"
+    expression = re.sub(r"(?<=[\d)])\s*point\s*", ".", expression, flags=re.IGNORECASE)
 
     # Handle "N percent" -> "N/100" AFTER word_to_all substitutions
     # This allows NL words like "fifty" to be converted to digits first
@@ -1249,8 +1257,9 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         replacement_fn = lambda m, uu1=u1, uu2=u2: f"({m.group(1)}*{uu1})/({uu2})"
         expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
 
-    # Convert percentages (e.g., 50% -> 0.5)
-    expression = re.sub(r"(\d+(?:\.\d+)?)\s*%", lambda m: str(float(m.group(1)) / 100), expression)
+    # Convert percentages (e.g., 50% -> 0.5, but not 5 % 3 which is modulo)
+    # Only match % directly attached to a number (no space before %)
+    expression = re.sub(r"(\d+(?:\.\d+)?)%", lambda m: str(float(m.group(1)) / 100), expression)
 
     # Convert 'i' suffix to 'j' for complex numbers (e.g., 3+4i -> 3+4j)
     # Match: number followed by 'i' (not preceded by another letter)
@@ -1409,7 +1418,7 @@ def _join_number_parts(expression: str) -> str:
         return expression
 
     _OPERATOR_TOKENS: set[str] = {
-        "+", "-", "*", "/", "**", "%", "&", "|", "^", "<<", ">>", "~",
+        "+", "-", "*", "/", "//", "**", "%", "&", "|", "^", "<<", ">>", "~",
         "IN", "TO", "MOD",
     }
 
@@ -1512,7 +1521,7 @@ def _preprocess_units(expression: str) -> str:
             if i < len(expression):
                 # Quick check: does the remaining start with a potential unit prefix?
                 remaining = expression[i:]
-                if remaining and remaining[0] not in prefixes:
+                if remaining and remaining[0] not in prefixes and remaining[0].lower() not in _LOWERCASE_TEMP_UNITS:
                     # No unit possible, skip unit search
                     result.append(num)
                 else:

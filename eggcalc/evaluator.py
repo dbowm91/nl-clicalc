@@ -71,6 +71,7 @@ MAX_RESULT_DIGITS = 10000
 MAX_SHIFT_COUNT = 50000
 DEFAULT_CACHE_SIZE = 1024
 MAX_CACHE_BYTES = 64 * 1024 * 1024  # 64 MB soft cap for _cache
+_SORTED_UNIT_ALIASES: list[str] = sorted(UNIT_ALIASES.keys(), key=len, reverse=True)
 
 # One-letter physical-constant names that are now unreachable as constants
 # because visit_Name checks UNIT_ALIASES first. Documented for users who
@@ -378,7 +379,10 @@ def _safe_pow(base: float, exp: float) -> float:
         raise EvaluationError("Cannot raise zero to a negative power") from None
     except OverflowError:
         raise EvaluationError("Result too large") from None
-    if isinstance(result, float):
+    if isinstance(result, complex):
+        if math.isnan(result.real) or math.isnan(result.imag) or math.isinf(result.real) or math.isinf(result.imag):
+            raise EvaluationError("Result too large")
+    elif isinstance(result, float):
         if math.isnan(result) or math.isinf(result):
             raise EvaluationError("Result too large")
     if abs(result) > MAX_RESULT_VALUE:
@@ -995,7 +999,7 @@ def _acosh(x):
 
 _atanh = _complex_aware(math.atanh, cmath.atanh, use_complex_for_abs_gt_one=True)
 def _cbrt_impl(x: float) -> float:
-    return math.copysign(abs(x) ** (1/3), x)
+    return math.cbrt(x)
 
 
 def _cbrt_complex(x: complex) -> complex:
@@ -1417,7 +1421,7 @@ class Evaluator(ast.NodeVisitor):
         "ln": _log,
         "log10": _log10,
         "log2": _log2,
-        "log1p": math.log1p,
+        "log1p": _complex_aware(math.log1p, lambda x: cmath.log(1 + x), use_complex_for_negative=True),
         "exp": _exp,
         "expm1": math.expm1,
         # Power and root (complex-aware)
@@ -1594,7 +1598,7 @@ class Evaluator(ast.NodeVisitor):
         text = text.strip()
 
         # Check for unit suffix
-        for unit in sorted(UNIT_ALIASES.keys(), key=len, reverse=True):
+        for unit in _SORTED_UNIT_ALIASES:
             if text.endswith(unit):
                 num_str = text[: -len(unit)].strip()
                 if num_str:
@@ -1655,7 +1659,7 @@ class Evaluator(ast.NodeVisitor):
             if node.value in self.CONSTANTS:
                 return self.CONSTANTS[node.value]
             # Check if it looks like a number with unit
-            for unit in sorted(UNIT_ALIASES.keys(), key=len, reverse=True):
+            for unit in _SORTED_UNIT_ALIASES:
                 if node.value.endswith(unit) and len(node.value) > len(unit):
                     num_part = node.value[: -len(unit)].strip()
                     if num_part:
@@ -1922,6 +1926,10 @@ class Evaluator(ast.NodeVisitor):
                 return result
             if result is None:
                 return None  # Functions like seed() and clearvars() return None
+            if isinstance(result, (tuple, list)):
+                return result
+            if isinstance(result, dict):
+                return result
             if not isinstance(result, (int, float, complex)):
                 raise EvaluationError(f"Result must be a number, got '{type(result)}'")
             return _check_result_size(result)

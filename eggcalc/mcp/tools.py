@@ -638,6 +638,8 @@ def text_measure(text: str, detail: str = "normal") -> dict:
         return _success_response(summary_result, tool="text_measure")
     except ValueError as e:
         return _error_response("invalid_arguments", str(e), tool="text_measure")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_measure")
 
 
 def text_equal(
@@ -1147,6 +1149,14 @@ def validate_regex(
             "input_too_large",
             f"Number of samples {len(samples)} exceeds MAX_REGEX_SAMPLES {MAX_REGEX_SAMPLES}",
             [f"Maximum {MAX_REGEX_SAMPLES} samples allowed"],
+            tool="validate_regex",
+        )
+
+    if len(pattern) > MAX_PATTERN_LENGTH_REGEX:
+        return _error_response(
+            "input_too_large",
+            f"Pattern length {len(pattern)} exceeds MAX_PATTERN_LENGTH_REGEX {MAX_PATTERN_LENGTH_REGEX}",
+            [f"Maximum pattern length is {MAX_PATTERN_LENGTH_REGEX} characters"],
             tool="validate_regex",
         )
 

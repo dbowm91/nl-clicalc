@@ -20,12 +20,13 @@ os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
 __version__ = "1.1.1"
 
 # === Collected imports ===
+import math
 import threading
 import ast
 import cmath
 import contextvars
-import math
 import multiprocessing
+import os
 import random
 from collections import OrderedDict
 from typing import Any
@@ -48,6 +49,7 @@ import functools
 import shlex
 import zlib
 import keyword
+import concurrent.futures
 import inspect
 import time
 from collections import deque
@@ -70,6 +72,8 @@ class UnitValue:
     def __init__(self, value: float, unit: str | None = None) -> None:
         self.value = value
         self.unit = unit
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"UnitValue does not support non-finite values: {value}")
 
     def __repr__(self) -> str:
         if self.unit:
@@ -89,20 +93,37 @@ class UnitValue:
             return NotImplemented
         if self.unit != other.unit:
             return False
-        return abs(self.value - other.value) < FLOAT_EPSILON
+        return self.value == other.value
 
     def __hash__(self) -> int:
-        return hash((round(self.value, 10), self.unit))
+        if isinstance(self.value, complex):
+            return hash((self.value.real, self.value.imag, self.unit))
+        return hash((self.value, self.unit))
 
     def __add__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             if not are_units_compatible(self.unit, other.unit):
                 raise ValueError(f"Cannot add incompatible units: {self.unit} + {other.unit}")
-            if self.unit == other.unit or other.unit is None or self.unit is None:
-                return UnitValue(self.value + other.value, self.unit or other.unit)
-            converted = other.convert_to(self.unit)
-            return UnitValue(self.value + converted.value, self.unit)
-        raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
+            if self.unit == other.unit:
+                result = self.value + other.value
+                out_unit = self.unit
+            elif other.unit is None:
+                result = self.value + other.value
+                out_unit = self.unit
+            elif self.unit is None:
+                result = self.value + other.value
+                out_unit = other.unit
+            else:
+                converted = other.convert_to(self.unit)
+                result = self.value + converted.value
+                out_unit = self.unit
+        else:
+            raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
+        if isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+        return UnitValue(result, out_unit)
     def __radd__(self, other: Numeric) -> UnitValue:
         return self.__add__(other)
 
@@ -110,11 +131,26 @@ class UnitValue:
         if isinstance(other, UnitValue):
             if not are_units_compatible(self.unit, other.unit):
                 raise ValueError(f"Cannot subtract incompatible units: {self.unit} - {other.unit}")
-            if self.unit == other.unit or other.unit is None or self.unit is None:
-                return UnitValue(self.value - other.value, self.unit or other.unit)
-            converted = other.convert_to(self.unit)
-            return UnitValue(self.value - converted.value, self.unit)
-        raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
+            if self.unit == other.unit:
+                result = self.value - other.value
+                out_unit = self.unit
+            elif other.unit is None:
+                result = self.value - other.value
+                out_unit = self.unit
+            elif self.unit is None:
+                result = self.value - other.value
+                out_unit = other.unit
+            else:
+                converted = other.convert_to(self.unit)
+                result = self.value - converted.value
+                out_unit = self.unit
+        else:
+            raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
+        if isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+        return UnitValue(result, out_unit)
 
     def __rsub__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
@@ -124,9 +160,19 @@ class UnitValue:
     def __mul__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             if self.unit and other.unit:
-                return UnitValue(self.value * other.value, f"{self.unit}*{other.unit}")
-            return UnitValue(self.value * other.value, self.unit or other.unit)
-        return UnitValue(self.value * other, self.unit)
+                result = self.value * other.value
+                unit = f"{self.unit}*{other.unit}"
+            else:
+                result = self.value * other.value
+                unit = self.unit or other.unit
+        else:
+            result = self.value * other
+            unit = self.unit
+        if isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+        return UnitValue(result, unit)
 
     def __rmul__(self, other: Numeric) -> UnitValue:
         return self.__mul__(other)
@@ -135,20 +181,59 @@ class UnitValue:
         if isinstance(other, UnitValue):
             if self.unit and other.unit:
                 if self.unit == other.unit:
-                    return UnitValue(self.value / other.value, None)
-                return UnitValue(self.value / other.value, f"{self.unit}/{other.unit}")
-            return UnitValue(self.value / other.value, self.unit)
-        return UnitValue(self.value / other, self.unit)
+                    result = self.value / other.value
+                    unit = None
+                else:
+                    result = self.value / other.value
+                    unit = f"{self.unit}/{other.unit}"
+            else:
+                result = self.value / other.value
+                unit = self.unit
+        else:
+            if other == 0:
+                raise ZeroDivisionError("Cannot divide UnitValue by zero")
+            result = self.value / other
+            unit = self.unit
+        if isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+        return UnitValue(result, unit)
 
     def __rtruediv__(self, other: Numeric) -> UnitValue:
         if self.unit:
+            if self.value == 0:
+                raise ZeroDivisionError("Cannot divide by zero UnitValue")
             return UnitValue(other / self.value, f"1/{self.unit}")
+        if self.value == 0:
+            raise ZeroDivisionError("Cannot divide by zero UnitValue")
         return UnitValue(other / self.value, None)
 
     def __pow__(self, other: Numeric) -> UnitValue:
-        if self.unit and isinstance(other, int):
-            return UnitValue(self.value**other, f"{self.unit}**{other}")
-        return UnitValue(self.value**other, self.unit)
+        if isinstance(other, bool):
+            other = int(other)
+        if self.unit:
+            if isinstance(other, int):
+                result = self.value**other
+                unit = f"{self.unit}**{other}"
+            elif isinstance(other, float) and other.is_integer():
+                result = self.value**other
+                unit = f"{self.unit}**{int(other)}"
+            elif isinstance(other, (int, float)):
+                raise TypeError(
+                    f"Cannot raise unit '{self.unit}' to non-integer power"
+                )
+            else:
+                result = self.value**other
+                unit = self.unit
+        else:
+            result = self.value**other
+            unit = self.unit
+        if isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+        return UnitValue(result, unit)
 
     def __neg__(self) -> UnitValue:
         return UnitValue(-self.value, self.unit)
@@ -176,6 +261,9 @@ class UnitValue:
 
         if self.unit == target_unit:
             return UnitValue(self.value, target_unit)
+
+        if target_unit is None:
+            raise ValueError("Target unit cannot be None")
 
         if self.unit is None:
             raise ValueError("Cannot convert dimensionless value")
@@ -430,6 +518,27 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "tsp": 0.00492892159,
         "teaspoon": 0.00492892159,
         "teaspoons": 0.00492892159,
+        "m3": 1000.0,
+        "m^3": 1000.0,
+        "cubicmeter": 1000.0,
+        "cubicmeters": 1000.0,
+        "cm3": 0.001,
+        "cm^3": 0.001,
+        "cc": 0.001,
+        "cubiccentimeter": 0.001,
+        "cubiccentimeters": 0.001,
+        "ft3": 28.316846592,
+        "ft^3": 28.316846592,
+        "cubicfoot": 28.316846592,
+        "cubicfeet": 28.316846592,
+        "in3": 0.016387064,
+        "in^3": 0.016387064,
+        "cubicinch": 0.016387064,
+        "cubicinches": 0.016387064,
+        "yd3": 764.554857984,
+        "yd^3": 764.554857984,
+        "cubicyard": 764.554857984,
+        "cubicyards": 764.554857984,
     },
     # Pressure (base: Pascal)
     "Pa": {
@@ -453,6 +562,11 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "atmosphere": 101325.0,
         "atmospheres": 101325.0,
         "psi": 6894.757293168,
+        "mmHg": 133.32236842105,
+        "torr": 133.32236842105,
+        "inHg": 3386.389,
+        "mmH2O": 9.80665,
+        "inH2O": 249.08891,
     },
     # Energy (base: Joules)
     "J": {
@@ -556,18 +670,18 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "mps": 1.0,
         "meterpersecond": 1.0,
         "meterspersecond": 1.0,
-        "km/h": 0.277777778,
-        "kph": 0.277777778,
-        "kilometerperhour": 0.277777778,
-        "kilometersperhour": 0.277777778,
+        "km/h": 1000 / 3600,
+        "kph": 1000 / 3600,
+        "kilometerperhour": 1000 / 3600,
+        "kilometersperhour": 1000 / 3600,
         "mph": 0.44704,
         "mileperhour": 0.44704,
         "milesperhour": 0.44704,
         "mi/h": 0.44704,
-        "kn": 0.514444,
-        "knot": 0.514444,
-        "knots": 0.514444,
-        "kt": 0.514444,
+        "kn": 1852 / 3600,
+        "knot": 1852 / 3600,
+        "knots": 1852 / 3600,
+        "kt": 1852 / 3600,
         "mach": 340.29,
     },
     # Area (base: square meters)
@@ -651,6 +765,10 @@ def _build_unit_conversions() -> dict[tuple[str, str], float]:
         unit_factors = {unit: factor for unit, factor in units.items()}
 
         for from_unit, from_factor in unit_factors.items():
+            # Skip "in" (inches) as a from_unit because it conflicts with
+            # Python's `in` keyword in AST parsing. All callers normalize
+            # "in" to "inch" via UNIT_ALIASES before consulting this table,
+            # so "in" is never looked up as a from_unit in practice.
             if from_unit == "in":
                 continue
             for to_unit, to_factor in unit_factors.items():
@@ -907,6 +1025,28 @@ UNIT_ALIASES: dict[str, str] = {
     "tsp": "tsp",
     "teaspoon": "tsp",
     "teaspoons": "tsp",
+    # Cubic volume
+    "m3": "m3",
+    "m^3": "m3",
+    "cubicmeter": "m3",
+    "cubicmeters": "m3",
+    "cm3": "cm3",
+    "cm^3": "cm3",
+    "cc": "cm3",
+    "cubiccentimeter": "cm3",
+    "cubiccentimeters": "cm3",
+    "ft3": "ft3",
+    "ft^3": "ft3",
+    "cubicfoot": "ft3",
+    "cubicfeet": "ft3",
+    "in3": "in3",
+    "in^3": "in3",
+    "cubicinch": "in3",
+    "cubicinches": "in3",
+    "yd3": "yd3",
+    "yd^3": "yd3",
+    "cubicyard": "yd3",
+    "cubicyards": "yd3",
     # Pressure
     "Pa": "Pa",
     "pascal": "Pa",
@@ -929,6 +1069,11 @@ UNIT_ALIASES: dict[str, str] = {
     "atmospheres": "atm",
     "psi": "psi",
     "psia": "psi",
+    "mmHg": "mmHg",
+    "torr": "torr",
+    "inHg": "inHg",
+    "mmH2O": "mmH2O",
+    "inH2O": "inH2O",
     # Energy
     "J": "J",
     "joule": "J",
@@ -1039,6 +1184,7 @@ UNIT_ALIASES: dict[str, str] = {
     "meterspersecond": "m/s",
     "km/h": "km/h",
     "kph": "km/h",
+    "kmh": "km/h",
     "kilometerperhour": "km/h",
     "kilometersperhour": "km/h",
     "mph": "mph",
@@ -1293,6 +1439,11 @@ UNIT_CATEGORIES: dict[str, str] = {
     "floz": "volume",
     "tbsp": "volume",
     "tsp": "volume",
+    "m3": "volume",
+    "ft3": "volume",
+    "cm3": "volume",
+    "in3": "volume",
+    "yd3": "volume",
     "Pa": "pressure",
     "kPa": "pressure",
     "MPa": "pressure",
@@ -1301,6 +1452,11 @@ UNIT_CATEGORIES: dict[str, str] = {
     "mbar": "pressure",
     "atm": "pressure",
     "psi": "pressure",
+    "mmHg": "pressure",
+    "torr": "pressure",
+    "inHg": "pressure",
+    "mmH2O": "pressure",
+    "inH2O": "pressure",
     "J": "energy",
     "kJ": "energy",
     "MJ": "energy",
@@ -1423,14 +1579,19 @@ __all__ = [
 
 _lock = threading.Lock()
 _config_loaded = False
+_mcp_mode = False
+_MAX_CONCURRENT_EVAL_SPAWNS = 4
+_EVAL_SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(_MAX_CONCURRENT_EVAL_SPAWNS)
 
 MAX_EXPONENT = 10000
 MAX_FACTORIAL = 1000
 MAX_NESTING_DEPTH = 100
 MAX_RESULT_VALUE = 1e308
 MAX_RESULT_DIGITS = 10000
+MAX_SHIFT_COUNT = 50000
 DEFAULT_CACHE_SIZE = 1024
 MAX_CACHE_BYTES = 64 * 1024 * 1024  # 64 MB soft cap for _cache
+_SORTED_UNIT_ALIASES: list[str] = sorted(UNIT_ALIASES.keys(), key=len, reverse=True)
 
 # One-letter physical-constant names that are now unreachable as constants
 # because visit_Name checks UNIT_ALIASES first. Documented for users who
@@ -1465,10 +1626,9 @@ def _check_constant_unit_collisions() -> None:
     # In assembled single-file mode, UNIT_ALIASES is inlined at the top.
     # In package mode, _IS_ASSEMBLED is False and we use the imported name.
     aliases = UNIT_ALIASES  # type: ignore[name-defined]
-    alias_lower = {a.lower() for a in aliases}
     collisions: list[str] = []
     for c in Evaluator.CONSTANTS:
-        if c.lower() in alias_lower:
+        if c in aliases:
             collisions.append(c)
     if collisions:
         import sys
@@ -1482,7 +1642,11 @@ def _check_constant_unit_collisions() -> None:
 def _check_result_size(result: Any) -> Any:
     """Raise EvaluationError if a result has too many digits or is NaN/inf."""
     if isinstance(result, UnitValue):
-        if not math.isfinite(result.value):
+        if isinstance(result.value, complex):
+            if math.isnan(result.value.real) or math.isnan(result.value.imag) or \
+               math.isinf(result.value.real) or math.isinf(result.value.imag):
+                raise EvaluationError("Result too large")
+        elif not math.isfinite(result.value):
             raise EvaluationError("Result too large")
         if isinstance(result.value, int) and not isinstance(result.value, bool):
             if _int_digit_count(result.value) > MAX_RESULT_DIGITS:
@@ -1506,7 +1670,20 @@ def register_constant(name: str, value: float) -> None:
 
 
 def register_function(name: str, func: Any) -> None:
-    """Register a user-defined function (thread-safe)."""
+    """Register a user-defined function (thread-safe).
+
+    Args:
+        name: Function name (must be a valid Python identifier).
+        func: Callable to register. Must be a function or callable object.
+
+    Raises:
+        TypeError: If func is not callable.
+        ValueError: If name is not a valid identifier.
+    """
+    if not callable(func):
+        raise TypeError(f"func must be callable, got {type(func).__name__}")
+    if not name.isidentifier():
+        raise ValueError(f"name must be a valid identifier, got {name!r}")
     with _lock:
         _default_evaluator.FUNCTIONS[name] = func
 
@@ -1527,8 +1704,17 @@ def load_user_config() -> None:
     the CWD must be controlled by the deployment operator, not by end users.
     An attacker who can place a malicious eggcalc_config.py in the CWD gains
     arbitrary code execution through the import.
+
+    Config loading can be disabled by setting the EGGCALC_NO_CONFIG
+    environment variable to a non-empty string.
     """
     global _config_loaded
+    if _mcp_mode:
+        _config_loaded = True
+        return
+    if os.environ.get("EGGCALC_NO_CONFIG", ""):
+        _config_loaded = True
+        return
     try:
         import eggcalc.normalize as normalize_mod
         import eggcalc_config as config
@@ -1578,6 +1764,8 @@ def load_user_config() -> None:
 def _ensure_config_loaded() -> None:
     """Ensure user config is loaded (lazy loading)."""
     global _config_loaded
+    if _mcp_mode:
+        return
     if not _config_loaded:
         load_user_config()
 
@@ -1698,13 +1886,22 @@ def _safe_pow(base: float, exp: float) -> float:
     """Safe power function with exponent limits to prevent DoS."""
     if abs(exp) > MAX_EXPONENT:
         raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
-    if not isinstance(base, complex) and base < 0 and exp != int(exp):
-        raise EvaluationError("Cannot raise negative number to non-integer power")
+    if not isinstance(base, complex) and base < 0:
+        try:
+            if exp != int(exp):
+                raise EvaluationError("Cannot raise negative number to non-integer power")
+        except (ValueError, TypeError):
+            raise EvaluationError("Cannot raise negative number to non-integer power")
     try:
         result = pow(base, exp)
+    except ZeroDivisionError:
+        raise EvaluationError("Cannot raise zero to a negative power") from None
     except OverflowError:
         raise EvaluationError("Result too large") from None
-    if isinstance(result, float):
+    if isinstance(result, complex):
+        if math.isnan(result.real) or math.isnan(result.imag) or math.isinf(result.real) or math.isinf(result.imag):
+            raise EvaluationError("Result too large")
+    elif isinstance(result, float):
         if math.isnan(result) or math.isinf(result):
             raise EvaluationError("Result too large")
     if abs(result) > MAX_RESULT_VALUE:
@@ -1715,7 +1912,8 @@ def _safe_pow(base: float, exp: float) -> float:
 def _int_digit_count(n: int) -> int:
     """Count digits of an integer, safely handling Python 3.11+ str() limits."""
     try:
-        return len(str(n))
+        s = str(n)
+        return len(s) - (1 if s.startswith('-') else 0)
     except ValueError:
         # Python 3.11+ raises ValueError for integers with >4300 str digits
         # Use bit_length as an upper bound: digits <= bit_length * log10(2) + 1
@@ -1727,7 +1925,7 @@ def _safe_factorial(n: int) -> int:
     if isinstance(n, float):
         if not n.is_integer():
             raise EvaluationError("factorial requires integer input")
-        if abs(n) > MAX_FACTORIAL * 10:
+        if abs(n) > MAX_FACTORIAL:
             raise EvaluationError(f"factorial input too large (max {MAX_FACTORIAL})")
     n = int(n)
     if n < 0:
@@ -1748,11 +1946,20 @@ def _mean(*args: float) -> float:
 
 
 def _std(*args: float) -> float:
-    """Calculate standard deviation."""
+    """Calculate population standard deviation."""
     if len(args) < 2:
         raise EvaluationError("std requires at least two arguments")
     m = sum(args) / len(args)
     variance = sum((x - m) ** 2 for x in args) / len(args)
+    return math.sqrt(variance)
+
+
+def _std_sample(*args: float) -> float:
+    """Calculate sample standard deviation (n-1 denominator)."""
+    if len(args) < 2:
+        raise EvaluationError("std_sample requires at least two arguments")
+    m = sum(args) / len(args)
+    variance = sum((x - m) ** 2 for x in args) / (len(args) - 1)
     return math.sqrt(variance)
 
 
@@ -1802,12 +2009,30 @@ def _to_oct(x: int) -> str:
     return oct(x)
 
 
+_TEMP_UNIT_FLOAT_MAP: dict[float, str] = {
+    1.0: "K",
+    0.017453292519943295: "deg",
+}
+
+
 def _temp(value: float, from_unit: float | str, to_unit: float | str) -> float:
     """Convert temperature between units."""
     if isinstance(from_unit, float):
-        from_unit = {1.0: "K", 0.017453292519943295: "deg"}.get(from_unit, "K")
+        mapped = _TEMP_UNIT_FLOAT_MAP.get(from_unit)
+        if mapped is None:
+            raise EvaluationError(
+                f"Unrecognized temperature unit value: {from_unit}. "
+                f"Expected a unit name string (e.g., 'C', 'K', 'F') or a known constant."
+            )
+        from_unit = mapped
     if isinstance(to_unit, float):
-        to_unit = {1.0: "K", 0.017453292519943295: "deg"}.get(to_unit, "K")
+        mapped = _TEMP_UNIT_FLOAT_MAP.get(to_unit)
+        if mapped is None:
+            raise EvaluationError(
+                f"Unrecognized temperature unit value: {to_unit}. "
+                f"Expected a unit name string (e.g., 'C', 'K', 'F') or a known constant."
+            )
+        to_unit = mapped
     return convert_temperature(value, str(from_unit), str(to_unit))
 
 
@@ -1832,11 +2057,8 @@ def _convert(value: Any, to_unit: str | Any) -> Any:
         # Check for temperature conversions (special handling needed)
         cat = get_unit_category(value.unit) if value.unit else None
         if cat == "temperature" and value.unit:
-            try:
-                converted_val = convert_temperature(value.value, value.unit, to_unit)
-                return UnitValue(converted_val, to_unit)
-            except ValueError:
-                pass  # Fall through to regular conversion
+            converted_val = convert_temperature(value.value, value.unit, to_unit)
+            return UnitValue(converted_val, to_unit)
         return value.convert_to(to_unit)
     # If it's just a number without units, assume it's a dimensionless value
     # and try to convert (will fail if not a valid unit)
@@ -1909,8 +2131,6 @@ def _mode(*args: float) -> float:
     counts = Counter(args)
     max_count = max(counts.values())
     modes = [x for x, c in counts.items() if c == max_count]
-    if len(modes) > 1:
-        raise EvaluationError("Multiple modes found")
     return modes[0]
 
 
@@ -1953,21 +2173,13 @@ def _bitnot(a: int) -> int:
     return ~int(a)
 
 
-def _bitlshift(a: int, b: int) -> int:
-    """Left shift."""
-    return int(a) << int(b)
-
-
-def _bitrshift(a: int, b: int) -> int:
-    """Right shift."""
-    return int(a) >> int(b)
-
-
 def _bitlshift_safe(a: int, b: int) -> int:
-    """Left shift with non-negative check."""
+    """Left shift with bounds checks."""
     b = int(b)
     if b < 0:
         raise EvaluationError("Shift count must be non-negative")
+    if b > MAX_SHIFT_COUNT:
+        raise EvaluationError(f"Shift count too large (max {MAX_SHIFT_COUNT}, got {b})")
     return int(a) << b
 
 
@@ -1987,6 +2199,8 @@ def _perm(n: int, r: int | None = None) -> int:
     n = int(n)
     if n < 0:
         raise EvaluationError("perm requires non-negative input")
+    if n > 10000:
+        raise EvaluationError(f"perm input too large (max 10000, got {n})")
     if r is None:
         result = math.factorial(n)
         if _int_digit_count(result) > MAX_RESULT_DIGITS:
@@ -1997,14 +2211,25 @@ def _perm(n: int, r: int | None = None) -> int:
         raise EvaluationError("perm requires non-negative arguments")
     if r > n:
         return 0
-    return math.perm(n, r)
+    if r > 10000:
+        raise EvaluationError(f"perm input too large (max 10000, got {r})")
+    result = math.perm(n, r)
+    if _int_digit_count(result) > MAX_RESULT_DIGITS:
+        raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+    return result
 
 
 def _comb(n: int, r: int) -> int:
     """Calculate combinations C(n,r) = n!/(r!(n-r)!)."""
     n, r = int(n), int(r)
+    if n < 0 or r < 0:
+        raise EvaluationError("comb requires non-negative arguments")
+    if n > 10000:
+        raise EvaluationError(f"comb input too large (max 10000, got {n})")
     if r > n:
         return 0
+    if r > 10000:
+        raise EvaluationError(f"comb input too large (max 10000, got {r})")
     return math.comb(n, r)
 
 
@@ -2031,6 +2256,8 @@ def _lcm(*args: int) -> int:
 def _is_prime(n: int) -> bool:
     """Check if a number is prime."""
     n = int(n)
+    if n > 10**12:
+        raise EvaluationError("primality test not available for numbers > 10^12")
     if n < 2:
         return False
     if n == 2:
@@ -2052,6 +2279,8 @@ def _prime_factors(n: int) -> str:
     exponent (e.g. "2^2"). For n < 2, returns the number as a string.
     """
     n = int(n)
+    if n > 10**12:
+        raise EvaluationError("factorization not available for numbers > 10^12")
     if n < 2:
         return str(n)
 
@@ -2079,11 +2308,16 @@ def _prime_factors(n: int) -> str:
 def _next_prime(n: int) -> int:
     """Return the next prime after n."""
     n = int(n)
-    if n > 10**15:
-        raise EvaluationError("Input too large for nextprime")
+    if n > 10**12:
+        raise EvaluationError("primality test not available for numbers > 10^12")
     candidate = n + 1
+    max_iterations = 10000
+    iterations = 0
     while not _is_prime(candidate):
         candidate += 1
+        iterations += 1
+        if iterations > max_iterations:
+            raise EvaluationError("nextprime: search exceeded iteration limit (10000)")
     return candidate
 
 
@@ -2092,9 +2326,16 @@ def _prev_prime(n: int) -> int:
     n = int(n)
     if n <= 2:
         raise EvaluationError("No prime less than 2")
+    if n > 10**12:
+        raise EvaluationError("primality test not available for numbers > 10^12")
     candidate = n - 1
+    max_iterations = 10000
+    iterations = 0
     while candidate > 1 and not _is_prime(candidate):
         candidate -= 1
+        iterations += 1
+        if iterations > max_iterations:
+            raise EvaluationError("prevprime: search exceeded iteration limit (10000)")
     if candidate < 2:
         raise EvaluationError("No prime less than 2")
     return candidate
@@ -2264,15 +2505,28 @@ _sinh = _complex_aware(math.sinh, cmath.sinh)
 _cosh = _complex_aware(math.cosh, cmath.cosh)
 _tanh = _complex_aware(math.tanh, cmath.tanh)
 _asinh = _complex_aware(math.asinh, cmath.asinh)
-_acosh = _complex_aware(math.acosh, cmath.acosh)
-_atanh = _complex_aware(math.atanh, cmath.atanh)
+
+
+def _acosh(x):
+    """acosh that handles complex numbers for out-of-domain real inputs."""
+    if isinstance(x, complex):
+        return cmath.acosh(x)
+    if x < 1:
+        return cmath.acosh(x)
+    return math.acosh(x)
+
+
+_atanh = _complex_aware(math.atanh, cmath.atanh, use_complex_for_abs_gt_one=True)
 def _cbrt_impl(x: float) -> float:
-    if x >= 0:
-        return x ** (1/3)
-    return -((-x) ** (1/3))
+    return math.cbrt(x)
 
 
-_cbrt = _cbrt_impl
+def _cbrt_complex(x: complex) -> complex:
+    """Complex cube root using principal branch."""
+    return x ** (1/3)
+
+
+_cbrt = _complex_aware(_cbrt_impl, _cbrt_complex)
 
 
 class EvaluationError(Exception):
@@ -2686,7 +2940,7 @@ class Evaluator(ast.NodeVisitor):
         "ln": _log,
         "log10": _log10,
         "log2": _log2,
-        "log1p": math.log1p,
+        "log1p": _complex_aware(math.log1p, lambda x: cmath.log(1 + x), use_complex_for_negative=True),
         "exp": _exp,
         "expm1": math.expm1,
         # Power and root (complex-aware)
@@ -2717,6 +2971,8 @@ class Evaluator(ast.NodeVisitor):
         "median": _median,
         "mode": _mode,
         "std": _std,
+        "std_sample": _std_sample,
+        "stds": _std_sample,
         "variance": _variance,
         "var": _variance,
         "variance_sample": _variance_sample,
@@ -2742,8 +2998,8 @@ class Evaluator(ast.NodeVisitor):
         "bitor": _bitor,
         "bitxor": _bitxor,
         "bitnot": _bitnot,
-        "bitlshift": _bitlshift,
-        "bitrshift": _bitrshift,
+        "bitlshift": _bitlshift_safe,
+        "bitrshift": _bitrshift_safe,
         # Prime functions
         "isprime": _is_prime,
         "is_prime": _is_prime,
@@ -2861,7 +3117,7 @@ class Evaluator(ast.NodeVisitor):
         text = text.strip()
 
         # Check for unit suffix
-        for unit in sorted(UNIT_ALIASES.keys(), key=len, reverse=True):
+        for unit in _SORTED_UNIT_ALIASES:
             if text.endswith(unit):
                 num_str = text[: -len(unit)].strip()
                 if num_str:
@@ -2922,7 +3178,7 @@ class Evaluator(ast.NodeVisitor):
             if node.value in self.CONSTANTS:
                 return self.CONSTANTS[node.value]
             # Check if it looks like a number with unit
-            for unit in sorted(UNIT_ALIASES.keys(), key=len, reverse=True):
+            for unit in _SORTED_UNIT_ALIASES:
                 if node.value.endswith(unit) and len(node.value) > len(unit):
                     num_part = node.value[: -len(unit)].strip()
                     if num_part:
@@ -2981,8 +3237,8 @@ class Evaluator(ast.NodeVisitor):
                 f"Cannot add/subtract incompatible units: '{left_unit}' and '{right_unit}'"
             )
 
-        # Handle unit conversion
-        if left_unit and right_unit and left_unit != right_unit:
+        # Handle unit conversion (only for addition/subtraction, not multiply/divide)
+        if is_add_sub and left_unit and right_unit and left_unit != right_unit:
             try:
                 factor = self._get_conversion_factor(right_unit, left_unit)
                 right_val = right_val * factor
@@ -2993,7 +3249,9 @@ class Evaluator(ast.NodeVisitor):
                     left_val = left_val * factor
                     left_unit = right_unit
                 except EvaluationError:
-                    pass
+                    raise EvaluationError(
+                        f"Cannot convert between incompatible units: '{left_unit}' and '{right_unit}'"
+                    )
 
         result_unit = left_unit or right_unit
 
@@ -3014,6 +3272,17 @@ class Evaluator(ast.NodeVisitor):
             if isinstance(result, int) and _int_digit_count(result) > MAX_RESULT_DIGITS:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
 
+        # Power operator: handle unit exponentiation (e.g., 5m ** 2 -> 25 m**2)
+        if op_class is ast.Pow and isinstance(left, UnitValue) and left.unit:
+            if isinstance(right, int):
+                return UnitValue(result, f"{left.unit}**{right}")
+            if isinstance(right, float) and right.is_integer():
+                return UnitValue(result, f"{left.unit}**{int(right)}")
+            # Non-integer exponent on a unit is physically nonsensical
+            raise EvaluationError(
+                f"Cannot raise unit '{left.unit}' to non-integer power"
+            )
+
         # Compound unit detection for division:
         # 1. UnitValue / UnitValue with different units -> "left_unit/right_unit"
         # 2. UnitValue / number whose AST name is a unit -> "left_unit/name" (e.g., km/h, mi/h)
@@ -3027,10 +3296,10 @@ class Evaluator(ast.NodeVisitor):
                 return UnitValue(left_val / right_val, compound)
 
         # Compound unit detection for multiplication:
-        # UnitValue * UnitValue with different units -> "left_unit*right_unit"
+        # UnitValue * UnitValue -> "left_unit*right_unit" (including same-unit: m*m -> m*m)
         # UnitValue * number whose AST name is a unit -> "left_unit*name"
         if op_class is ast.Mult and isinstance(left, UnitValue) and left.unit:
-            if isinstance(right, UnitValue) and right.unit and left.unit != right.unit:
+            if isinstance(right, UnitValue) and right.unit:
                 compound = f"{left.unit}*{right.unit}"
                 return UnitValue(left_val * right_val, compound)
             if not isinstance(right, UnitValue) and right_name and right_name in UNIT_ALIASES:
@@ -3122,46 +3391,35 @@ class Evaluator(ast.NodeVisitor):
             else:
                 args.append(result)
 
-        return self.FUNCTIONS[func_name](*args)
+        try:
+            return self.FUNCTIONS[func_name](*args)
+        except (ValueError, TypeError, ZeroDivisionError, OverflowError) as e:
+            raise EvaluationError(str(e)) from None
 
     def _validate_node(self, node: ast.AST) -> None:
-        """Validate that a node is safe to evaluate."""
+        """Validate that a node is safe to evaluate.
+
+        Uses the precomputed _ALLOWED_AST_TYPES allowlist (built from
+        known-safe expression patterns) as the primary security gate.
+        Attribute access gets additional domain-specific validation.
+        """
         node_type = type(node)
 
-        # Allowed node types
-        if node_type in (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Name, ast.Call):
-            return
-        if isinstance(node, (ast.operator, ast.unaryop, ast.expr_context)):
+        # Primary allowlist check — covers Expression, BinOp, UnaryOp,
+        # Constant, Name, Call, and all operator/unaryop/expr_context subclasses.
+        if node_type in _ALLOWED_AST_TYPES:
+            # Attribute access needs extra validation (restrict to math.* and real/imag/conjugate)
+            if node_type is ast.Attribute:
+                if not (isinstance(node.value, ast.Name) and node.value.id == "math"):
+                    if node.attr not in ("real", "imag", "conjugate"):
+                        raise EvaluationError(f"Attribute access '{node.attr}' is not allowed")
             return
 
-        # Forbidden node types
-        forbidden = (
-            ast.Subscript,
-            ast.List,
-            ast.Dict,
-            ast.Set,
-            ast.ListComp,
-            ast.DictComp,
-            ast.SetComp,
-            ast.GeneratorExp,
-            ast.Lambda,
-            ast.IfExp,
-            ast.Compare,
-            ast.BoolOp,
-        )
-        if node_type in forbidden:
-            if node_type == ast.Compare:
-                raise EvaluationError("Comparison operators are not supported")
-            if node_type == ast.BoolOp:
-                raise EvaluationError("Boolean operators are not supported")
-            raise EvaluationError(f"Unsupported node type: '{node_type.__name__}'")
-
-        # Attribute access (for math.*)
-        if isinstance(node, ast.Attribute):
-            if not (isinstance(node.value, ast.Name) and node.value.id == "math"):
-                if node.attr not in ("real", "imag", "conjugate"):
-                    raise EvaluationError(f"Attribute access '{node.attr}' is not allowed")
-            return
+        # Explicit forbidden types with helpful error messages
+        if node_type is ast.Compare:
+            raise EvaluationError("Comparison operators are not supported")
+        if node_type is ast.BoolOp:
+            raise EvaluationError("Boolean operators are not supported")
 
         raise EvaluationError(f"Unsupported node type: '{node_type.__name__}'")
 
@@ -3187,6 +3445,10 @@ class Evaluator(ast.NodeVisitor):
                 return result
             if result is None:
                 return None  # Functions like seed() and clearvars() return None
+            if isinstance(result, (tuple, list)):
+                return result
+            if isinstance(result, dict):
+                return result
             if not isinstance(result, (int, float, complex)):
                 raise EvaluationError(f"Result must be a number, got '{type(result)}'")
             return _check_result_size(result)
@@ -3244,6 +3506,8 @@ def _evaluate_with_timeout_worker(expr: str, result_queue: multiprocessing.Queue
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
     except (ImportError, ValueError, OSError):
+        # RLIMIT_AS may not be supported or enforced on all platforms (e.g., macOS).
+        # On failure, we rely solely on the time-based timeout for protection.
         pass
     try:
         _ensure_config_loaded()
@@ -3262,6 +3526,9 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
     Uses multiprocessing.Process with the 'spawn' start method to run
     evaluation in a separate process that can be reliably terminated.
     A ThreadPoolExecutor's future.cancel() does NOT stop a running thread.
+
+    Concurrency is bounded by _EVAL_SPAWN_SEMAPHORE to prevent fork-bomb
+    scenarios when multiple callers invoke this function simultaneously.
 
     Args:
         expression: A raw expression string (with spaces, natural language, etc.)
@@ -3285,8 +3552,13 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
     proc: multiprocessing.Process | None = None
-    proc = ctx.Process(target=_evaluate_with_timeout_worker, args=(expression, queue))
-    proc.start()
+    _EVAL_SPAWN_SEMAPHORE.acquire()
+    try:
+        proc = ctx.Process(target=_evaluate_with_timeout_worker, args=(expression, queue))
+        proc.start()
+    except Exception:
+        _EVAL_SPAWN_SEMAPHORE.release()
+        raise
 
     try:
         status, value = queue.get(timeout=timeout)
@@ -3312,6 +3584,7 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
                 proc.close()
             except Exception:
                 pass
+        _EVAL_SPAWN_SEMAPHORE.release()
 
     if status == "error":
         raise EvaluationError(value)
@@ -3539,7 +3812,7 @@ OPERATOR_CONVERSIONS: dict[str, list[str]] = {
     "*": ["times", "multiplied by", "of"],  # "of" for "30% of 200"
     "/": ["divided by", "over", "per", "divide"],
     "**": ["raised to", "raised to the power of", "to the power of"],
-    ".": ["point"],
+    # "point" handled separately to avoid ".5" issues at expression start
     ",": [],
     "&": ["bitand", "bit and"],
     "|": ["OR", "or", "bitor", "bit or"],
@@ -3547,7 +3820,7 @@ OPERATOR_CONVERSIONS: dict[str, list[str]] = {
     "<<": ["left shift", "shift left", "lshift"],
     ">>": ["right shift", "shift right", "rshift"],
     "~": ["NOT", "not", "bitnot", "bit not"],
-    "%": ["mod", "modulo", "percent", "remainder"],
+    "%": ["mod", "modulo", "remainder"],
     # Unit conversion words - these get split out as tokens
     "IN": ["in", "into"],
     "TO": ["to", "as"],
@@ -3573,6 +3846,21 @@ FUNCTION_MAPPINGS: dict[str, str] = {
     "arctan": "atan",
     "atan": "atan",
     "inverse tangent": "atan",
+    "sinh": "sinh",
+    "hyperbolic sine": "sinh",
+    "cosh": "cosh",
+    "hyperbolic cosine": "cosh",
+    "tanh": "tanh",
+    "hyperbolic tangent": "tanh",
+    "arcsinh": "asinh",
+    "asinh": "asinh",
+    "inverse hyperbolic sine": "asinh",
+    "arccosh": "acosh",
+    "acosh": "acosh",
+    "inverse hyperbolic cosine": "acosh",
+    "arctanh": "atanh",
+    "atanh": "atanh",
+    "inverse hyperbolic tangent": "atanh",
     "absolute": "abs",
     "abs": "abs",
     "magnitude": "abs",
@@ -3708,6 +3996,21 @@ STRIPPED_PHRASES: list[str] = [
     "tell me",
     "give me",
     "the ",
+    "please ",
+    "hey ",
+    "hi ",
+    "can you ",
+    "could you ",
+    "would you ",
+    "i want to know ",
+    "i'd like to know ",
+    "what's the value of ",
+    "what's the result of ",
+    "what is the value of ",
+    "what is the result of ",
+    "the value of ",
+    "the result of ",
+    "the answer is ",
 ]
 
 # Physical constants word mappings
@@ -3797,9 +4100,9 @@ def _build_config() -> tuple[dict, dict]:
         "parenthesis": re.compile(r"\(|\)"),
         "operators": re.compile(f"^({'|'.join([re.escape(s) for s in symbols])}){{1}}$"),
         # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
-        "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in STRIPPED_PHRASES])})"),
+        "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in sorted(STRIPPED_PHRASES, key=len, reverse=True)])})"),
         "int": re.compile(r"^[-+]?[0-9]\d*$"),
-        "float": re.compile(r"^[-+]?[0-9]\d*(?:\.\d+?)?(?:[eE][-+]?\d+)?$"),
+        "float": re.compile(r"^[-+]?(?:[0-9]\d*(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?$"),
         "int_number_combine": re.compile(r"^[-+*]?[0-9]\d*$"),
         "valid_operations": re.compile(
             f"^({'|'.join([re.escape(s) for s in symbols] + [re.escape(f) for f in FUNCTION_MAPPINGS.values()] + [re.escape(c) for c in CONSTANT_WORDS.keys()])}){{1}}$"
@@ -3832,9 +4135,7 @@ def _rebuild_config() -> None:
         new_normalize, new_patterns = _build_config()
         NORMALIZE = new_normalize
         PATTERNS = new_patterns
-    # Clear the LRU cache outside the lock to avoid holding it during
-    # the (potentially slow) cache eviction.
-    check_if_number.cache_clear()
+        check_if_number.cache_clear()
 
 
 @lru_cache(maxsize=1024)
@@ -4041,7 +4342,7 @@ def convert_numbers(number_info: list, patterns: Mapping[str, Pattern[str]]) -> 
                 return number_info[0]
         return number_info[0]
 
-    return ""
+    return number_info[0]
 
 
 def apply_math_functions(
@@ -4068,6 +4369,26 @@ def apply_math_functions(
 
         if token in operators["functions"]:
             func_name = operators["functions"][token]
+
+            # Check if this token is actually a unit being used in a conversion
+            # context (e.g., "min" in "10 min in seconds"). Skip function conversion
+            # if the next non-* token is "IN" or "TO" followed by a known unit name.
+            _is_unit_conversion = False
+            if token.lower() in UNIT_ALIASES or token in UNIT_ALIASES:
+                scan_idx = i + 1
+                while scan_idx < len(tokens) and tokens[scan_idx] == "*":
+                    scan_idx += 1
+                if scan_idx < len(tokens) and tokens[scan_idx] in ("IN", "TO"):
+                    after_in = scan_idx + 1
+                    if after_in < len(tokens):
+                        candidate = tokens[after_in]
+                        if candidate in UNIT_ALIASES or candidate.lower() in UNIT_ALIASES:
+                            _is_unit_conversion = True
+
+            if _is_unit_conversion:
+                output_tokens.append(token)
+                i += 1
+                continue
             # Implicit-mul swap: <num>[*] <single-arg-func> -> <func>(<num>)
             # Only swap if there is no value (number) immediately after the function
             # name in the token stream; otherwise the trailing value is the argument
@@ -4149,11 +4470,13 @@ def apply_math_functions(
 
 def error_message(original: str, exception: BaseException, verbose: bool = False) -> None:
     """Print an error message based on the exception type."""
+    # Sanitize input for safe terminal display
+    safe_original = ''.join(c if c.isprintable() and c not in '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0a\x0b\x0c\x0d\x0e\x0f' else '?' for c in original)
     exc_type = type(exception)
     if exc_type is ValueError:
-        print(f"Unrecognized command: '{original}'", file=sys.stderr)
+        print(f"Error: {exception}: '{safe_original}'", file=sys.stderr)
     elif exc_type is ZeroDivisionError:
-        print(f"Can't divide by 0: '{original}'", file=sys.stderr)
+        print(f"Can't divide by 0: '{safe_original}'", file=sys.stderr)
     elif exc_type is EvaluationError:
         print(f"Evaluation error: {exception}", file=sys.stderr)
     else:
@@ -4189,8 +4512,6 @@ def convert_from_human_handler(
             is_valid = True
         except ValueError:
             tokens[i] = tokens[i][0] if isinstance(tokens[i], dict) else tokens[i]
-            error_message(original, ValueError())
-            break
 
     return tokens, is_valid
 
@@ -4366,9 +4687,9 @@ def _should_split_number_sequence(token: str) -> bool:
 # patterns and raises a clear error (e.g., "5 not 6" -> SyntaxError rather than
 # the silent "5~6" that would be produced by naive word substitution).
 _BINARY_WORD_PATTERN = re.compile(
-    r"(\d+(?:\.\d+)?|\([^)]*\))\s+"
+    r"(\d+(?:\.\d+)?|\((?:[^()]|\([^()]*\))*\))\s+"
     r"(not|in|to|as|into)\s+"
-    r"(\d+(?:\.\d+)?)",
+    r"(\d+(?:\.\d+)?)\b",
     flags=re.IGNORECASE,
 )
 
@@ -4382,10 +4703,12 @@ _IMPLICIT_MUL_FUNCS: set[str] = {
     "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
     "exp", "abs", "factorial", "fact", "cbrt", "floor",
     "ceil", "round", "sign", "mean", "median", "mode",
-    "std", "variance", "gcd", "lcm", "perm", "comb",
+    "std", "variance", "var", "gcd", "lcm", "perm", "comb",
     "nPr", "nCr", "isprime", "nextprime", "prevprime",
     "primefactors", "random", "randint", "gauss", "sum",
     "max", "min", "hypot", "clamp",
+    "sine", "cosine", "tangent", "absolute", "ceiling",
+    "stdev", "average",
 }
 
 # Subset of _IMPLICIT_MUL_FUNCS that take exactly one argument. Used by
@@ -4396,7 +4719,7 @@ _SINGLE_ARG_IMPLICIT_MUL: set[str] = {
     "exp", "abs", "factorial", "fact", "cbrt", "floor",
     "ceil", "round", "sign", "isprime", "nextprime",
     "prevprime", "random", "gauss", "hypot", "primefactors",
-    "randint",
+    "randint", "sine", "cosine", "tangent", "absolute", "ceiling",
 }
 
 # Subset of _IMPLICIT_MUL_FUNCS that take multiple arguments. Used by
@@ -4404,13 +4727,13 @@ _SINGLE_ARG_IMPLICIT_MUL: set[str] = {
 # "mean(1,2,3)". Single-arg functions keep "+" / "-" as real operators
 # (e.g., "sqrt of 144 + 5" -> "sqrt(144) + 5").
 _MULTI_ARG_OF_FUNCS: set[str] = {
-    "mean", "median", "mode", "std", "variance",
+    "mean", "median", "mode", "std", "variance", "var",
     "gcd", "lcm", "perm", "comb", "nPr", "nCr",
     "sum", "max", "min", "clamp",
 }
 
 
-def _binary_word_check(expr: str) -> None:
+def _binary_word_check(expr: str) -> bool:
     """Raise ValueError if expr contains <value> not/in/to/as/into <value>.
 
     These words are reserved for unary bitwise NOT or unit conversion. When
@@ -4428,19 +4751,37 @@ def _binary_word_check(expr: str) -> None:
     return True
 
 
+# Module-level multi-word function name mappings (constant, no need to recreate each call)
+_MULTI_WORD_FUNCTIONS: dict[str, str] = {
+    "square root": "sqrt",
+    "cube root": "cbrt",
+    "inverse sine": "asin",
+    "inverse cosine": "acos",
+    "inverse tangent": "atan",
+}
+
+
 def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str:
     """Normalize an expression by removing filler words and applying conversions."""
+    if len(expression) > MAX_INPUT_LENGTH:
+        raise ValueError(f"Input too long (max {MAX_INPUT_LENGTH} characters)")
     # Replace multi-word function names before whitespace removal collapses them
     # e.g., "square root" -> "sqrt", "cube root" -> "cbrt"
-    _MULTI_WORD_FUNCTIONS = {
-        "square root": "sqrt",
-        "cube root": "cbrt",
-        "inverse sine": "asin",
-        "inverse cosine": "acos",
-        "inverse tangent": "atan",
-    }
     for phrase, replacement in sorted(_MULTI_WORD_FUNCTIONS.items(), key=lambda x: len(x[0]), reverse=True):
         expression = re.sub(r"\b" + re.escape(phrase) + r"\b", replacement, expression, flags=re.IGNORECASE)
+
+    # Convert hyphens between number words to spaces
+    # e.g., "twenty-one" -> "twenty one" (prevents hyphen being treated as minus)
+    _ALL_NW: set[str] = set()
+    for _words in NUMBER_WORDS.values():
+        _ALL_NW.update(_words)
+    _nw_pat = "|".join(sorted(_ALL_NW, key=len, reverse=True))
+    expression = re.sub(
+        rf"\b({_nw_pat})-({_nw_pat})\b",
+        r"\1 \2",
+        expression,
+        flags=re.IGNORECASE,
+    )
 
     # Replace multi-word number phrases to prevent incorrect joining
     # e.g., "one hundred" -> "100", "two thousand" -> "2000"
@@ -4501,11 +4842,21 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         "billion": "1000000000",
         "trillion": "1000000000000",
         "quadrillion": "1000000000000000",
+        "quintillion": "1000000000000000000",
     }
     for scale_word, scale_val in _DIGIT_SCALES.items():
+        # Convert "N thousand" to "N*1000" (for later evaluation)
         expression = re.sub(
             r"\b(\d+(?:\.\d+)?)\s+" + re.escape(scale_word) + r"\b",
             lambda m, sv=scale_val: f"{m.group(1)}*{sv}",
+            expression,
+            flags=re.IGNORECASE,
+        )
+        # Also handle bare scale words (e.g., "5 thousand" after first sub)
+        # Only replace when preceded by a digit or ')' to avoid invalid "*1000"
+        expression = re.sub(
+            r"(?<=[\d)])\s*" + re.escape(scale_word) + r"\b",
+            f"*{scale_val}",
             expression,
             flags=re.IGNORECASE,
         )
@@ -4519,6 +4870,15 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     for word, replacement in sorted(_ALL_NUMBER_WORDS.items(), key=lambda x: len(x[0]), reverse=True):
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
+    # Strip longer filler phrases before word-to-operator conversion so that
+    # "the value of pi" → "pi" (not "value * pi" after "of" → "*").
+    # Short phrases like "the " are stripped AFTER word_to_all to avoid
+    # corrupting operator phrases like "to the power of".
+    _LONG_PHRASES = [p for p in STRIPPED_PHRASES if len(p) > 10]
+    if _LONG_PHRASES:
+        _long_pats = "|".join(sorted([re.escape(p) for p in _LONG_PHRASES], key=len, reverse=True))
+        expression = re.sub(f"({_long_pats})", "", expression)
+
     # Use combined word replacement for efficiency (single pass)
     # Use word boundaries to avoid replacing parts of words
     word_to_all = operators.get("word_to_all", {})
@@ -4527,19 +4887,27 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         # Special case: don't convert "in"/"into" when it appears to be a unit suffix
         # (preceded by a digit, no following unit, or followed by something that
         # isn't a unit). E.g., "5 in" or "5 in to cm" where "in" is a unit, not a keyword.
-        if word.lower() in ("in", "into") and re.search(
-            r"\d\s+" + re.escape(word) + r"(?:\s*$|\s+(?!\d))",
-            expression,
-            flags=re.IGNORECASE,
-        ):
-            continue
+        if word.lower() in ("in", "into"):
+            # Preserve "in" as a unit (not keyword) when:
+            # 1. At end of expression ("5 in" = 5 inches), OR
+            # 2. Followed by a conversion keyword ("to"/"as") - e.g., "5 in to cm"
+            if re.search(
+                r"\d\s+" + re.escape(word) + r"(?:\s*$|\s+(?:to|as)\b)",
+                expression,
+                flags=re.IGNORECASE,
+            ):
+                continue
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
+
+    # Handle "point" as decimal separator: only when preceded by a digit or ')'
+    # This avoids ".5" at expression start while still allowing "5 point 3" -> "5.3"
+    expression = re.sub(r"(?<=[\d)])\s*point\s*", ".", expression, flags=re.IGNORECASE)
 
     # Handle "N percent" -> "N/100" AFTER word_to_all substitutions
     # This allows NL words like "fifty" to be converted to digits first
     expression = re.sub(r"(\d+(?:\.\d+)?)\s+percent\b", lambda m: str(float(m.group(1)) / 100), expression, flags=re.IGNORECASE)
 
-    # Strip phrases
+    # Strip short filler phrases after word-to-operator conversion
     expression = patterns["stripped_chars"].sub("", expression)
 
     # Handle compound unit conversions after stripping
@@ -4579,8 +4947,9 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         replacement_fn = lambda m, uu1=u1, uu2=u2: f"({m.group(1)}*{uu1})/({uu2})"
         expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
 
-    # Convert percentages (e.g., 50% -> 0.5)
-    expression = re.sub(r"(\d+(?:\.\d+)?)\s*%", lambda m: str(float(m.group(1)) / 100), expression)
+    # Convert percentages (e.g., 50% -> 0.5, but not 5 % 3 which is modulo)
+    # Only match % directly attached to a number (no space before %)
+    expression = re.sub(r"(\d+(?:\.\d+)?)%", lambda m: str(float(m.group(1)) / 100), expression)
 
     # Convert 'i' suffix to 'j' for complex numbers (e.g., 3+4i -> 3+4j)
     # Match: number followed by 'i' (not preceded by another letter)
@@ -4592,12 +4961,52 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # This makes sin(30 degrees) interpret the argument as degrees rather than radians.
     # Must be done BEFORE the 'i' -> 'j' substitution (no conflict) and BEFORE
     # whitespace removal. Use word boundaries and case-insensitive matching.
+    # Also handle "degrees in <unit>" by converting the full phrase.
+    # Temperature units are skipped so "100 degrees in fahrenheit" is handled
+    # by the unit conversion system, not the angle conversion.
+    _TEMP_UNITS = frozenset({
+        "f", "c", "k", "r",
+        "fahrenheit", "celsius", "kelvin", "rankine",
+        "degf", "degc", "degk", "degr",
+    })
+    # Use a placeholder to prevent subsequent regexes from re-matching temperature expressions.
+    _DEG_PLACEHOLDER = "\x00DEG_TEMP\x00"
+
+    def _degrees_temp_handler(m: re.Match) -> str:
+        if m.group(2).lower() in _TEMP_UNITS:
+            # "100 degrees in fahrenheit" → "100 fahrenheit" (temperature, not angle)
+            return f"{m.group(1)} {_DEG_PLACEHOLDER}{m.group(2)}"
+        return f"(({m.group(1)}*pi/180)*{m.group(2)}/rad)"
+
+    expression = re.sub(
+        r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b\s+(?:in|IN)\s+(\w+)",
+        _degrees_temp_handler,
+        expression,
+        flags=re.IGNORECASE,
+    )
+
+    def _degrees_temp_no_in_handler(m: re.Match) -> str:
+        if m.group(2).lower() in _TEMP_UNITS:
+            # "100 degrees fahrenheit" → "100 fahrenheit" (temperature, not angle)
+            return f"{m.group(1)} {_DEG_PLACEHOLDER}{m.group(2)}"
+        if is_unit(m.group(2)):
+            return f"({m.group(1)}*pi/180) {m.group(2)}"
+        return f"({m.group(1)}*pi/180)"
+
+    expression = re.sub(
+        r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b\s+(\w+)",
+        _degrees_temp_no_in_handler,
+        expression,
+        flags=re.IGNORECASE,
+    )
     expression = re.sub(
         r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b",
         lambda m: f"({m.group(1)}*pi/180)",
         expression,
         flags=re.IGNORECASE,
     )
+    # Restore temperature expressions from placeholder (strip "degrees", keep unit)
+    expression = expression.replace(_DEG_PLACEHOLDER, "")
 
     # Join space-separated number sequences with + for proper evaluation
     # This must happen BEFORE whitespace removal so we get "3+100+20+2" instead of "3100202"
@@ -4699,7 +5108,7 @@ def _join_number_parts(expression: str) -> str:
         return expression
 
     _OPERATOR_TOKENS: set[str] = {
-        "+", "-", "*", "/", "**", "%", "&", "|", "^", "<<", ">>", "~",
+        "+", "-", "*", "/", "//", "**", "%", "&", "|", "^", "<<", ">>", "~",
         "IN", "TO", "MOD",
     }
 
@@ -4709,6 +5118,24 @@ def _join_number_parts(expression: str) -> str:
 
     def _is_unit_token(tok: str) -> bool:
         return tok in UNIT_ALIASES or tok.lower() in UNIT_ALIASES
+
+    # Pre-merge decimal point sequences: "5" "." "3" -> "5.3"
+    # This handles 'point' -> '.' conversions where spaces separate the tokens.
+    merged: list[str] = []
+    mi = 0
+    while mi < len(tokens):
+        if (
+            _is_digit_token(tokens[mi])
+            and mi + 2 < len(tokens)
+            and tokens[mi + 1] == "."
+            and _is_digit_token(tokens[mi + 2])
+        ):
+            merged.append(tokens[mi] + "." + tokens[mi + 2])
+            mi += 3
+        else:
+            merged.append(tokens[mi])
+            mi += 1
+    tokens = merged
 
     result: list[str] = []
     current_number_seq: list[str] = []
@@ -4784,7 +5211,7 @@ def _preprocess_units(expression: str) -> str:
             if i < len(expression):
                 # Quick check: does the remaining start with a potential unit prefix?
                 remaining = expression[i:]
-                if remaining and remaining[0] not in prefixes:
+                if remaining and remaining[0] not in prefixes and remaining[0].lower() not in _LOWERCASE_TEMP_UNITS:
                     # No unit possible, skip unit search
                     result.append(num)
                 else:
@@ -5034,6 +5461,9 @@ def run(
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return None, 1
+    except Exception as e:
+        error_message(original, e)
+        return None, 1
 
     if exit_code != 0:
         if exit_code == 2:
@@ -5045,7 +5475,7 @@ def run(
         if output_format == "json":
             import json
 
-            print(json.dumps({"expression": joined, "result": str(result)}))
+            print(json.dumps({"expression": original, "result": str(result)}))
         else:
             print(result)
         return result, 0
@@ -5053,6 +5483,9 @@ def run(
         error_message(original, e)
         return None, 1
     except EvaluationError as e:
+        error_message(original, e)
+        return None, 1
+    except Exception as e:
         error_message(original, e)
         return None, 1
 
@@ -5075,7 +5508,7 @@ def _run_repl(show_expression: bool = True) -> int:
         if not line:
             continue
 
-        if line.lower() in ("quit", "exit", "exit()"):
+        if line.lower() in ("quit", "quit()", "exit", "exit()"):
             break
 
         if line.lower() == "help":
@@ -5084,14 +5517,18 @@ def _run_repl(show_expression: bool = True) -> int:
 
         if line.lower() == "history":
             for expr, result in history:
-                print(result)
+                print(f"{expr} = {result}")
             continue
 
         if line.lower() == "clear":
             history.clear()
             continue
 
-        result, exit_code = run(line, NORMALIZE, PATTERNS, "plain", show_expression)
+        try:
+            result, exit_code = run(line, NORMALIZE, PATTERNS, "plain", show_expression)
+        except KeyboardInterrupt:
+            print()
+            continue
 
         if exit_code == 0 and result is not None:
             history.append((line, result))
@@ -6576,6 +7013,7 @@ MAX_INPUT_LENGTH = 100_000
 MAX_PATTERN_LENGTH = 1000
 MAX_PATTERN_NESTING = 5
 MAX_SAMPLE_LENGTH = 10_000
+MAX_SCHEMA_DEPTH = 50
 
 
 class BracketError(TypedDict):
@@ -7190,6 +7628,11 @@ def list_sort(
 def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
     """Check if regex pattern is too complex (ReDoS prevention).
 
+    Detects:
+    - Excessive nesting depth (MAX_PATTERN_NESTING)
+    - Nested quantifiers (e.g., (a+)+, (a*)*) which cause catastrophic backtracking
+    - Adjacent quantifiers (e.g., a++, a**)
+
     Args:
         pattern: Regular expression pattern.
 
@@ -7202,6 +7645,10 @@ def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
     nesting_depth = 0
     max_nesting = 0
     in_char_class = False
+    # Per-group state: whether a quantifier was seen directly in this group's content
+    group_stack: list[bool] = []
+    # Whether the immediately-preceding group had a quantifier in its content
+    prev_group_had_quantifier = False
     i = 0
 
     while i < len(pattern):
@@ -7221,10 +7668,32 @@ def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
         elif char == '(' and not in_char_class:
             nesting_depth += 1
             max_nesting = max(max_nesting, nesting_depth)
+            group_stack.append(False)
+            prev_group_had_quantifier = False
         elif char == ')' and not in_char_class:
             nesting_depth -= 1
             if nesting_depth < 0:
                 return False, f"Unmatched closing '{char}' at position {i}"
+            if group_stack:
+                prev_group_had_quantifier = group_stack.pop()
+            else:
+                prev_group_had_quantifier = False
+        elif char in ('+', '*', '?') and not in_char_class:
+            # Check if previous char was also a quantifier (e.g., ++)
+            if i > 0 and pattern[i - 1] in ('+', '*', '?'):
+                return False, f"Adjacent quantifiers detected at position {i}"
+            # Check if a group with inner quantifier was just closed
+            if prev_group_had_quantifier:
+                return False, (
+                    f"Nested quantifiers detected at position {i}: "
+                    "quantifier after group with internal quantifier"
+                )
+            # Mark current group as having a quantifier
+            if group_stack:
+                group_stack[-1] = True
+            prev_group_had_quantifier = False
+        else:
+            prev_group_had_quantifier = False
 
         i += 1
 
@@ -7596,8 +8065,10 @@ def json_compare(
                 pass
         return True
 
-    def _compare_values(path: str, a_val: Any, b_val: Any) -> None:
+    def _compare_values(path: str, a_val: Any, b_val: Any, _depth: int = 0) -> None:
         nonlocal type_match
+        if _depth > 100:
+            return
         if len(diffs) >= max_diffs:
             return
 
@@ -7765,7 +8236,7 @@ def json_compare(
                 new_path = f"{path}/{orig_key_a}" if path else f"/{orig_key_a}"
                 if orig_key_a != orig_key_b:
                     new_path = f"{path}/{orig_key_a}->{orig_key_b}"
-                _compare_values(new_path, a_val[orig_key_a], b_val[orig_key_b])
+                _compare_values(new_path, a_val[orig_key_a], b_val[orig_key_b], _depth + 1)
 
         elif a_type == "array":
             if len(a_val) != len(b_val):
@@ -7786,10 +8257,10 @@ def json_compare(
                 if norm_a == norm_b:
                     return
                 for i in range(len(norm_a)):
-                    _compare_values(f"{path}/[{i}]", norm_a[i], norm_b[i])
+                    _compare_values(f"{path}/[{i}]", norm_a[i], norm_b[i], _depth + 1)
             else:
                 for i, (item_a, item_b) in enumerate(zip(a_val, b_val)):
-                    _compare_values(f"{path}/[{i}]", item_a, item_b)
+                    _compare_values(f"{path}/[{i}]", item_a, item_b, _depth + 1)
 
         else:
             if a_val != b_val:
@@ -8678,8 +9149,16 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
                 expected_type=expected_type,
             ))
 
-    def _validate(path: str, value: Any, schema_def: dict) -> None:
+    def _validate(path: str, value: Any, schema_def: dict, depth: int = 0) -> None:
         if len(violations) >= MAX_SCHEMA_VIOLATIONS:
+            return
+        if depth > MAX_SCHEMA_DEPTH:
+            _add_violation(
+                path,
+                f"schema nesting depth {depth} exceeds maximum {MAX_SCHEMA_DEPTH}",
+                _get_type_name(value),
+                None,
+            )
             return
 
         expected_type = schema_def.get("type")
@@ -8732,7 +9211,7 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
             for prop_name, prop_schema in properties.items():
                 if prop_name in value:
                     new_path = f"{path}/{prop_name}" if path else f"/{prop_name}"
-                    _validate(new_path, value[prop_name], prop_schema)
+                    _validate(new_path, value[prop_name], prop_schema, depth + 1)
 
         elif expected_type == "array" and isinstance(value, list):
             min_items = schema_def.get("min_items")
@@ -8756,7 +9235,7 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
             if items_schema is not None:
                 for i, item in enumerate(value):
                     item_path = f"{path}/[{i}]"
-                    _validate(item_path, item, items_schema)
+                    _validate(item_path, item, items_schema, depth + 1)
 
         elif expected_type == "string" and isinstance(value, str):
             min_len = schema_def.get("min_length")
@@ -8778,16 +9257,25 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
 
             pattern = schema_def.get("pattern")
             if pattern is not None:
-                try:
-                    if not re.match(pattern, value):
-                        _add_violation(
-                            path,
-                            f"string '{value}' does not match pattern '{pattern}'",
-                            "string",
-                            None,
-                        )
-                except re.error:
-                    pass
+                is_safe, err_msg = _check_pattern_complexity(pattern)
+                if not is_safe:
+                    _add_violation(
+                        path,
+                        f"pattern '{pattern}' is unsafe: {err_msg}",
+                        "string",
+                        None,
+                    )
+                else:
+                    try:
+                        if not re.match(pattern, value):
+                            _add_violation(
+                                path,
+                                f"string '{value}' does not match pattern '{pattern}'",
+                                "string",
+                                None,
+                            )
+                    except re.error:
+                        pass
 
         enum_values = schema_def.get("enum")
         if enum_values is not None:
@@ -20466,6 +20954,7 @@ def _escape_html_text(text: str) -> str:
     result = result.replace("<", "&lt;")
     result = result.replace(">", "&gt;")
     result = result.replace('"', "&quot;")
+    result = result.replace("'", "&#39;")
     return result
 
 
@@ -23156,6 +23645,1421 @@ def _canonicalize_path_segment_compare(text: str) -> tuple[str, list[str], list[
 
     return current, ops, findings
 
+# === exact/inspect_prompt.py ===
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+MAX_TEXT_LENGTH = 100_000
+
+ALL_CHECKS = frozenset({
+    "unicode_hidden",
+    "bidi",
+    "html_comments",
+    "markdown_links",
+    "ansi_escapes",
+    "terminal_controls",
+    "base64_like_blobs",
+    "instruction_phrases",
+    "long_minified_lines",
+})
+
+DEFAULT_CHECKS = frozenset(ALL_CHECKS)
+
+# Severity weights for risk score
+_SEVERITY_WEIGHTS = {
+    "info": 1,
+    "warn": 3,
+    "error": 5,
+}
+
+# Default instruction phrases (case-insensitive)
+DEFAULT_INSTRUCTION_PHRASES = [
+    "ignore previous",
+    "ignore all previous",
+    "disregard previous",
+    "disregard all previous",
+    "forget everything",
+    "new instructions",
+    "override instructions",
+    "system prompt",
+    "you are now",
+    "act as",
+    "pretend you are",
+    "roleplay as",
+    "do not follow",
+    "ignore the above",
+    "ignore the following",
+    "disregard the above",
+    "disregard the following",
+    "override safety",
+    "bypass safety",
+    "jailbreak",
+    "do anything now",
+    " DAN",
+]
+
+# Regex patterns
+_ANSI_ESCAPE_RE = re.compile(
+    r"\x1b\["           # ESC [
+    r"[0-9;]*"          # parameters
+    r"[A-Za-z]"         # final byte
+)
+
+_ANSI_OSC_RE = re.compile(
+    r"\x1b\]"           # ESC ]
+    r".*?"              # any content
+    r"(?:\x07|\x1b\\)",  # ST (BEL or ESC \)
+)
+
+# Terminal control sequences (C1 controls, CSI sequences)
+_TERMINAL_CONTROL_RE = re.compile(
+    r"[\x00-\x08\x0e-\x1f\x7f]"  # C0 + DEL + some C1
+    r"|"
+    r"\x1b[()][AB012]"            # charset selection
+    r"|"
+    r"\x1b[=>78]"                  # cursor keys, etc.
+)
+
+# Base64-like blob detection: 64+ chars of [A-Za-z0-9+/=] with no whitespace
+_BASE64_LIKE_RE = re.compile(
+    r"(?:[A-Za-z0-9+/]{4}){16,}"  # at least 64 base64 chars
+    r"(?:[A-Za-z0-9+/]{0,3})?"
+    r"(?:=){0,2}"
+)
+
+# Markdown link: [text](url)
+_MARKDOWN_LINK_RE = re.compile(
+    r"\[([^\]]{1,2000})\]\(([^)]{1,2000})\)"
+)
+
+# HTML comment: <!-- ... -->
+_HTML_COMMENT_RE = re.compile(
+    r"<!--(.*?)-->",
+    re.DOTALL,
+)
+
+# Instruction-like phrases
+_INSTRUCTION_RE = None  # built lazily
+
+
+class PromptInspectionFinding(TypedDict, total=False):
+    """A single finding from prompt inspection."""
+    code: str
+    severity: str  # "info" | "warn" | "error"
+    message: str
+    span: dict[str, int]  # char_start, char_end
+    details: dict[str, Any]
+
+
+class PromptInspectionResult(TypedDict, total=False):
+    """Result of prompt/input inspection."""
+    findings: list[PromptInspectionFinding]
+    summary: str
+    risk_score: int
+    recommended_next_tool: str | list[str] | None
+    text_length: int
+    checks_run: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _build_instruction_regex(phrase_patterns: list[str] | None = None) -> re.Pattern[str]:
+    """Build a combined regex for instruction phrases."""
+    phrases = phrase_patterns if phrase_patterns else DEFAULT_INSTRUCTION_PHRASES
+    escaped = [re.escape(p) for p in phrases]
+    combined = "|".join(escaped)
+    return re.compile(combined, re.IGNORECASE)
+
+
+def _get_instruction_re(phrase_patterns: list[str] | None = None) -> re.Pattern[str]:
+    """Get or build the instruction regex."""
+    global _INSTRUCTION_RE
+    if phrase_patterns is not None or _INSTRUCTION_RE is None:
+        return _build_instruction_regex(phrase_patterns)
+    return _INSTRUCTION_RE
+
+
+def _char_span(index: int, length: int = 1) -> dict[str, int]:
+    """Create a span dict from a char index."""
+    return {"char_start": index, "char_end": index + length}
+
+
+def _find_bidi_controls(text: str) -> list[PromptInspectionFinding]:
+    """Find bidirectional control characters."""
+    findings: list[PromptInspectionFinding] = []
+    bidi_names = {
+        0x202a: "LEFT-TO-RIGHT EMBEDDING (LRE)",
+        0x202b: "RIGHT-TO-LEFT EMBEDDING (RLE)",
+        0x202c: "POP DIRECTIONAL FORMATTING (PDF)",
+        0x202d: "LEFT-TO-RIGHT OVERRIDE (LRO)",
+        0x202e: "RIGHT-TO-LEFT OVERRIDE (RLO)",
+        0x2066: "LEFT-TO-RIGHT ISOLATE (LRI)",
+        0x2067: "RIGHT-TO-LEFT ISOLATE (RLI)",
+        0x2068: "FIRST STRONG ISOLATE (FSI)",
+        0x2069: "POP DIRECTIONAL ISOLATE (PDI)",
+        0x200e: "LEFT-TO-RIGHT MARK (LRM)",
+        0x200f: "RIGHT-TO-LEFT MARK (RLM)",
+    }
+    for index, char in enumerate(text):
+        cp = ord(char)
+        if cp in bidi_names:
+            findings.append(PromptInspectionFinding(
+                code="BIDI_CONTROL",
+                severity="warn",
+                message=f"Bidi control character: {bidi_names[cp]} at position {index}",
+                span=_char_span(index),
+                details={"codepoint": f"U+{cp:04X}", "name": bidi_names[cp]},
+            ))
+    return findings
+
+
+def _find_unicode_hidden(text: str) -> list[PromptInspectionFinding]:
+    """Find hidden Unicode characters using find_invisibles."""
+    findings: list[PromptInspectionFinding] = []
+    invisibles = find_invisibles(text)
+    for inv in invisibles:
+        severity = "warn"
+        # Zero-width characters are more suspicious
+        if inv["codepoint"] in ("U+200B", "U+200C", "U+200D", "U+2060", "U+FEFF"):
+            severity = "warn"
+        findings.append(PromptInspectionFinding(
+            code="HIDDEN_CHAR",
+            severity=severity,
+            message=f"Hidden character: {inv['name']} ({inv['codepoint']}) at position {inv['index']}",
+            span=_char_span(inv["index"]),
+            details={
+                "codepoint": inv["codepoint"],
+                "name": inv["name"],
+                "category": inv["category"],
+                "display": inv["display"],
+            },
+        ))
+    return findings
+
+
+def _find_html_comments(text: str) -> list[PromptInspectionFinding]:
+    """Find HTML comments which may hide instructions."""
+    findings: list[PromptInspectionFinding] = []
+    for match in _HTML_COMMENT_RE.finditer(text):
+        content = match.group(1).strip()
+        severity = "warn" if content else "info"
+        message = f"HTML comment at position {match.start()}"
+        if content:
+            message += f": {content[:100]}{'...' if len(content) > 100 else ''}"
+        findings.append(PromptInspectionFinding(
+            code="HTML_COMMENT",
+            severity=severity,
+            message=message,
+            span={"char_start": match.start(), "char_end": match.end()},
+            details={"content": content[:500]},
+        ))
+    return findings
+
+
+def _find_markdown_links(text: str) -> list[PromptInspectionFinding]:
+    """Find Markdown links where display text and target may mismatch."""
+    findings: list[PromptInspectionFinding] = []
+    for match in _MARKDOWN_LINK_RE.finditer(text):
+        link_text = match.group(1)
+        link_target = match.group(2)
+        severity = "info"
+        details: dict[str, Any] = {"text": link_text, "target": link_target}
+
+        # Flag if target is a URL but text doesn't look like a URL description
+        if link_target.startswith(("http://", "https://", "ftp://")):
+            # Check if text looks like it's trying to be a different URL
+            if re.search(r"https?://", link_text):
+                severity = "warn"
+                details["mismatch"] = "text contains URL while target is also a URL"
+        # Flag data URIs
+        if link_target.startswith("data:"):
+            severity = "warn"
+            details["mismatch"] = "data URI target"
+
+        findings.append(PromptInspectionFinding(
+            code="MARKDOWN_LINK",
+            severity=severity,
+            message=f"Markdown link at position {match.start()}: [{link_text[:50]}]({link_target[:80]})",
+            span={"char_start": match.start(), "char_end": match.end()},
+            details=details,
+        ))
+    return findings
+
+
+def _find_ansi_escapes(text: str) -> list[PromptInspectionFinding]:
+    """Find ANSI escape sequences."""
+    findings: list[PromptInspectionFinding] = []
+    for match in _ANSI_ESCAPE_RE.finditer(text):
+        findings.append(PromptInspectionFinding(
+            code="ANSI_ESCAPE",
+            severity="warn",
+            message=f"ANSI escape sequence at position {match.start()}",
+            span={"char_start": match.start(), "char_end": match.end()},
+            details={"sequence": repr(match.group())},
+        ))
+    return findings
+
+
+def _find_terminal_controls(text: str) -> list[PromptInspectionFinding]:
+    """Find terminal control sequences."""
+    findings: list[PromptInspectionFinding] = []
+    for match in _TERMINAL_CONTROL_RE.finditer(text):
+        char = match.group()
+        cp = f"U+{ord(char):04X}"
+        name = unicodedata.name(char, "CONTROL")
+        findings.append(PromptInspectionFinding(
+            code="TERMINAL_CONTROL",
+            severity="info",
+            message=f"Terminal control character {name} ({cp}) at position {match.start()}",
+            span={"char_start": match.start(), "char_end": match.end()},
+            details={"codepoint": cp, "name": name},
+        ))
+    return findings
+
+
+def _find_base64_blobs(text: str) -> list[PromptInspectionFinding]:
+    """Find base64-like blobs that may encode hidden content."""
+    findings: list[PromptInspectionFinding] = []
+    for match in _BASE64_LIKE_RE.finditer(text):
+        blob = match.group()
+        # Skip if it's just a common identifier or hex string
+        if len(blob) < 64:
+            continue
+        # Check it has mixed case + digits (typical base64)
+        has_upper = any(c.isupper() for c in blob)
+        has_lower = any(c.islower() for c in blob)
+        has_digit = any(c.isdigit() for c in blob)
+        if has_upper and has_lower and has_digit:
+            findings.append(PromptInspectionFinding(
+                code="BASE64_BLOB",
+                severity="warn",
+                message=f"Base64-like blob ({len(blob)} chars) at position {match.start()}",
+                span={"char_start": match.start(), "char_end": match.end()},
+                details={"length": len(blob), "preview": blob[:100]},
+            ))
+    return findings
+
+
+def _find_instruction_phrases(
+    text: str,
+    phrase_patterns: list[str] | None = None,
+) -> list[PromptInspectionFinding]:
+    """Find instruction-like phrases that could manipulate agents."""
+    findings: list[PromptInspectionFinding] = []
+    regex = _get_instruction_re(phrase_patterns)
+    for match in regex.finditer(text):
+        matched = match.group()
+        findings.append(PromptInspectionFinding(
+            code="INSTRUCTION_PHRASE",
+            severity="warn",
+            message=f"Instruction-like phrase at position {match.start()}: '{matched}'",
+            span={"char_start": match.start(), "char_end": match.end()},
+            details={"phrase": matched},
+        ))
+    return findings
+
+
+def _find_long_minified_lines(text: str) -> list[PromptInspectionFinding]:
+    """Find very long lines that may be minified or obfuscated."""
+    findings: list[PromptInspectionFinding] = []
+    lines = text.split("\n")
+    offset = 0
+    for line in lines:
+        if len(line) > 1000:
+            findings.append(PromptInspectionFinding(
+                code="LONG_LINE",
+                severity="info",
+                message=f"Very long line ({len(line)} chars) at position {offset}",
+                span={"char_start": offset, "char_end": offset + len(line)},
+                details={"length": len(line)},
+            ))
+        offset += len(line) + 1  # +1 for \n
+    return findings
+
+
+def _compute_risk_score(findings: list[PromptInspectionFinding]) -> int:
+    """Compute a deterministic risk score from findings."""
+    score = 0
+    for f in findings:
+        score += _SEVERITY_WEIGHTS.get(f.get("severity", "info"), 1)
+    return score
+
+
+def _build_summary(findings: list[PromptInspectionFinding], risk_score: int) -> str:
+    """Build a human-readable summary."""
+    if not findings:
+        return "No red flags detected in the input text."
+
+    codes = {}
+    for f in findings:
+        code = f.get("code", "UNKNOWN")
+        codes[code] = codes.get(code, 0) + 1
+
+    parts = [f"{count} {code}" for code, count in sorted(codes.items())]
+    severity_counts = {}
+    for f in findings:
+        sev = f.get("severity", "info")
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+    sev_parts = []
+    for sev in ("error", "warn", "info"):
+        if sev in severity_counts:
+            sev_parts.append(f"{severity_counts[sev]} {sev}")
+
+    return (
+        f"{len(findings)} finding(s): {', '.join(parts)}. "
+        f"Severity: {', '.join(sev_parts)}. "
+        f"Risk score: {risk_score}."
+    )
+
+
+def _recommend_next_tool(findings: list[PromptInspectionFinding]) -> str | list[str] | None:
+    """Recommend follow-up tools based on findings."""
+    if not findings:
+        return None
+
+    codes = {f.get("code") for f in findings}
+    recommendations: list[str] = []
+
+    if "HIDDEN_CHAR" in codes or "BIDI_CONTROL" in codes:
+        recommendations.append("text_inspect")
+    if "ANSI_ESCAPE" in codes or "TERMINAL_CONTROL" in codes:
+        recommendations.append("text_transform")
+    if "BASE64_BLOB" in codes:
+        recommendations.append("text_inspect")
+    if "HTML_COMMENT" in codes or "MARKDOWN_LINK" in codes:
+        recommendations.append("markdown_structure")
+    if "INSTRUCTION_PHRASE" in codes:
+        recommendations.append("text_inspect")
+
+    if not recommendations:
+        return None
+    if len(recommendations) == 1:
+        return recommendations[0]
+    return recommendations
+
+
+# ---------------------------------------------------------------------------
+# Main function
+# ---------------------------------------------------------------------------
+
+def prompt_input_inspect(
+    text: str,
+    checks: list[str] | None = None,
+    phrase_patterns: list[str] | None = None,
+) -> PromptInspectionResult:
+    """Inspect text for deterministic red flags.
+
+    Surfaces observable features that may influence agents or humans
+    unexpectedly. Does NOT infer intent or detect prompt injection
+    semantically.
+
+    Args:
+        text: The text to inspect.
+        checks: Subset of check names to run. None runs all checks.
+        phrase_patterns: Optional literal strings or safe regexes to detect
+                        as instruction-like phrases.
+
+    Returns:
+        PromptInspectionResult with findings, summary, risk_score, and
+        recommended_next_tool.
+
+    Raises:
+        ValueError: If text exceeds MAX_TEXT_LENGTH or checks are invalid.
+    """
+    if len(text) > MAX_TEXT_LENGTH:
+        raise ValueError(
+            f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}"
+        )
+
+    active_checks = set(checks) if checks is not None else set(ALL_CHECKS)
+    invalid = active_checks - ALL_CHECKS
+    if invalid:
+        raise ValueError(
+            f"Unknown check(s): {', '.join(sorted(invalid))}. "
+            f"Valid checks: {', '.join(sorted(ALL_CHECKS))}"
+        )
+
+    findings: list[PromptInspectionFinding] = []
+
+    if "unicode_hidden" in active_checks:
+        findings.extend(_find_unicode_hidden(text))
+    if "bidi" in active_checks:
+        findings.extend(_find_bidi_controls(text))
+    if "html_comments" in active_checks:
+        findings.extend(_find_html_comments(text))
+    if "markdown_links" in active_checks:
+        findings.extend(_find_markdown_links(text))
+    if "ansi_escapes" in active_checks:
+        findings.extend(_find_ansi_escapes(text))
+    if "terminal_controls" in active_checks:
+        findings.extend(_find_terminal_controls(text))
+    if "base64_like_blobs" in active_checks:
+        findings.extend(_find_base64_blobs(text))
+    if "instruction_phrases" in active_checks:
+        findings.extend(_find_instruction_phrases(text, phrase_patterns))
+    if "long_minified_lines" in active_checks:
+        findings.extend(_find_long_minified_lines(text))
+
+    risk_score = _compute_risk_score(findings)
+    summary = _build_summary(findings, risk_score)
+    recommended = _recommend_next_tool(findings)
+
+    return PromptInspectionResult(
+        findings=findings,
+        summary=summary,
+        risk_score=risk_score,
+        recommended_next_tool=recommended,
+        text_length=len(text),
+        checks_run=sorted(active_checks),
+    )
+
+# === exact/cargo.py ===
+_MAX_INPUT_LENGTH = 200_000
+
+_CARGO_PACKAGE_FIELDS = {"name", "version", "edition", "license", "repository", "readme"}
+
+_EDITION_VALUES = {"2015", "2018", "2021", "2024"}
+
+_SUSPICIOUS_NAME_PATTERNS = [
+    re.compile(r"^\d"),
+    re.compile(r"[^a-zA-Z0-9_\-]"),
+    re.compile(r"_{2,}"),
+    re.compile(r"--"),
+    re.compile(r"\."),
+    re.compile(r"[A-Z]"),
+]
+
+_CARGO_TOML_PATH_RE = re.compile(
+    r"^[a-zA-Z0-9_\-]+(?:/[a-zA-Z0-9_\-]+)*\.toml$"
+)
+
+
+class CargoPackageInfo(TypedDict, total=False):
+    """Extracted package metadata."""
+    name: str | None
+    version: str | None
+    edition: str | None
+    license: str | None
+    repository: str | None
+    readme: str | None
+
+
+class CargoWorkspaceInfo(TypedDict):
+    """Workspace section information."""
+    present: bool
+    members: list[str]
+    exclude: list[str]
+
+
+class CargoDependencyForm(TypedDict, total=False):
+    """Form of a single dependency."""
+    version: str | None
+    path: str | None
+    git: str | None
+    workspace: bool
+    inline_table: bool
+    registry: str | None
+    branch: str | None
+    tag: str | None
+    features: list[str]
+    optional: bool
+    default_features: bool
+
+
+class CargoDepSection(TypedDict):
+    """Dependencies within a specific section."""
+    dependencies: dict[str, CargoDependencyForm]
+    dev_dependencies: dict[str, CargoDependencyForm]
+    build_dependencies: dict[str, CargoDependencyForm]
+    target_specific: dict[str, dict[str, CargoDependencyForm]]
+
+
+class CargoInspectResult(TypedDict):
+    """Result of cargo_toml_inspect."""
+    parse_ok: bool
+    package: CargoPackageInfo
+    workspace: CargoWorkspaceInfo
+    dependencies: CargoDepSection
+    path_dependencies: list[str]
+    suspicious_dependency_names: list[str]
+    duplicate_or_confusable_dependency_names: list[str]
+    findings: list[str]
+
+
+def _is_cargo_toml_path(path: str) -> bool:
+    """Check if a string looks like a Cargo.toml path (lexical check)."""
+    return bool(_CARGO_TOML_PATH_RE.match(path))
+
+
+def _detect_suspicious_name(name: str) -> bool:
+    """Check if a dependency name has suspicious patterns."""
+    for pat in _SUSPICIOUS_NAME_PATTERNS:
+        if pat.search(name):
+            return True
+    return False
+
+
+def _normalize_ident(name: str) -> str:
+    """Normalize an identifier for comparison: lowercase, NFKC, collapse separators."""
+    normalized = unicodedata.normalize("NFKC", name)
+    normalized = normalized.casefold()
+    normalized = re.sub(r"[\-_.]+", "_", normalized)
+    return normalized
+
+
+def _detect_duplicates(names: list[str]) -> list[str]:
+    """Detect dependency names that are confusable via normalization."""
+    groups: dict[str, list[str]] = {}
+    for name in names:
+        key = _normalize_ident(name)
+        groups.setdefault(key, []).append(name)
+    dupes: list[str] = []
+    for key, group in groups.items():
+        if len(group) > 1:
+            dupes.extend(sorted(set(group)))
+    return sorted(set(dupes))
+
+
+def _parse_dep_value(raw: str | dict) -> CargoDependencyForm:
+    """Parse a single dependency value into a structured form."""
+    if isinstance(raw, dict):
+        form: CargoDependencyForm = {"inline_table": True}
+        if "version" in raw:
+            form["version"] = str(raw["version"])
+        if "path" in raw:
+            form["path"] = str(raw["path"])
+        if "git" in raw:
+            form["git"] = str(raw["git"])
+        if "branch" in raw:
+            form["branch"] = str(raw["branch"])
+        if "tag" in raw:
+            form["tag"] = str(raw["tag"])
+        if "registry" in raw:
+            form["registry"] = str(raw["registry"])
+        if "workspace" in raw:
+            form["workspace"] = bool(raw["workspace"])
+        if "features" in raw and isinstance(raw["features"], list):
+            form["features"] = [str(f) for f in raw["features"]]
+        if "optional" in raw:
+            form["optional"] = bool(raw["optional"])
+        if "default-features" in raw:
+            form["default_features"] = bool(raw["default-features"])
+        if "workspace" not in form:
+            form["workspace"] = False
+        return form
+    else:
+        return {"version": str(raw), "inline_table": False, "workspace": False}
+
+
+def _collect_path_deps(deps: dict[str, CargoDependencyForm]) -> list[str]:
+    """Extract path dependency values from a dependency dict."""
+    paths: list[str] = []
+    for _name, form in deps.items():
+        path = form.get("path")
+        if path:
+            paths.append(path)
+    return paths
+
+
+def cargo_toml_inspect(
+    text: str,
+    check_workspace: bool = True,
+    check_dependencies: bool = True,
+) -> CargoInspectResult:
+    """Inspect Cargo.toml text without network or filesystem access.
+
+    Args:
+        text: The Cargo.toml content.
+        check_workspace: Whether to analyze workspace section.
+        check_dependencies: Whether to analyze dependencies sections.
+
+    Returns:
+        CargoInspectResult with package metadata, workspace info,
+        dependency analysis, and findings.
+    """
+    if len(text) > _MAX_INPUT_LENGTH:
+        return CargoInspectResult(
+            parse_ok=False,
+            package=CargoPackageInfo(),
+            workspace=CargoWorkspaceInfo(present=False, members=[], exclude=[]),
+            dependencies=CargoDepSection(
+                dependencies={}, dev_dependencies={},
+                build_dependencies={}, target_specific={},
+            ),
+            path_dependencies=[],
+            suspicious_dependency_names=[],
+            duplicate_or_confusable_dependency_names=[],
+            findings=[f"Input length {len(text)} exceeds maximum {_MAX_INPUT_LENGTH}"],
+        )
+
+    try:
+        import tomllib
+    except ImportError:
+        return CargoInspectResult(
+            parse_ok=False,
+            package=CargoPackageInfo(),
+            workspace=CargoWorkspaceInfo(present=False, members=[], exclude=[]),
+            dependencies=CargoDepSection(
+                dependencies={}, dev_dependencies={},
+                build_dependencies={}, target_specific={},
+            ),
+            path_dependencies=[],
+            suspicious_dependency_names=[],
+            duplicate_or_confusable_dependency_names=[],
+            findings=["tomllib not available - Python 3.11+ required"],
+        )
+
+    try:
+        parsed = tomllib.loads(text)
+    except Exception as e:
+        return CargoInspectResult(
+            parse_ok=False,
+            package=CargoPackageInfo(),
+            workspace=CargoWorkspaceInfo(present=False, members=[], exclude=[]),
+            dependencies=CargoDepSection(
+                dependencies={}, dev_dependencies={},
+                build_dependencies={}, target_specific={},
+            ),
+            path_dependencies=[],
+            suspicious_dependency_names=[],
+            duplicate_or_confusable_dependency_names=[],
+            findings=[f"TOML parse error: {e}"],
+        )
+
+    findings: list[str] = []
+
+    # --- Package section ---
+    pkg_raw = parsed.get("package", {})
+    if not isinstance(pkg_raw, dict):
+        findings.append("'[package]' section is not a table")
+        pkg_raw = {}
+
+    package: CargoPackageInfo = {}
+    for field in _CARGO_PACKAGE_FIELDS:
+        val = pkg_raw.get(field)
+        if val is not None:
+            package[field] = str(val)  # type: ignore[assignment]
+
+    if not package.get("name"):
+        findings.append("Missing or empty 'name' in [package]")
+    if not package.get("version"):
+        findings.append("Missing or empty 'version' in [package]")
+    if not package.get("edition"):
+        findings.append("Missing 'edition' in [package]")
+    elif package.get("edition") not in _EDITION_VALUES:
+        findings.append(
+            f"Unrecognized edition '{package.get('edition')}'; "
+            f"expected one of: {', '.join(sorted(_EDITION_VALUES))}"
+        )
+
+    # --- Workspace section ---
+    workspace: CargoWorkspaceInfo = {"present": False, "members": [], "exclude": []}
+    if check_workspace:
+        ws_raw = parsed.get("workspace", {})
+        if isinstance(ws_raw, dict):
+            workspace["present"] = True
+            members = ws_raw.get("members", [])
+            if isinstance(members, list):
+                workspace["members"] = [str(m) for m in members]
+            exclude = ws_raw.get("exclude", [])
+            if isinstance(exclude, list):
+                workspace["exclude"] = [str(e) for e in exclude]
+        elif "workspace" in parsed:
+            findings.append("'[workspace]' is not a table")
+
+    # --- Dependencies ---
+    dep_section = CargoDepSection(
+        dependencies={},
+        dev_dependencies={},
+        build_dependencies={},
+        target_specific={},
+    )
+    all_dep_names: list[str] = []
+    path_deps: list[str] = []
+
+    if check_dependencies:
+        dep_tables = {
+            "dependencies": "dependencies",
+            "dev-dependencies": "dev_dependencies",
+            "build-dependencies": "build_dependencies",
+        }
+
+        for table_key, section_key in dep_tables.items():
+            raw_deps = parsed.get(table_key, {})
+            if not isinstance(raw_deps, dict):
+                if table_key in parsed:
+                    findings.append(f"'[{table_key}]' is not a table")
+                continue
+
+            parsed_deps: dict[str, CargoDependencyForm] = {}
+            for dep_name, dep_value in raw_deps.items():
+                form = _parse_dep_value(dep_value)
+                parsed_deps[str(dep_name)] = form
+                all_dep_names.append(str(dep_name))
+                path = form.get("path")
+                if path:
+                    path_deps.append(path)
+                if form.get("git") and _detect_suspicious_name(str(dep_name)):
+                    findings.append(
+                        f"Git dependency '{dep_name}' has suspicious name pattern"
+                    )
+
+            dep_section[section_key] = parsed_deps  # type: ignore[assignment]
+
+        # Target-specific dependencies: [target.'cfg(...)'.dependencies]
+        target_section = parsed.get("target", {})
+        if isinstance(target_section, dict):
+            for target_key, target_val in target_section.items():
+                if isinstance(target_val, dict):
+                    target_deps: dict[str, CargoDependencyForm] = {}
+                    for dep_table_key in ("dependencies", "dev-dependencies", "build-dependencies"):
+                        raw_deps = target_val.get(dep_table_key, {})
+                        if isinstance(raw_deps, dict):
+                            for dep_name, dep_value in raw_deps.items():
+                                form = _parse_dep_value(dep_value)
+                                target_deps[str(dep_name)] = form
+                                all_dep_names.append(str(dep_name))
+                                path = form.get("path")
+                                if path:
+                                    path_deps.append(path)
+                    if target_deps:
+                        dep_section["target_specific"][target_key] = target_deps
+
+    # --- Suspicious names ---
+    suspicious = sorted(set(
+        name for name in all_dep_names if _detect_suspicious_name(name)
+    ))
+
+    # --- Duplicate/confusable names ---
+    dupes = _detect_duplicates(all_dep_names)
+    if dupes:
+        findings.append(
+            f"Confusable dependency names detected: {', '.join(dupes)}"
+        )
+
+    return CargoInspectResult(
+        parse_ok=True,
+        package=package,
+        workspace=workspace,
+        dependencies=dep_section,
+        path_dependencies=path_deps,
+        suspicious_dependency_names=suspicious,
+        duplicate_or_confusable_dependency_names=dupes,
+        findings=findings,
+    )
+
+# === exact/version.py ===
+class ParsedVersion(TypedDict):
+    """Parsed version components."""
+    major: int
+    minor: int
+    patch: int
+    pre_release: list[str]
+    build: str
+    raw: str
+
+
+class ParsedConstraintComponent(TypedDict):
+    """A single parsed constraint component."""
+    operator: str
+    version: ParsedVersion
+
+
+class ParsedConstraint(TypedDict):
+    """Parsed constraint components."""
+    raw: str
+    scheme: str
+    components: list[ParsedConstraintComponent]
+    type: str
+
+
+class VersionConstraintResult(TypedDict, total=False):
+    """Result of a version constraint check."""
+    satisfies: bool
+    parsed_version: ParsedVersion | None
+    parsed_constraint: ParsedConstraint | None
+    scheme: str
+    explanation: str
+    findings: list[str]
+
+
+# Pre-release identifier priority (lower = earlier release)
+_PRE_RELEASE_ORDER: dict[str, int] = {
+    "alpha": 0,
+    "beta": 1,
+    "rc": 2,
+    "dev": -1,
+    "snapshot": -1,
+    "pre": -1,
+    "a": 0,
+    "b": 1,
+    "c": 2,
+}
+
+_SEMVER_RE = re.compile(
+    r'^(\d+)\.(\d+)\.(\d+)'
+    r'(?:-([0-9A-Za-z\.\-]+))?'
+    r'(?:\+([0-9A-Za-z\.\-]+))?$'
+)
+
+_SEMVER_LAX_RE = re.compile(
+    r'^(\d+)(?:\.(\d+))?(?:\.(\d+))?'
+    r'(?:-([0-9A-Za-z\.\-]+))?'
+    r'(?:\+([0-9A-Za-z\.\-]+))?$'
+)
+
+
+def _parse_pre_release_identifiers(ident: str) -> list[str]:
+    """Split a pre-release string into identifiers."""
+    return [p for p in re.split(r'[.\-]', ident) if p]
+
+
+def _compare_pre_release(a: list[str], b: list[str]) -> int:
+    """Compare two pre-release identifier lists.
+
+    Pre-release versions without identifiers sort lower than those with.
+    Numeric identifiers compare numerically; alphanumeric compare lexically.
+    A shorter list that is a prefix of a longer list sorts lower.
+    """
+    if not a and not b:
+        return 0
+    if not a:
+        return 1  # no pre-release > has pre-release
+    if not b:
+        return -1  # has pre-release < no pre-release
+
+    for i in range(min(len(a), len(b))):
+        ai, bi = a[i], b[i]
+        ai_int = ai.isdigit()
+        bi_int = bi.isdigit()
+        if ai_int and bi_int:
+            diff = int(ai) - int(bi)
+            if diff != 0:
+                return -1 if diff < 0 else 1
+        elif ai_int:
+            return -1
+        elif bi_int:
+            return 1
+        else:
+            if ai < bi:
+                return -1
+            elif ai > bi:
+                return 1
+
+    if len(a) < len(b):
+        return -1
+    elif len(a) > len(b):
+        return 1
+    return 0
+
+
+def _sort_pre_release_key(ident: str) -> tuple[int, str]:
+    """Generate a sort key for a pre-release identifier."""
+    lower = ident.lower()
+    if ident.isdigit():
+        return (1, ident)
+    if lower in _PRE_RELEASE_ORDER:
+        return (0, str(_PRE_RELEASE_ORDER[lower]))
+    return (2, ident)
+
+
+def version_less_than(a: ParsedVersion, b: ParsedVersion) -> bool:
+    """Check if version a < version b under semver rules."""
+    for k in ("major", "minor", "patch"):
+        if a[k] < b[k]:
+            return True
+        if a[k] > b[k]:
+            return False
+    return _compare_pre_release(a["pre_release"], b["pre_release"]) < 0
+
+
+def version_equal(a: ParsedVersion, b: ParsedVersion) -> bool:
+    """Check if version a == version b under semver rules."""
+    return (
+        a["major"] == b["major"]
+        and a["minor"] == b["minor"]
+        and a["patch"] == b["patch"]
+        and a["pre_release"] == b["pre_release"]
+    )
+
+
+def version_lte(a: ParsedVersion, b: ParsedVersion) -> bool:
+    """Check if version a <= version b."""
+    return version_less_than(a, b) or version_equal(a, b)
+
+
+def version_gte(a: ParsedVersion, b: ParsedVersion) -> bool:
+    """Check if version a >= version b."""
+    return not version_less_than(a, b)
+
+
+def version_gt(a: ParsedVersion, b: ParsedVersion) -> bool:
+    """Check if version a > version b."""
+    return not version_lte(a, b)
+
+
+def parse_version(version: str) -> ParsedVersion | None:
+    """Parse a semver version string.
+
+    Args:
+        version: Version string like "1.2.3", "1.2.3-alpha.1+build.42"
+
+    Returns:
+        ParsedVersion dict or None if invalid.
+    """
+    version = version.strip()
+    m = _SEMVER_RE.match(version)
+    if not m:
+        return None
+    pre_release = _parse_pre_release_identifiers(m.group(4)) if m.group(4) else []
+    build = m.group(5) or ""
+    return ParsedVersion(
+        major=int(m.group(1)),
+        minor=int(m.group(2)),
+        patch=int(m.group(3)),
+        pre_release=pre_release,
+        build=build,
+        raw=version,
+    )
+
+
+def _parse_version_lax(version: str) -> ParsedVersion | None:
+    """Parse a version string allowing missing patch/minor.
+
+    E.g., "1.2" -> 1.2.0, "1" -> 1.0.0
+    """
+    version = version.strip()
+    m = _SEMVER_LAX_RE.match(version)
+    if not m:
+        return None
+    pre_release = _parse_pre_release_identifiers(m.group(4)) if m.group(4) else []
+    build = m.group(5) or ""
+    return ParsedVersion(
+        major=int(m.group(1)),
+        minor=int(m.group(2) or 0),
+        patch=int(m.group(3) or 0),
+        pre_release=pre_release,
+        build=build,
+        raw=version,
+    )
+
+
+def _parse_comparison_constraint(constraint: str) -> tuple[str, str]:
+    """Extract operator and version from a comparison constraint.
+
+    Supports: >=, <=, >, <, =, ==, !=
+
+    Returns:
+        Tuple of (operator, version_string)
+    """
+    constraint = constraint.strip()
+    for op in (">=", "<=", "!=", ">", "<", "==", "="):
+        if constraint.startswith(op):
+            ver = constraint[len(op):].strip()
+            actual_op = "==" if op in ("=", "==") else op
+            return actual_op, ver
+    return "=", constraint
+
+
+def _cargo_caret_range(version: ParsedVersion) -> tuple[ParsedVersion, ParsedVersion]:
+    """Compute the caret (^) range for a version.
+
+    Rules:
+    - ^1.2.3 => >=1.2.3, <2.0.0
+    - ^0.2.3 => >=0.2.3, <0.3.0
+    - ^0.0.3 => >=0.0.3, <0.0.4
+    - ^0.0.0 is invalid per cargo semver rules
+
+    When the constraint version has pre-release identifiers (e.g., ^1.2.3-alpha.1),
+    the lower bound includes those identifiers so that the same pre-release satisfies.
+    """
+    if version["major"] != 0:
+        upper = ParsedVersion(
+            major=version["major"] + 1,
+            minor=0,
+            patch=0,
+            pre_release=[],
+            build="",
+            raw="",
+        )
+    elif version["minor"] != 0:
+        upper = ParsedVersion(
+            major=0,
+            minor=version["minor"] + 1,
+            patch=0,
+            pre_release=[],
+            build="",
+            raw="",
+        )
+    elif version["patch"] != 0:
+        upper = ParsedVersion(
+            major=0,
+            minor=0,
+            patch=version["patch"] + 1,
+            pre_release=[],
+            build="",
+            raw="",
+        )
+    else:
+        upper = ParsedVersion(
+            major=0,
+            minor=0,
+            patch=1,
+            pre_release=[],
+            build="",
+            raw="",
+        )
+    lower = ParsedVersion(
+        major=version["major"],
+        minor=version["minor"],
+        patch=version["patch"],
+        pre_release=list(version["pre_release"]),
+        build="",
+        raw="",
+    )
+    return lower, upper
+
+
+def _cargo_tilde_range(version: ParsedVersion) -> tuple[ParsedVersion, ParsedVersion]:
+    """Compute the tilde (~) range for a version.
+
+    Rules:
+    - ~1.2.3 => >=1.2.3, <1.3.0
+    - ~1.2 => >=1.2.0, <1.3.0
+    - ~1 => >=1.0.0, <2.0.0
+    """
+    if version["minor"] == 0 and version["patch"] == 0 and version["pre_release"]:
+        upper = ParsedVersion(
+            major=version["major"],
+            minor=version["minor"] + 1,
+            patch=0,
+            pre_release=[],
+            build="",
+            raw="",
+        )
+    elif version["minor"] == 0 and version["patch"] == 0:
+        upper = ParsedVersion(
+            major=version["major"] + 1,
+            minor=0,
+            patch=0,
+            pre_release=[],
+            build="",
+            raw="",
+        )
+    elif version["patch"] == 0:
+        upper = ParsedVersion(
+            major=version["major"],
+            minor=version["minor"] + 1,
+            patch=0,
+            pre_release=[],
+            build="",
+            raw="",
+        )
+    else:
+        upper = ParsedVersion(
+            major=version["major"],
+            minor=version["minor"] + 1,
+            patch=0,
+            pre_release=[],
+            build="",
+            raw="",
+        )
+    return version, upper
+
+
+def _cargo_wildcard_range(constraint: str) -> tuple[ParsedVersion | None, ParsedVersion | None]:
+    """Compute the wildcard range.
+
+    1.* => >=1.0.0, <2.0.0
+    1.2.* => >=1.2.0, <1.3.0
+    """
+    parts = constraint.strip().rstrip(".*").split(".")
+    nums = [int(p) for p in parts if p]
+    if len(nums) == 1:
+        lower = ParsedVersion(
+            major=nums[0], minor=0, patch=0,
+            pre_release=[], build="", raw=constraint,
+        )
+        upper = ParsedVersion(
+            major=nums[0] + 1, minor=0, patch=0,
+            pre_release=[], build="", raw="",
+        )
+    elif len(nums) == 2:
+        lower = ParsedVersion(
+            major=nums[0], minor=nums[1], patch=0,
+            pre_release=[], build="", raw=constraint,
+        )
+        upper = ParsedVersion(
+            major=nums[0], minor=nums[1] + 1, patch=0,
+            pre_release=[], build="", raw="",
+        )
+    else:
+        return None, None
+    return lower, upper
+
+
+def _evaluate_component(
+    ver: ParsedVersion, op: str, bound: ParsedVersion
+) -> bool:
+    """Evaluate a single constraint component against a version."""
+    if op == ">=":
+        return version_gte(ver, bound)
+    elif op == ">":
+        return version_gt(ver, bound)
+    elif op == "<=":
+        return version_lte(ver, bound)
+    elif op == "<":
+        return version_less_than(ver, bound)
+    elif op in ("==", "="):
+        return version_equal(ver, bound)
+    elif op == "!=":
+        return not version_equal(ver, bound)
+    return False
+
+
+def check_version_constraint(
+    version: str,
+    constraint: str,
+    scheme: str = "semver",
+) -> VersionConstraintResult:
+    """Check whether a version satisfies a constraint under a given scheme.
+
+    Args:
+        version: The version string to check.
+        constraint: The version constraint string.
+        scheme: Versioning scheme ("semver" or "cargo").
+
+    Returns:
+        VersionConstraintResult with satisfies, parsed_version,
+        parsed_constraint, scheme, explanation, and findings.
+    """
+    findings: list[str] = []
+    parsed_ver = parse_version(version)
+
+    if parsed_ver is None:
+        return VersionConstraintResult(
+            satisfies=False,
+            parsed_version=None,
+            parsed_constraint=None,
+            scheme=scheme,
+            explanation=f"Invalid version: '{version}'",
+            findings=[f"Could not parse version string '{version}' as semver"],
+        )
+
+    if scheme not in ("semver", "cargo"):
+        return VersionConstraintResult(
+            satisfies=False,
+            parsed_version=parsed_ver,
+            parsed_constraint=None,
+            scheme=scheme,
+            explanation=f"Unsupported scheme: '{scheme}'",
+            findings=[f"Scheme '{scheme}' is not supported; use 'semver' or 'cargo'"],
+        )
+
+    constraint = constraint.strip()
+
+    # Handle wildcard constraints (cargo scheme)
+    if "*" in constraint:
+        if scheme != "cargo":
+            findings.append("Wildcard constraints are only supported with cargo scheme")
+            lower, upper = _cargo_wildcard_range(constraint)
+            if lower is None or upper is None:
+                return VersionConstraintResult(
+                    satisfies=False,
+                    parsed_version=parsed_ver,
+                    parsed_constraint=None,
+                    scheme=scheme,
+                    explanation=f"Invalid wildcard constraint: '{constraint}'",
+                    findings=findings,
+                )
+            satisfies = version_gte(parsed_ver, lower) and version_less_than(parsed_ver, upper)
+            pc: ParsedConstraint = {
+                "raw": constraint,
+                "scheme": scheme,
+                "components": [
+                    {"operator": ">=", "version": lower},
+                    {"operator": "<", "version": upper},
+                ],
+                "type": "wildcard",
+            }
+            return VersionConstraintResult(
+                satisfies=satisfies,
+                parsed_version=parsed_ver,
+                parsed_constraint=pc,
+                scheme=scheme,
+                explanation=f"{version} satisfies {constraint}" if satisfies else f"{version} does not satisfy {constraint}",
+                findings=findings,
+            )
+        lower, upper = _cargo_wildcard_range(constraint)
+        if lower is None or upper is None:
+            return VersionConstraintResult(
+                satisfies=False,
+                parsed_version=parsed_ver,
+                parsed_constraint=None,
+                scheme=scheme,
+                explanation=f"Invalid wildcard constraint: '{constraint}'",
+                findings=findings,
+            )
+        satisfies = version_gte(parsed_ver, lower) and version_less_than(parsed_ver, upper)
+        pc = {
+            "raw": constraint,
+            "scheme": scheme,
+            "components": [
+                {"operator": ">=", "version": lower},
+                {"operator": "<", "version": upper},
+            ],
+            "type": "wildcard",
+        }
+        return VersionConstraintResult(
+            satisfies=satisfies,
+            parsed_version=parsed_ver,
+            parsed_constraint=pc,
+            scheme=scheme,
+            explanation=f"{version} satisfies {constraint}" if satisfies else f"{version} does not satisfy {constraint}",
+            findings=findings,
+        )
+
+    # Handle caret constraints (cargo scheme)
+    if constraint.startswith("^"):
+        ver_str = constraint[1:].strip()
+        parsed_bound = parse_version(ver_str)
+        if parsed_bound is None:
+            return VersionConstraintResult(
+                satisfies=False,
+                parsed_version=parsed_ver,
+                parsed_constraint=None,
+                scheme=scheme,
+                explanation=f"Invalid version in caret constraint: '{ver_str}'",
+                findings=[f"Could not parse version '{ver_str}' in caret constraint"],
+            )
+        if parsed_bound["major"] == 0 and parsed_bound["minor"] == 0 and parsed_bound["patch"] == 0:
+            findings.append("Caret constraint ^0.0.0 matches only 0.0.0")
+        lower, upper = _cargo_caret_range(parsed_bound)
+        satisfies = version_gte(parsed_ver, lower) and version_less_than(parsed_ver, upper)
+        pc = {
+            "raw": constraint,
+            "scheme": "cargo",
+            "components": [
+                {"operator": ">=", "version": lower},
+                {"operator": "<", "version": upper},
+            ],
+            "type": "caret",
+        }
+        return VersionConstraintResult(
+            satisfies=satisfies,
+            parsed_version=parsed_ver,
+            parsed_constraint=pc,
+            scheme="cargo",
+            explanation=f"{version} satisfies {constraint}" if satisfies else f"{version} does not satisfy {constraint}",
+            findings=findings,
+        )
+
+    # Handle tilde constraints (cargo scheme)
+    if constraint.startswith("~"):
+        ver_str = constraint[1:].strip()
+        parsed_bound = _parse_version_lax(ver_str)
+        if parsed_bound is None:
+            return VersionConstraintResult(
+                satisfies=False,
+                parsed_version=parsed_ver,
+                parsed_constraint=None,
+                scheme=scheme,
+                explanation=f"Invalid version in tilde constraint: '{ver_str}'",
+                findings=[f"Could not parse version '{ver_str}' in tilde constraint"],
+            )
+        lower, upper = _cargo_tilde_range(parsed_bound)
+        satisfies = version_gte(parsed_ver, lower) and version_less_than(parsed_ver, upper)
+        pc = {
+            "raw": constraint,
+            "scheme": "cargo",
+            "components": [
+                {"operator": ">=", "version": lower},
+                {"operator": "<", "version": upper},
+            ],
+            "type": "tilde",
+        }
+        return VersionConstraintResult(
+            satisfies=satisfies,
+            parsed_version=parsed_ver,
+            parsed_constraint=pc,
+            scheme="cargo",
+            explanation=f"{version} satisfies {constraint}" if satisfies else f"{version} does not satisfy {constraint}",
+            findings=findings,
+        )
+
+    # Handle comma-separated constraints
+    if "," in constraint:
+        parts = [p.strip() for p in constraint.split(",") if p.strip()]
+        all_satisfy = True
+        components: list[ParsedConstraintComponent] = []
+        for part in parts:
+            op, ver_str = _parse_comparison_constraint(part)
+            parsed_bound = parse_version(ver_str)
+            if parsed_bound is None:
+                parsed_bound = _parse_version_lax(ver_str)
+            if parsed_bound is None:
+                return VersionConstraintResult(
+                    satisfies=False,
+                    parsed_version=parsed_ver,
+                    parsed_constraint=None,
+                    scheme=scheme,
+                    explanation=f"Invalid version in constraint part: '{ver_str}'",
+                    findings=[f"Could not parse version '{ver_str}' in constraint '{part}'"],
+                )
+            components.append({"operator": op, "version": parsed_bound})
+            if not _evaluate_component(parsed_ver, op, parsed_bound):
+                all_satisfy = False
+
+        pc = {
+            "raw": constraint,
+            "scheme": scheme,
+            "components": components,
+            "type": "range",
+        }
+        return VersionConstraintResult(
+            satisfies=all_satisfy,
+            parsed_version=parsed_ver,
+            parsed_constraint=pc,
+            scheme=scheme,
+            explanation=f"{version} satisfies {constraint}" if all_satisfy else f"{version} does not satisfy {constraint}",
+            findings=findings,
+        )
+
+    # Single comparison or exact constraint
+    op, ver_str = _parse_comparison_constraint(constraint)
+    parsed_bound = parse_version(ver_str)
+    if parsed_bound is None:
+        parsed_bound = _parse_version_lax(ver_str)
+    if parsed_bound is None:
+        return VersionConstraintResult(
+            satisfies=False,
+            parsed_version=parsed_ver,
+            parsed_constraint=None,
+            scheme=scheme,
+            explanation=f"Invalid version in constraint: '{ver_str}'",
+            findings=[f"Could not parse version '{ver_str}' in constraint"],
+        )
+
+    satisfies = _evaluate_component(parsed_ver, op, parsed_bound)
+    pc = {
+        "raw": constraint,
+        "scheme": scheme,
+        "components": [{"operator": op, "version": parsed_bound}],
+        "type": "comparison",
+    }
+    return VersionConstraintResult(
+        satisfies=satisfies,
+        parsed_version=parsed_ver,
+        parsed_constraint=pc,
+        scheme=scheme,
+        explanation=f"{version} satisfies {constraint}" if satisfies else f"{version} does not satisfy {constraint}",
+        findings=findings,
+    )
+
 # === MCP server ===
 
 # === mcp/schemas.py ===
@@ -25109,9 +27013,33 @@ def _regex_test_worker(
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
     except (ImportError, ValueError, OSError):
+        # RLIMIT_AS may not be supported or enforced on all platforms (e.g., macOS).
+        # On failure, we rely solely on the time-based timeout for protection.
         pass
     try:
         result = _regex_test(pattern, samples, flags, ignore_case, multiline, dotall, ascii)
+        result_queue.put(("ok", result))
+    except Exception as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
+
+
+def _regex_finditer_worker(
+    pattern: str,
+    text: str,
+    flags: list[str] | None,
+    max_matches: int,
+    include_line_column: bool,
+    include_groups: bool,
+    result_queue: multiprocessing.Queue,
+) -> None:
+    """Run regex finditer in a child process. Must be top-level for pickling."""
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+    except (ImportError, ValueError, OSError):
+        pass
+    try:
+        result = _regex_finditer(pattern, text, flags, max_matches, include_line_column, include_groups)
         result_queue.put(("ok", result))
     except Exception as exc:
         result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
@@ -25127,9 +27055,15 @@ def _sanitize_error(message: str) -> str:
     """
     text = message[:8192]
     text = text.encode("ascii", "replace").decode("ascii")
+    # Traceback File lines
     text = re.sub(r'File\s+["\'][^"\']*["\'],\s*line\s+\d+', 'File "<redacted>", line <redacted>', text)
+    # Module/frame references
     text = re.sub(r'(?:in\s+)<[^>]+>', 'in <module>', text)
-    text = re.sub(r'[A-Za-z_][\w.]*\s*=\s*["\'][^"\']*["\']', '<var>=<redacted>', text)
+    # Variable assignments with string values
+    text = re.sub(r'^\s*[A-Za-z_]\w*\s*=\s*["\'][^"\']*["\']', '<var>=<redacted>', text, flags=re.MULTILINE)
+    # Bare absolute file paths (Unix /path/to/file.py or Windows C:\path\file.py)
+    text = re.sub(r'(?:/[\w.-]+){2,}\.\w+', '<path>', text)
+    text = re.sub(r'[A-Za-z]:\\(?:[\w.-]+\\)+\w+\.\w+', '<path>', text)
     return text
 
 
@@ -25223,7 +27157,6 @@ def math_eval(expression: str) -> dict:
         return _error_response("invalid_arguments", f"expression must be a string, got {type(expression).__name__}", tool="math_eval")
     if len(expression) > MAX_EXPRESSION_LENGTH:
         return _error_response("input_too_large", f"Expression exceeds maximum length of {MAX_EXPRESSION_LENGTH}", tool="math_eval")
-    _SPAWN_SEMAPHORE.acquire()
     try:
         result = evaluate_with_timeout(expression, timeout=5.0)
         if hasattr(result, 'value') and hasattr(result, 'unit'):
@@ -25243,8 +27176,6 @@ def math_eval(expression: str) -> dict:
         return _error_response("evaluation_error", str(e), ["Check expression syntax"], tool="math_eval")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="math_eval")
-    finally:
-        _SPAWN_SEMAPHORE.release()
 
 
 def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
@@ -25272,6 +27203,10 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
             f"Value must be a finite number, got {value}",
             tool="unit_convert",
         )
+    if (err := _require_str(from_unit, "from_unit", "unit_convert")) is not None:
+        return err
+    if (err := _require_str(to_unit, "to_unit", "unit_convert")) is not None:
+        return err
     try:
 
         if not is_unit(from_unit):
@@ -25288,8 +27223,23 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
                 "factor": None,
             }, tool="unit_convert")
 
+        from_cat = get_unit_category(from_unit)
+        to_cat = get_unit_category(to_unit)
+        if from_cat is not None and to_cat is not None and from_cat != to_cat:
+            return _error_response(
+                "conversion_error",
+                f"Cannot convert between incompatible categories: {from_cat} ({from_unit}) -> {to_cat} ({to_unit})",
+                tool="unit_convert",
+            )
+
         factor = get_conversion_factor(from_unit, to_unit)
         result = value * factor
+        if not math.isfinite(result):
+            return _error_response(
+                "conversion_error",
+                f"Conversion result is not finite: {result}",
+                tool="unit_convert",
+            )
 
         return _success_response({
             "value": result,
@@ -25313,6 +27263,9 @@ def unit_info(unit: str) -> dict:
         Success response with unit information.
     """
     try:
+
+        if (err := _require_str(unit, "unit", "unit_info")) is not None:
+            return err
 
         if unit not in UNIT_ALIASES:
             return _error_response("invalid_arguments", f"Unknown unit: {unit}", tool="unit_info")
@@ -25408,6 +27361,8 @@ def text_measure(text: str, detail: str = "normal") -> dict:
         return _success_response(summary_result, tool="text_measure")
     except ValueError as e:
         return _error_response("invalid_arguments", str(e), tool="text_measure")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_measure")
 
 
 def _mcp_text_equal(
@@ -25899,14 +27854,6 @@ def validate_regex(
     Returns:
         Success envelope with regex test results, or error envelope.
     """
-    if len(samples) > MAX_REGEX_SAMPLES:
-        return _error_response(
-            "input_too_large",
-            f"Number of samples {len(samples)} exceeds MAX_REGEX_SAMPLES {MAX_REGEX_SAMPLES}",
-            [f"Maximum {MAX_REGEX_SAMPLES} samples allowed"],
-            tool="validate_regex",
-        )
-
     if not isinstance(pattern, str):
         return _error_response(
             "invalid_arguments",
@@ -25917,6 +27864,22 @@ def validate_regex(
         return _error_response(
             "invalid_arguments",
             f"samples must be a list, got {type(samples).__name__}",
+            tool="validate_regex",
+        )
+
+    if len(samples) > MAX_REGEX_SAMPLES:
+        return _error_response(
+            "input_too_large",
+            f"Number of samples {len(samples)} exceeds MAX_REGEX_SAMPLES {MAX_REGEX_SAMPLES}",
+            [f"Maximum {MAX_REGEX_SAMPLES} samples allowed"],
+            tool="validate_regex",
+        )
+
+    if len(pattern) > MAX_PATTERN_LENGTH_REGEX:
+        return _error_response(
+            "input_too_large",
+            f"Pattern length {len(pattern)} exceeds MAX_PATTERN_LENGTH_REGEX {MAX_PATTERN_LENGTH_REGEX}",
+            [f"Maximum pattern length is {MAX_PATTERN_LENGTH_REGEX} characters"],
             tool="validate_regex",
         )
 
@@ -25935,6 +27898,7 @@ def validate_regex(
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
     proc: multiprocessing.Process | None = None
+    released = False
     try:
         _SPAWN_SEMAPHORE.acquire()
         try:
@@ -25944,6 +27908,7 @@ def validate_regex(
             )
             proc.start()
         except BaseException:
+            released = True
             _SPAWN_SEMAPHORE.release()
             raise
 
@@ -25983,7 +27948,8 @@ def validate_regex(
     except Exception as e:
         return _error_response("internal_error", str(e), tool="validate_regex")
     finally:
-        _SPAWN_SEMAPHORE.release()
+        if not released:
+            _SPAWN_SEMAPHORE.release()
 
 
 def json_extract(
@@ -26145,6 +28111,19 @@ def regex_finditer(
     Returns:
         Success envelope with matches result, or error envelope.
     """
+    if not isinstance(text, str):
+        return _error_response(
+            "invalid_arguments",
+            f"text must be a string, got {type(text).__name__}",
+            tool="regex_finditer",
+        )
+    if not isinstance(pattern, str):
+        return _error_response(
+            "invalid_arguments",
+            f"pattern must be a string, got {type(pattern).__name__}",
+            tool="regex_finditer",
+        )
+
     if len(text) > MAX_TEXT_LENGTH_REGEX:
         return _error_response(
             "input_too_large",
@@ -26181,11 +28160,62 @@ def regex_finditer(
             tool="regex_finditer",
         )
 
+    # Run regex in a subprocess with timeout to prevent ReDoS from hanging server
+    ctx = multiprocessing.get_context("spawn")
+    queue: multiprocessing.Queue = ctx.Queue()
+    proc: multiprocessing.Process | None = None
+    released = False
     try:
-        result = _regex_finditer(pattern, text, flags, max_matches, include_line_column, include_groups)
-        return _success_response(result, tool="regex_finditer")
+        _SPAWN_SEMAPHORE.acquire()
+        try:
+            proc = ctx.Process(
+                target=_regex_finditer_worker,
+                args=(pattern, text, flags, max_matches, include_line_column, include_groups, queue),
+            )
+            proc.start()
+        except BaseException:
+            released = True
+            _SPAWN_SEMAPHORE.release()
+            raise
+
+        try:
+            status, value = queue.get(timeout=REGEX_TIMEOUT_SECONDS)
+        except Exception:
+            return _error_response(
+                "timeout",
+                f"Regex evaluation timed out after {REGEX_TIMEOUT_SECONDS} seconds",
+                ["Try a simpler pattern or reduce input size"],
+                tool="regex_finditer",
+            )
+        finally:
+            try:
+                queue.close()
+            except Exception:
+                pass
+            try:
+                queue.join_thread()
+            except Exception:
+                pass
+            if proc is not None:
+                if proc.is_alive():
+                    proc.terminate()
+                    proc.join(timeout=2)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=1)
+                try:
+                    proc.close()
+                except Exception:
+                    pass
+
+        if status == "error":
+            return _error_response("internal_error", value, tool="regex_finditer")
+        return _success_response(value, tool="regex_finditer")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="regex_finditer")
+    finally:
+        if not released:
+            _SPAWN_SEMAPHORE.release()
 
 
 def regex_safety_check(pattern: str) -> dict:
@@ -26197,6 +28227,8 @@ def regex_safety_check(pattern: str) -> dict:
     Returns:
         Success envelope with safety check result, or error envelope.
     """
+    if err := _require_str(pattern, "pattern", "regex_safety_check"):
+        return err
     if len(pattern) > MAX_PATTERN_LENGTH_REGEX:
         return _error_response(
             "input_too_large",
@@ -26324,11 +28356,34 @@ def _mcp_list_compare(
     Returns:
         Success envelope with comparison result, or error envelope.
     """
+    if not isinstance(a, list) or not isinstance(b, list):
+        return _error_response(
+            "invalid_arguments",
+            f"a and b must be lists, got {type(a).__name__} and {type(b).__name__}",
+            tool="list_compare",
+        )
+
     if len(a) > MAX_LIST_ITEMS or len(b) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
             f"List length exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
             [f"Maximum {MAX_LIST_ITEMS} items per list"],
+            tool="list_compare",
+        )
+
+    # Validate all elements are strings
+    non_str_a = [i for i, item in enumerate(a) if not isinstance(item, str)]
+    non_str_b = [i for i, item in enumerate(b) if not isinstance(item, str)]
+    if non_str_a or non_str_b:
+        errors = []
+        if non_str_a:
+            errors.append(f"a has non-string items at indices: {non_str_a[:5]}")
+        if non_str_b:
+            errors.append(f"b has non-string items at indices: {non_str_b[:5]}")
+        return _error_response(
+            "invalid_arguments",
+            "All list elements must be strings",
+            errors,
             tool="list_compare",
         )
 
@@ -26520,6 +28575,13 @@ def _mcp_text_transform(text: str, operations: list[str], detail: str = "normal"
     """
     if (err := _require_str(text, "text", "text_transform")) is not None:
         return err
+
+    if not isinstance(operations, list):
+        return _error_response(
+            "invalid_arguments",
+            f"operations must be a list, got {type(operations).__name__}",
+            tool="text_transform",
+        )
 
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
@@ -26770,6 +28832,13 @@ def _mcp_text_hash(
             "invalid_arguments",
             f"Unsupported detail level: {detail}",
             [f"Use one of: {', '.join(valid_details)}"],
+            tool="text_hash",
+        )
+
+    if algorithms is not None and not isinstance(algorithms, list):
+        return _error_response(
+            "invalid_arguments",
+            f"algorithms must be a list, got {type(algorithms).__name__}",
             tool="text_hash",
         )
 
@@ -27068,6 +29137,13 @@ def _mcp_text_window(
     if (err := _require_str(text, "text", "text_window")) is not None:
         return err
 
+    if not isinstance(position, dict):
+        return _error_response(
+            "invalid_arguments",
+            f"position must be a dict, got {type(position).__name__}",
+            tool="text_window",
+        )
+
     if context_lines < 0:
         return _error_response(
             "invalid_arguments",
@@ -27281,6 +29357,13 @@ def identifier_inspect_mcp(
     Returns:
         Success envelope with inspection result, or error envelope.
     """
+    if not isinstance(identifiers, list):
+        return _error_response(
+            "invalid_arguments",
+            f"identifiers must be a list, got {type(identifiers).__name__}",
+            tool="identifier_inspect",
+        )
+
     if len(identifiers) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
@@ -27508,11 +29591,28 @@ def list_dedupe_mcp(
     Returns:
         Success envelope with deduped list, or error envelope.
     """
+    if not isinstance(items, list):
+        return _error_response(
+            "invalid_arguments",
+            f"items must be a list, got {type(items).__name__}",
+            tool="list_dedupe",
+        )
+
     if len(items) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
             f"List length {len(items)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
             [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="list_dedupe",
+        )
+
+    # Validate all elements are strings
+    non_str = [i for i, item in enumerate(items) if not isinstance(item, str)]
+    if non_str:
+        return _error_response(
+            "invalid_arguments",
+            "All list elements must be strings",
+            [f"Non-string items at indices: {non_str[:5]}"],
             tool="list_dedupe",
         )
 
@@ -27556,11 +29656,28 @@ def list_sort_mcp(
     Returns:
         Success envelope with sorted list, or error envelope.
     """
+    if not isinstance(items, list):
+        return _error_response(
+            "invalid_arguments",
+            f"items must be a list, got {type(items).__name__}",
+            tool="list_sort",
+        )
+
     if len(items) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
             f"List length {len(items)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
             [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="list_sort",
+        )
+
+    # Validate all elements are strings
+    non_str = [i for i, item in enumerate(items) if not isinstance(item, str)]
+    if non_str:
+        return _error_response(
+            "invalid_arguments",
+            "All list elements must be strings",
+            [f"Non-string items at indices: {non_str[:5]}"],
             tool="list_sort",
         )
 
@@ -27612,6 +29729,10 @@ def _mcp_text_replace_check(
         Success envelope with replace check result, or error envelope.
     """
     if (err := _require_str(text, "text", "text_replace_check")) is not None:
+        return err
+    if (err := _require_str(old, "old", "text_replace_check")) is not None:
+        return err
+    if (err := _require_str(new, "new", "text_replace_check")) is not None:
         return err
 
     valid_modes = {"exact", "nfc", "nfkc", "casefold", "whitespace_collapse"}
@@ -27747,6 +29868,13 @@ def _mcp_line_range_compare(
     Returns:
         Success envelope with line range compare result, or error envelope.
     """
+    if not isinstance(left_text, str) or not isinstance(right_text, str):
+        return _error_response(
+            "invalid_arguments",
+            f"left_text and right_text must be strings, got {type(left_text).__name__} and {type(right_text).__name__}",
+            tool="line_range_compare",
+        )
+
     for label, t in [("left_text", left_text), ("right_text", right_text)]:
         if len(t) > MAX_TEXT_LENGTH:
             return _error_response(
@@ -27826,6 +29954,13 @@ def _mcp_shell_quote_join(
     Returns:
         Success envelope with quoted command and roundtrip status, or error envelope.
     """
+    if not isinstance(argv, list):
+        return _error_response(
+            "invalid_arguments",
+            f"argv must be a list, got {type(argv).__name__}",
+            tool="shell_quote_join",
+        )
+
     if len(argv) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
@@ -27890,6 +30025,19 @@ def shell_argv_compare(
         return _error_response(
             "invalid_arguments",
             "Provide exactly one of right_command or right_argv, not both",
+            tool="argv_compare",
+        )
+
+    if left_argv is not None and not isinstance(left_argv, list):
+        return _error_response(
+            "invalid_arguments",
+            f"left_argv must be a list, got {type(left_argv).__name__}",
+            tool="argv_compare",
+        )
+    if right_argv is not None and not isinstance(right_argv, list):
+        return _error_response(
+            "invalid_arguments",
+            f"right_argv must be a list, got {type(right_argv).__name__}",
             tool="argv_compare",
         )
 
@@ -28071,6 +30219,21 @@ def patch_apply_check_mcp(
     Returns:
         Success envelope with patch apply check result, or error envelope.
     """
+    # patch imports handled inline
+    # patch imports handled inline
+
+    if not isinstance(original_text, str):
+        return _error_response(
+            "invalid_arguments",
+            f"original_text must be a string, got {type(original_text).__name__}",
+            tool="patch_apply_check",
+        )
+    if not isinstance(patch_text, str):
+        return _error_response(
+            "invalid_arguments",
+            f"patch_text must be a string, got {type(patch_text).__name__}",
+            tool="patch_apply_check",
+        )
 
     if len(original_text) > MAX_ORIGINAL_LENGTH:
         return _error_response(
@@ -28112,6 +30275,15 @@ def patch_summary_mcp(
     Returns:
         Success envelope with patch summary result, or error envelope.
     """
+    # patch imports handled inline
+    # patch imports handled inline
+
+    if not isinstance(patch_text, str):
+        return _error_response(
+            "invalid_arguments",
+            f"patch_text must be a string, got {type(patch_text).__name__}",
+            tool="patch_summary",
+        )
 
     if len(patch_text) > MAX_PATCH_LENGTH:
         return _error_response(
@@ -28230,6 +30402,13 @@ def identifier_table_inspect_mcp(
     Returns:
         Success envelope with inspection result, or error envelope.
     """
+    if not isinstance(identifiers, list):
+        return _error_response(
+            "invalid_arguments",
+            f"identifiers must be a list, got {type(identifiers).__name__}",
+            tool="identifier_table_inspect",
+        )
+
     if len(identifiers) > MAX_LIST_ITEMS:
         return _error_response(
             "input_too_large",
@@ -28310,6 +30489,19 @@ def version_constraint_check_mcp(
     Returns:
         Success envelope with constraint check result, or error envelope.
     """
+    if not isinstance(version, str):
+        return _error_response(
+            "invalid_arguments",
+            f"version must be a string, got {type(version).__name__}",
+            tool="version_constraint_check",
+        )
+    if not isinstance(constraint, str):
+        return _error_response(
+            "invalid_arguments",
+            f"constraint must be a string, got {type(constraint).__name__}",
+            tool="version_constraint_check",
+        )
+
     valid_schemes = {"semver", "cargo"}
     if scheme not in valid_schemes:
         return _error_response(
@@ -28461,6 +30653,13 @@ def prompt_input_inspect_mcp(
     if (err := _require_str(text, "text", "prompt_input_inspect")) is not None:
         return err
 
+    if phrase_patterns is not None and not isinstance(phrase_patterns, list):
+        return _error_response(
+            "invalid_arguments",
+            f"phrase_patterns must be a list, got {type(phrase_patterns).__name__}",
+            tool="prompt_input_inspect",
+        )
+
     if phrase_patterns is not None:
         phrase_patterns = [str(p) for p in phrase_patterns]
 
@@ -28578,6 +30777,8 @@ TOOL_HANDLERS: dict[str, Any] = {
 MAX_REQUEST_BYTES = 1_000_000
 MAX_OUTPUT_BYTES = 1_000_000
 MAX_REQUESTS_PER_SECOND = 10
+MAX_REQUEST_ID_LENGTH = 1024
+MAX_TOOL_TIMEOUT_SECONDS = 30
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:
@@ -28613,6 +30814,9 @@ def levenshtein_distance(s1: str, s2: str) -> int:
     return prev_row[-1]
 
 
+_MAX_TOOL_NAME_LENGTH = 200
+
+
 def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
     """Find a case-insensitive close match for tool name using edit distance.
 
@@ -28620,6 +30824,8 @@ def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
     A match is considered good if the edit distance is at most half the length
     of the shorter string, or if it's a prefix/substring match.
     """
+    if len(name) > _MAX_TOOL_NAME_LENGTH:
+        return None
     name_lower = name.lower()
 
     # First check for exact case-insensitive match
@@ -28664,16 +30870,94 @@ def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
         return None
 
     params = sig.parameters
+    has_var_keyword = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
 
-    # Check for unexpected keyword arguments
-    unexpected = set(arguments.keys()) - set(params.keys())
-    if unexpected:
-        return f"Unexpected argument(s): {', '.join(sorted(unexpected))}"
+    # Check for unexpected keyword arguments (skip if handler accepts **kwargs)
+    if not has_var_keyword:
+        unexpected = set(arguments.keys()) - set(params.keys())
+        if unexpected:
+            return f"Unexpected argument(s): {', '.join(sorted(unexpected))}"
 
     # Check for missing required arguments (no default)
     for name, param in params.items():
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
         if param.default is inspect.Parameter.empty and name not in arguments:
             return f"Missing required argument: {name}"
+
+    return None
+
+
+def _validate_value_against_schema(
+    value: Any, prop: dict, path: str
+) -> str | None:
+    """Validate a single value against a JSON schema property definition.
+
+    Returns None if valid, or an error message string if invalid.
+    Supports recursive validation for nested objects and arrays.
+    """
+    expected_type = prop.get("type")
+    if expected_type is None:
+        return None
+
+    type_map = {
+        "string": str,
+        "number": (int, float),
+        "integer": int,
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+    }
+    python_type = type_map.get(expected_type)
+    if python_type is not None and not isinstance(value, python_type):
+        return f"Argument '{path}' must be {expected_type}, got {type(value).__name__}"
+
+    # Bool is subclass of int in Python; reject bool for integer/number
+    if expected_type in ("integer", "number") and isinstance(value, bool):
+        return f"Argument '{path}' must be {expected_type}, got bool"
+
+    enum_values = prop.get("enum")
+    if enum_values is not None and value not in enum_values:
+        return f"Argument '{path}' must be one of: {', '.join(str(v) for v in enum_values)}"
+
+    # Recursive validation for nested objects (only when sub-schema defines properties)
+    if expected_type == "object" and isinstance(value, dict):
+        sub_props = prop.get("properties", {})
+        sub_required = prop.get("required", [])
+        sub_additional = prop.get("additionalProperties", False)
+
+        # Only validate recursively if the schema actually defines sub-properties
+        # or required fields. Opaque object types (no sub-schema) are accepted as-is.
+        if sub_props or sub_required:
+            for field in sub_required:
+                if field not in value:
+                    return f"Missing required field '{field}' in '{path}'"
+
+            if not sub_additional:
+                unknown = set(value.keys()) - set(sub_props.keys())
+                if unknown:
+                    return f"Unexpected field(s) in '{path}': {', '.join(sorted(unknown))}"
+
+            for sub_key, sub_val in value.items():
+                if sub_key in sub_props:
+                    err = _validate_value_against_schema(
+                        sub_val, sub_props[sub_key], f"{path}.{sub_key}"
+                    )
+                    if err:
+                        return err
+
+    # Recursive validation for arrays
+    if expected_type == "array" and isinstance(value, list):
+        items_schema = prop.get("items")
+        if items_schema:
+            for i, item in enumerate(value):
+                err = _validate_value_against_schema(
+                    item, items_schema, f"{path}[{i}]"
+                )
+                if err:
+                    return err
 
     return None
 
@@ -28703,26 +30987,9 @@ def _validate_arguments_schema(name: str, arguments: dict[str, Any]) -> str | No
     for key, value in arguments.items():
         if key not in props:
             continue
-        prop = props[key]
-        expected_type = prop.get("type")
-        if expected_type is None:
-            continue
-
-        type_map = {
-            "string": str,
-            "number": (int, float),
-            "integer": int,
-            "boolean": bool,
-            "array": list,
-            "object": dict,
-        }
-        python_type = type_map.get(expected_type)
-        if python_type is not None and not isinstance(value, python_type):
-            return f"Argument '{key}' must be {expected_type}, got {type(value).__name__}"
-
-        enum_values = prop.get("enum")
-        if enum_values is not None and value not in enum_values:
-            return f"Argument '{key}' must be one of: {', '.join(str(v) for v in enum_values)}"
+        err = _validate_value_against_schema(value, props[key], key)
+        if err:
+            return err
 
     return None
 
@@ -28779,17 +31046,42 @@ def _handle_call_tool(request: dict) -> dict:
         }
 
     try:
-        result = handler(**arguments)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(handler, **arguments)
+            try:
+                result = future.result(timeout=MAX_TOOL_TIMEOUT_SECONDS)
+            except concurrent.futures.TimeoutError:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    {
+                                        "ok": False,
+                                        "error": f"Tool '{name}' execution timed out after {MAX_TOOL_TIMEOUT_SECONDS}s",
+                                        "error_type": "timeout",
+                                        "tool": name,
+                                        "hints": ["Try a simpler input or shorter text"],
+                                    }
+                                ),
+                            }
+                        ],
+                        "isError": True,
+                    },
+                }
 
-        # If result is an error envelope, return as error
+        # If result is an error envelope, return as MCP tool result with isError
         if isinstance(result, dict) and result.get("ok") is False:
+            serialized = json.dumps(result)
             return {
                 "jsonrpc": "2.0",
                 "id": request.get("id"),
-                "error": {
-                    "code": -32000,
-                    "message": result.get("error", "Unknown error"),
-                    "data": result,
+                "result": {
+                    "content": [{"type": "text", "text": serialized}],
+                    "isError": True,
                 },
             }
 
@@ -28812,7 +31104,8 @@ def _handle_call_tool(request: dict) -> dict:
                             "type": "text",
                             "text": json.dumps(truncated),
                         }
-                    ]
+                    ],
+                    "isError": True,
                 },
             }
 
@@ -28856,6 +31149,8 @@ def _handle_list_tools(request: dict) -> dict:
         return _invalid_request(request_id, "Invalid 'tags' parameter: expected array")
     if names_filter is not None and not isinstance(names_filter, list):
         return _invalid_request(request_id, "Invalid 'names' parameter: expected array")
+    if names_filter is not None and not all(isinstance(n, str) for n in names_filter):
+        return _invalid_request(request_id, "Invalid 'names' parameter: all items must be strings")
 
     tools = []
     for name, schema in TOOL_SCHEMAS.items():
@@ -28911,10 +31206,32 @@ def handle_request(request: Any) -> dict | None:
     if not isinstance(request, dict):
         return _invalid_request(None, "Invalid Request: expected JSON object")
 
+    # Validate JSON-RPC version
+    jsonrpc_version = request.get("jsonrpc")
+    if jsonrpc_version != "2.0":
+        return _invalid_request(
+            request.get("id"),
+            f"Invalid Request: jsonrpc must be '2.0', got '{jsonrpc_version}'",
+        )
+
     if "method" not in request:
         return _invalid_request(request.get("id"), "Invalid Request: missing 'method'")
 
+    request_id = request.get("id")
+    if request_id is not None:
+        id_str = str(request_id)
+        if len(id_str) > MAX_REQUEST_ID_LENGTH:
+            return _invalid_request(
+                None,
+                f"Invalid Request: 'id' exceeds maximum length of {MAX_REQUEST_ID_LENGTH}",
+            )
+
     method = request["method"]
+    if not isinstance(method, str):
+        return _invalid_request(
+            request.get("id"),
+            "Invalid Request: 'method' must be a string",
+        )
 
     if method == "tools/list":
         return _handle_list_tools(request)
@@ -28924,6 +31241,12 @@ def handle_request(request: Any) -> dict | None:
         return _handle_initialize(request)
     elif method == "notifications/initialized":
         return None
+    elif method == "ping":
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "result": {},
+        }
     else:
         return {
             "jsonrpc": "2.0",
@@ -28940,85 +31263,91 @@ def mcp_main() -> int:
 
     Reads JSON-RPC requests from stdin and writes responses to stdout.
     """
+    import os
+    os.environ["EGGCALC_NO_CONFIG"] = "1"
+    _evaluator._mcp_mode = True
     request_times: deque[float] = deque()
     window = 1.0  # sliding window in seconds
 
     for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-
-        if len(line.encode('utf-8')) > MAX_REQUEST_BYTES:
-            response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32700,
-                    "message": f"Request exceeds maximum size of {MAX_REQUEST_BYTES} bytes",
-                },
-            }
-            print(json.dumps(response), flush=True)
-            continue
-
-        if line.startswith('['):
-            response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32600,
-                    "message": "Batch requests are not supported",
-                },
-            }
-            print(json.dumps(response), flush=True)
-            continue
-
         try:
-            request = json.loads(line)
-        except json.JSONDecodeError:
-            response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32700,
-                    "message": "Parse error: invalid JSON",
-                },
-            }
-            print(json.dumps(response), flush=True)
-            continue
+            line = line.strip()
+            if not line:
+                continue
 
-        now = time.monotonic()
-        while request_times and request_times[0] < now - window:
-            request_times.popleft()
+            if len(line.encode('utf-8')) > MAX_REQUEST_BYTES:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32700,
+                        "message": f"Request exceeds maximum size of {MAX_REQUEST_BYTES} bytes",
+                    },
+                }
+                print(json.dumps(response), flush=True)
+                continue
 
-        if len(request_times) >= MAX_REQUESTS_PER_SECOND:
-            response = {
-                "jsonrpc": "2.0",
-                "id": request.get("id") if isinstance(request, dict) else None,
-                "error": {
-                    "code": -32600,
-                    "message": f"Rate limit exceeded: max {MAX_REQUESTS_PER_SECOND} requests per second",
-                },
-            }
-            print(json.dumps(response), flush=True)
-            continue
+            if line.startswith('['):
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32600,
+                        "message": "Batch requests are not supported",
+                    },
+                }
+                print(json.dumps(response), flush=True)
+                continue
 
-        request_times.append(now)
+            try:
+                request = json.loads(line)
+            except json.JSONDecodeError:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32700,
+                        "message": "Parse error: invalid JSON",
+                    },
+                }
+                print(json.dumps(response), flush=True)
+                continue
 
-        try:
-            response = handle_request(request)
-        except Exception as e:
-            message = _sanitize_error(str(e))[:500]
-            response = {
-                "jsonrpc": "2.0",
-                "id": request.get("id") if isinstance(request, dict) else None,
-                "error": {
-                    "code": -32603,
-                    "message": f"Internal error: {message}",
-                },
-            }
+            now = time.monotonic()
+            while request_times and request_times[0] < now - window:
+                request_times.popleft()
 
-        if response is not None:
-            print(json.dumps(response), flush=True)
+            if len(request_times) >= MAX_REQUESTS_PER_SECOND:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request.get("id") if isinstance(request, dict) else None,
+                    "error": {
+                        "code": -32600,
+                        "message": f"Rate limit exceeded: max {MAX_REQUESTS_PER_SECOND} requests per second",
+                    },
+                }
+                print(json.dumps(response), flush=True)
+                continue
+
+            request_times.append(now)
+
+            try:
+                response = handle_request(request)
+            except Exception as e:
+                message = _sanitize_error(str(e))[:500]
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request.get("id") if isinstance(request, dict) else None,
+                    "error": {
+                        "code": -32603,
+                        "message": f"Internal error: {message}",
+                    },
+                }
+
+            if response is not None:
+                print(json.dumps(response), flush=True)
+        except BrokenPipeError:
+            return 0
 
     return 0
 

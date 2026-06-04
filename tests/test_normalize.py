@@ -155,18 +155,11 @@ class TestBinaryWordErrors:
         assert code == 0
         assert _val(result) == 45
 
-    def test_bare_number_with_in_unit_known_limitation(self):
-        """Document known limitation: `1 in m` requires the unit token to be
-        attached to the number (e.g., `1m in inch` or `1 in *m`). The bare
-        `<num> in <unit>` pattern with a space between `in` and the unit is
-        ambiguous (in is both a unit and a keyword) and is not currently handled
-        by the normalize pipeline. Tracked as a known limitation in the report.
-        """
+    def test_bare_number_with_in_unit_conversion(self):
+        """`1 in m` should convert 1 meter to the base unit correctly."""
         result, code, _out, _err = _run("1 in m")
-        # Currently fails. Mark as known limitation; not a regression.
-        assert code != 0, (
-            f"`1 in m` is a known pipeline limitation. Got code={code} result={result}"
-        )
+        assert code == 0
+        assert _val(result) == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------

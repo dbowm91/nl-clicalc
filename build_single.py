@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 
 
@@ -448,9 +449,12 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
         "from ..exact.validate import (",
         "# validate imports handled inline"
     )
-    code = code.replace(
-        "from ..exact.patch import (",
-        "# patch imports handled inline"
+    # Use regex to replace entire multi-line import blocks for patch module
+    # (simple str.replace only replaces the header, leaving orphaned continuation lines)
+    code = re.sub(
+        r"from \.\.exact\.patch import \(\n(?:\s+[^)\n]*\n)*\s*\)",
+        "# patch imports handled inline",
+        code,
     )
 
     # Rename aliased primitives imports in synthesis to their actual names
