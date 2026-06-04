@@ -2776,7 +2776,9 @@ class TestRegexSafetyCheck:
         assert content["result"]["valid_pattern"] is True
         assert content["result"]["risk"] == "high"
         assert len(content["result"]["findings"]) > 0
-        assert content["result"]["findings"][0]["kind"] == "nested_quantifier"
+        # Nested quantifier may be caught by _check_pattern_complexity (kind="complexity")
+        # or by the regex_safety_check scan (kind="nested_quantifier")
+        assert content["result"]["findings"][0]["kind"] in ("nested_quantifier", "complexity")
 
     def test_invalid_regex(self):
         response = handle_request({

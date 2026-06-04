@@ -237,14 +237,20 @@ def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
         return None
 
     params = sig.parameters
+    has_var_keyword = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
 
-    # Check for unexpected keyword arguments
-    unexpected = set(arguments.keys()) - set(params.keys())
-    if unexpected:
-        return f"Unexpected argument(s): {', '.join(sorted(unexpected))}"
+    # Check for unexpected keyword arguments (skip if handler accepts **kwargs)
+    if not has_var_keyword:
+        unexpected = set(arguments.keys()) - set(params.keys())
+        if unexpected:
+            return f"Unexpected argument(s): {', '.join(sorted(unexpected))}"
 
     # Check for missing required arguments (no default)
     for name, param in params.items():
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
         if param.default is inspect.Parameter.empty and name not in arguments:
             return f"Missing required argument: {name}"
 
@@ -593,6 +599,8 @@ def main() -> int:
 
     Reads JSON-RPC requests from stdin and writes responses to stdout.
     """
+    import os
+    os.environ["EGGCALC_NO_CONFIG"] = "1"
     _evaluator._mcp_mode = True
     request_times: deque[float] = deque()
     window = 1.0  # sliding window in seconds

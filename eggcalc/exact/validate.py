@@ -16,6 +16,7 @@ MAX_INPUT_LENGTH = 100_000
 MAX_PATTERN_LENGTH = 1000
 MAX_PATTERN_NESTING = 5
 MAX_SAMPLE_LENGTH = 10_000
+MAX_SCHEMA_DEPTH = 50
 
 
 class BracketError(TypedDict):
@@ -630,6 +631,11 @@ def list_sort(
 def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
     """Check if regex pattern is too complex (ReDoS prevention).
 
+    Detects:
+    - Excessive nesting depth (MAX_PATTERN_NESTING)
+    - Nested quantifiers (e.g., (a+)+, (a*)*) which cause catastrophic backtracking
+    - Adjacent quantifiers (e.g., a++, a**)
+
     Args:
         pattern: Regular expression pattern.
 
@@ -642,6 +648,10 @@ def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
     nesting_depth = 0
     max_nesting = 0
     in_char_class = False
+    # Per-group state: whether a quantifier was seen directly in this group's content
+    group_stack: list[bool] = []
+    # Whether the immediately-preceding group had a quantifier in its content
+    prev_group_had_quantifier = False
     i = 0
 
     while i < len(pattern):
@@ -661,10 +671,32 @@ def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
         elif char == '(' and not in_char_class:
             nesting_depth += 1
             max_nesting = max(max_nesting, nesting_depth)
+            group_stack.append(False)
+            prev_group_had_quantifier = False
         elif char == ')' and not in_char_class:
             nesting_depth -= 1
             if nesting_depth < 0:
                 return False, f"Unmatched closing '{char}' at position {i}"
+            if group_stack:
+                prev_group_had_quantifier = group_stack.pop()
+            else:
+                prev_group_had_quantifier = False
+        elif char in ('+', '*', '?') and not in_char_class:
+            # Check if previous char was also a quantifier (e.g., ++)
+            if i > 0 and pattern[i - 1] in ('+', '*', '?'):
+                return False, f"Adjacent quantifiers detected at position {i}"
+            # Check if a group with inner quantifier was just closed
+            if prev_group_had_quantifier:
+                return False, (
+                    f"Nested quantifiers detected at position {i}: "
+                    "quantifier after group with internal quantifier"
+                )
+            # Mark current group as having a quantifier
+            if group_stack:
+                group_stack[-1] = True
+            prev_group_had_quantifier = False
+        else:
+            prev_group_had_quantifier = False
 
         i += 1
 
@@ -2120,8 +2152,16 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
                 expected_type=expected_type,
             ))
 
-    def _validate(path: str, value: Any, schema_def: dict) -> None:
+    def _validate(path: str, value: Any, schema_def: dict, depth: int = 0) -> None:
         if len(violations) >= MAX_SCHEMA_VIOLATIONS:
+            return
+        if depth > MAX_SCHEMA_DEPTH:
+            _add_violation(
+                path,
+                f"schema nesting depth {depth} exceeds maximum {MAX_SCHEMA_DEPTH}",
+                _get_type_name(value),
+                None,
+            )
             return
 
         expected_type = schema_def.get("type")
@@ -2174,7 +2214,7 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
             for prop_name, prop_schema in properties.items():
                 if prop_name in value:
                     new_path = f"{path}/{prop_name}" if path else f"/{prop_name}"
-                    _validate(new_path, value[prop_name], prop_schema)
+                    _validate(new_path, value[prop_name], prop_schema, depth + 1)
 
         elif expected_type == "array" and isinstance(value, list):
             min_items = schema_def.get("min_items")
@@ -2198,7 +2238,7 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
             if items_schema is not None:
                 for i, item in enumerate(value):
                     item_path = f"{path}/[{i}]"
-                    _validate(item_path, item, items_schema)
+                    _validate(item_path, item, items_schema, depth + 1)
 
         elif expected_type == "string" and isinstance(value, str):
             min_len = schema_def.get("min_length")
@@ -2228,16 +2268,17 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
                         "string",
                         None,
                     )
-                try:
-                    if not re.match(pattern, value):
-                        _add_violation(
-                            path,
-                            f"string '{value}' does not match pattern '{pattern}'",
-                            "string",
-                            None,
-                        )
-                except re.error:
-                    pass
+                else:
+                    try:
+                        if not re.match(pattern, value):
+                            _add_violation(
+                                path,
+                                f"string '{value}' does not match pattern '{pattern}'",
+                                "string",
+                                None,
+                            )
+                    except re.error:
+                        pass
 
         enum_values = schema_def.get("enum")
         if enum_values is not None:

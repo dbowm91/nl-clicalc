@@ -13,6 +13,7 @@ import cmath
 import contextvars
 import math
 import multiprocessing
+import os
 import random
 import threading
 from collections import OrderedDict
@@ -67,6 +68,7 @@ MAX_FACTORIAL = 1000
 MAX_NESTING_DEPTH = 100
 MAX_RESULT_VALUE = 1e308
 MAX_RESULT_DIGITS = 10000
+MAX_SHIFT_COUNT = 50000
 DEFAULT_CACHE_SIZE = 1024
 MAX_CACHE_BYTES = 64 * 1024 * 1024  # 64 MB soft cap for _cache
 
@@ -147,7 +149,20 @@ def register_constant(name: str, value: float) -> None:
 
 
 def register_function(name: str, func: Any) -> None:
-    """Register a user-defined function (thread-safe)."""
+    """Register a user-defined function (thread-safe).
+
+    Args:
+        name: Function name (must be a valid Python identifier).
+        func: Callable to register. Must be a function or callable object.
+
+    Raises:
+        TypeError: If func is not callable.
+        ValueError: If name is not a valid identifier.
+    """
+    if not callable(func):
+        raise TypeError(f"func must be callable, got {type(func).__name__}")
+    if not name.isidentifier():
+        raise ValueError(f"name must be a valid identifier, got {name!r}")
     with _lock:
         _default_evaluator.FUNCTIONS[name] = func
 
@@ -168,8 +183,17 @@ def load_user_config() -> None:
     the CWD must be controlled by the deployment operator, not by end users.
     An attacker who can place a malicious eggcalc_config.py in the CWD gains
     arbitrary code execution through the import.
+
+    Config loading can be disabled by setting the EGGCALC_NO_CONFIG
+    environment variable to a non-empty string.
     """
     global _config_loaded
+    if _mcp_mode:
+        _config_loaded = True
+        return
+    if os.environ.get("EGGCALC_NO_CONFIG", ""):
+        _config_loaded = True
+        return
     try:
         import eggcalc.normalize as normalize_mod
         import eggcalc_config as config
@@ -626,21 +650,13 @@ def _bitnot(a: int) -> int:
     return ~int(a)
 
 
-def _bitlshift(a: int, b: int) -> int:
-    """Left shift."""
-    return int(a) << int(b)
-
-
-def _bitrshift(a: int, b: int) -> int:
-    """Right shift."""
-    return int(a) >> int(b)
-
-
 def _bitlshift_safe(a: int, b: int) -> int:
-    """Left shift with non-negative check."""
+    """Left shift with bounds checks."""
     b = int(b)
     if b < 0:
         raise EvaluationError("Shift count must be non-negative")
+    if b > MAX_SHIFT_COUNT:
+        raise EvaluationError(f"Shift count too large (max {MAX_SHIFT_COUNT}, got {b})")
     return int(a) << b
 
 
@@ -772,8 +788,13 @@ def _next_prime(n: int) -> int:
     if n > 10**12:
         raise EvaluationError("primality test not available for numbers > 10^12")
     candidate = n + 1
+    max_iterations = 10000
+    iterations = 0
     while not _is_prime(candidate):
         candidate += 1
+        iterations += 1
+        if iterations > max_iterations:
+            raise EvaluationError("nextprime: search exceeded iteration limit (10000)")
     return candidate
 
 
@@ -785,8 +806,13 @@ def _prev_prime(n: int) -> int:
     if n > 10**12:
         raise EvaluationError("primality test not available for numbers > 10^12")
     candidate = n - 1
+    max_iterations = 10000
+    iterations = 0
     while candidate > 1 and not _is_prime(candidate):
         candidate -= 1
+        iterations += 1
+        if iterations > max_iterations:
+            raise EvaluationError("prevprime: search exceeded iteration limit (10000)")
     if candidate < 2:
         raise EvaluationError("No prime less than 2")
     return candidate
@@ -1848,43 +1874,29 @@ class Evaluator(ast.NodeVisitor):
             raise EvaluationError(str(e)) from None
 
     def _validate_node(self, node: ast.AST) -> None:
-        """Validate that a node is safe to evaluate."""
+        """Validate that a node is safe to evaluate.
+
+        Uses the precomputed _ALLOWED_AST_TYPES allowlist (built from
+        known-safe expression patterns) as the primary security gate.
+        Attribute access gets additional domain-specific validation.
+        """
         node_type = type(node)
 
-        # Allowed node types
-        if node_type in (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Constant, ast.Name, ast.Call):
-            return
-        if isinstance(node, (ast.operator, ast.unaryop, ast.expr_context)):
+        # Primary allowlist check — covers Expression, BinOp, UnaryOp,
+        # Constant, Name, Call, and all operator/unaryop/expr_context subclasses.
+        if node_type in _ALLOWED_AST_TYPES:
+            # Attribute access needs extra validation (restrict to math.* and real/imag/conjugate)
+            if node_type is ast.Attribute:
+                if not (isinstance(node.value, ast.Name) and node.value.id == "math"):
+                    if node.attr not in ("real", "imag", "conjugate"):
+                        raise EvaluationError(f"Attribute access '{node.attr}' is not allowed")
             return
 
-        # Forbidden node types
-        forbidden = (
-            ast.Subscript,
-            ast.List,
-            ast.Dict,
-            ast.Set,
-            ast.ListComp,
-            ast.DictComp,
-            ast.SetComp,
-            ast.GeneratorExp,
-            ast.Lambda,
-            ast.IfExp,
-            ast.Compare,
-            ast.BoolOp,
-        )
-        if node_type in forbidden:
-            if node_type == ast.Compare:
-                raise EvaluationError("Comparison operators are not supported")
-            if node_type == ast.BoolOp:
-                raise EvaluationError("Boolean operators are not supported")
-            raise EvaluationError(f"Unsupported node type: '{node_type.__name__}'")
-
-        # Attribute access (for math.*)
-        if isinstance(node, ast.Attribute):
-            if not (isinstance(node.value, ast.Name) and node.value.id == "math"):
-                if node.attr not in ("real", "imag", "conjugate"):
-                    raise EvaluationError(f"Attribute access '{node.attr}' is not allowed")
-            return
+        # Explicit forbidden types with helpful error messages
+        if node_type is ast.Compare:
+            raise EvaluationError("Comparison operators are not supported")
+        if node_type is ast.BoolOp:
+            raise EvaluationError("Boolean operators are not supported")
 
         raise EvaluationError(f"Unsupported node type: '{node_type.__name__}'")
 

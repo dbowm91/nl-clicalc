@@ -325,9 +325,15 @@ def _sanitize_error(message: str) -> str:
     """
     text = message[:8192]
     text = text.encode("ascii", "replace").decode("ascii")
+    # Traceback File lines
     text = re.sub(r'File\s+["\'][^"\']*["\'],\s*line\s+\d+', 'File "<redacted>", line <redacted>', text)
+    # Module/frame references
     text = re.sub(r'(?:in\s+)<[^>]+>', 'in <module>', text)
+    # Variable assignments with string values
     text = re.sub(r'^\s*[A-Za-z_]\w*\s*=\s*["\'][^"\']*["\']', '<var>=<redacted>', text, flags=re.MULTILINE)
+    # Bare absolute file paths (Unix /path/to/file.py or Windows C:\path\file.py)
+    text = re.sub(r'(?:/[\w.-]+){2,}\.\w+', '<path>', text)
+    text = re.sub(r'[A-Za-z]:\\(?:[\w.-]+\\)+\w+\.\w+', '<path>', text)
     return text
 
 
@@ -504,6 +510,12 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
 
         factor = get_conversion_factor(from_unit, to_unit)
         result = value * factor
+        if not math.isfinite(result):
+            return _error_response(
+                "conversion_error",
+                f"Conversion result is not finite: {result}",
+                tool="unit_convert",
+            )
 
         return _success_response({
             "value": result,
