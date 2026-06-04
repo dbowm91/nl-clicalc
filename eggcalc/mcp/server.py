@@ -288,6 +288,10 @@ def _validate_arguments_schema(name: str, arguments: dict[str, Any]) -> str | No
         if python_type is not None and not isinstance(value, python_type):
             return f"Argument '{key}' must be {expected_type}, got {type(value).__name__}"
 
+        # Bool is subclass of int in Python; reject bool for integer/number
+        if expected_type in ("integer", "number") and isinstance(value, bool):
+            return f"Argument '{key}' must be {expected_type}, got bool"
+
         enum_values = prop.get("enum")
         if enum_values is not None and value not in enum_values:
             return f"Argument '{key}' must be one of: {', '.join(str(v) for v in enum_values)}"
@@ -481,6 +485,14 @@ def handle_request(request: Any) -> dict | None:
     if not isinstance(request, dict):
         return _invalid_request(None, "Invalid Request: expected JSON object")
 
+    # Validate JSON-RPC version
+    jsonrpc_version = request.get("jsonrpc")
+    if jsonrpc_version != "2.0":
+        return _invalid_request(
+            request.get("id"),
+            f"Invalid Request: jsonrpc must be '2.0', got '{jsonrpc_version}'",
+        )
+
     if "method" not in request:
         return _invalid_request(request.get("id"), "Invalid Request: missing 'method'")
 
@@ -503,6 +515,12 @@ def handle_request(request: Any) -> dict | None:
         return _handle_initialize(request)
     elif method == "notifications/initialized":
         return None
+    elif method == "ping":
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "result": {},
+        }
     else:
         return {
             "jsonrpc": "2.0",

@@ -886,7 +886,8 @@ class TestCompoundUnitDivision:
         result = evaluate("(100*km) / (2*m)")
         assert isinstance(result, UnitValue)
         assert result.unit == "km/m"
-        assert abs(result.value - 50000.0) < 1e-10
+        # Division does NOT convert units (only add/sub do); result is 100/2 = 50 km/m
+        assert abs(result.value - 50.0) < 1e-10
 
 
 class TestUppercaseOperators:

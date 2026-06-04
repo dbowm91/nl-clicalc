@@ -341,11 +341,17 @@ def _safe_pow(base: float, exp: float) -> float:
     """Safe power function with exponent limits to prevent DoS."""
     if abs(exp) > MAX_EXPONENT:
         raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
-    if not isinstance(base, complex) and base < 0 and exp != int(exp):
-        raise EvaluationError("Cannot raise negative number to non-integer power")
+    if not isinstance(base, complex) and base < 0:
+        try:
+            if exp != int(exp):
+                raise EvaluationError("Cannot raise negative number to non-integer power")
+        except (ValueError, TypeError):
+            raise EvaluationError("Cannot raise negative number to non-integer power")
     try:
         result = pow(base, exp)
     except (OverflowError, ZeroDivisionError):
+        if base == 0:
+            raise EvaluationError("Cannot raise zero to a negative power") from None
         raise EvaluationError("Result too large") from None
     if isinstance(result, float):
         if math.isnan(result) or math.isinf(result):
@@ -358,7 +364,8 @@ def _safe_pow(base: float, exp: float) -> float:
 def _int_digit_count(n: int) -> int:
     """Count digits of an integer, safely handling Python 3.11+ str() limits."""
     try:
-        return len(str(n))
+        s = str(n)
+        return len(s) - (1 if s.startswith('-') else 0)
     except ValueError:
         # Python 3.11+ raises ValueError for integers with >4300 str digits
         # Use bit_length as an upper bound: digits <= bit_length * log10(2) + 1
@@ -739,8 +746,8 @@ def _prime_factors(n: int) -> str:
 def _next_prime(n: int) -> int:
     """Return the next prime after n."""
     n = int(n)
-    if n > 10**15:
-        raise EvaluationError("Input too large for nextprime")
+    if n > 10**12:
+        raise EvaluationError("primality test not available for numbers > 10^12")
     candidate = n + 1
     while not _is_prime(candidate):
         candidate += 1
@@ -752,6 +759,8 @@ def _prev_prime(n: int) -> int:
     n = int(n)
     if n <= 2:
         raise EvaluationError("No prime less than 2")
+    if n > 10**12:
+        raise EvaluationError("primality test not available for numbers > 10^12")
     candidate = n - 1
     while candidate > 1 and not _is_prime(candidate):
         candidate -= 1
@@ -930,7 +939,12 @@ def _cbrt_impl(x: float) -> float:
     return math.copysign(abs(x) ** (1/3), x)
 
 
-_cbrt = _cbrt_impl
+def _cbrt_complex(x: complex) -> complex:
+    """Complex cube root using principal branch."""
+    return x ** (1/3)
+
+
+_cbrt = _complex_aware(_cbrt_impl, _cbrt_complex)
 
 
 class EvaluationError(Exception):
@@ -1639,8 +1653,8 @@ class Evaluator(ast.NodeVisitor):
                 f"Cannot add/subtract incompatible units: '{left_unit}' and '{right_unit}'"
             )
 
-        # Handle unit conversion
-        if left_unit and right_unit and left_unit != right_unit:
+        # Handle unit conversion (only for addition/subtraction, not multiply/divide)
+        if is_add_sub and left_unit and right_unit and left_unit != right_unit:
             try:
                 factor = self._get_conversion_factor(right_unit, left_unit)
                 right_val = right_val * factor
@@ -1685,10 +1699,10 @@ class Evaluator(ast.NodeVisitor):
                 return UnitValue(left_val / right_val, compound)
 
         # Compound unit detection for multiplication:
-        # UnitValue * UnitValue with different units -> "left_unit*right_unit"
+        # UnitValue * UnitValue -> "left_unit*right_unit" (including same-unit: m*m -> m*m)
         # UnitValue * number whose AST name is a unit -> "left_unit*name"
         if op_class is ast.Mult and isinstance(left, UnitValue) and left.unit:
-            if isinstance(right, UnitValue) and right.unit and left.unit != right.unit:
+            if isinstance(right, UnitValue) and right.unit:
                 compound = f"{left.unit}*{right.unit}"
                 return UnitValue(left_val * right_val, compound)
             if not isinstance(right, UnitValue) and right_name and right_name in UNIT_ALIASES:

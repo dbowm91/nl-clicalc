@@ -293,6 +293,28 @@ def _regex_test_worker(
         result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
 
 
+def _regex_finditer_worker(
+    pattern: str,
+    text: str,
+    flags: list[str] | None,
+    max_matches: int,
+    include_line_column: bool,
+    include_groups: bool,
+    result_queue: multiprocessing.Queue,
+) -> None:
+    """Run regex finditer in a child process. Must be top-level for pickling."""
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+    except (ImportError, ValueError, OSError):
+        pass
+    try:
+        result = _regex_finditer(pattern, text, flags, max_matches, include_line_column, include_groups)
+        result_queue.put(("ok", result))
+    except Exception as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
+
+
 def _sanitize_error(message: str) -> str:
     """Sanitize error messages by removing non-ASCII, file paths, and Python internals.
 
@@ -1389,11 +1411,62 @@ def regex_finditer(
             tool="regex_finditer",
         )
 
+    # Run regex in a subprocess with timeout to prevent ReDoS from hanging server
+    ctx = multiprocessing.get_context("spawn")
+    queue: multiprocessing.Queue = ctx.Queue()
+    proc: multiprocessing.Process | None = None
+    released = False
     try:
-        result = _regex_finditer(pattern, text, flags, max_matches, include_line_column, include_groups)
-        return _success_response(result, tool="regex_finditer")
+        _SPAWN_SEMAPHORE.acquire()
+        try:
+            proc = ctx.Process(
+                target=_regex_finditer_worker,
+                args=(pattern, text, flags, max_matches, include_line_column, include_groups, queue),
+            )
+            proc.start()
+        except BaseException:
+            released = True
+            _SPAWN_SEMAPHORE.release()
+            raise
+
+        try:
+            status, value = queue.get(timeout=REGEX_TIMEOUT_SECONDS)
+        except Exception:
+            return _error_response(
+                "timeout",
+                f"Regex evaluation timed out after {REGEX_TIMEOUT_SECONDS} seconds",
+                ["Try a simpler pattern or reduce input size"],
+                tool="regex_finditer",
+            )
+        finally:
+            try:
+                queue.close()
+            except Exception:
+                pass
+            try:
+                queue.join_thread()
+            except Exception:
+                pass
+            if proc is not None:
+                if proc.is_alive():
+                    proc.terminate()
+                    proc.join(timeout=2)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=1)
+                try:
+                    proc.close()
+                except Exception:
+                    pass
+
+        if status == "error":
+            return _error_response("internal_error", value, tool="regex_finditer")
+        return _success_response(value, tool="regex_finditer")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="regex_finditer")
+    finally:
+        if not released:
+            _SPAWN_SEMAPHORE.release()
 
 
 def regex_safety_check(pattern: str) -> dict:
@@ -1544,6 +1617,22 @@ def list_compare(
             "input_too_large",
             f"List length exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
             [f"Maximum {MAX_LIST_ITEMS} items per list"],
+            tool="list_compare",
+        )
+
+    # Validate all elements are strings
+    non_str_a = [i for i, item in enumerate(a) if not isinstance(item, str)]
+    non_str_b = [i for i, item in enumerate(b) if not isinstance(item, str)]
+    if non_str_a or non_str_b:
+        errors = []
+        if non_str_a:
+            errors.append(f"a has non-string items at indices: {non_str_a[:5]}")
+        if non_str_b:
+            errors.append(f"b has non-string items at indices: {non_str_b[:5]}")
+        return _error_response(
+            "invalid_arguments",
+            "All list elements must be strings",
+            errors,
             tool="list_compare",
         )
 
@@ -2766,6 +2855,16 @@ def list_dedupe_mcp(
             tool="list_dedupe",
         )
 
+    # Validate all elements are strings
+    non_str = [i for i, item in enumerate(items) if not isinstance(item, str)]
+    if non_str:
+        return _error_response(
+            "invalid_arguments",
+            "All list elements must be strings",
+            [f"Non-string items at indices: {non_str[:5]}"],
+            tool="list_dedupe",
+        )
+
     valid_normalizations = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
     if normalization not in valid_normalizations:
         return _error_response(
@@ -2818,6 +2917,16 @@ def list_sort_mcp(
             "input_too_large",
             f"List length {len(items)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
             [f"Maximum {MAX_LIST_ITEMS} items allowed"],
+            tool="list_sort",
+        )
+
+    # Validate all elements are strings
+    non_str = [i for i, item in enumerate(items) if not isinstance(item, str)]
+    if non_str:
+        return _error_response(
+            "invalid_arguments",
+            "All list elements must be strings",
+            [f"Non-string items at indices: {non_str[:5]}"],
             tool="list_sort",
         )
 

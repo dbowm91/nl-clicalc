@@ -43,6 +43,9 @@ MODULES_EXACT = [
     "exact/identifier_inspect",
     "exact/glob",
     "exact/unicode_policy",
+    "exact/inspect_prompt",
+    "exact/cargo",
+    "exact/version",
 ]
 
 MODULES_MCP = [
@@ -135,10 +138,14 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
         for mod in ALL_MODULES:
             if "/" in mod:
                 pkg, name = mod.split("/")
-                if f"from .{pkg}.{name} import" in stripped or f"from .{name} import" in stripped:
+                # Match "from .<pkg>.<name> import" or "from ..exact.<name> import"
+                if (f"from .{pkg}.{name} import" in stripped or
+                    f"from .{name} import" in stripped or
+                    f"from ..exact.{name} import" in stripped):
                     return True
-            elif f"from .{stripped.split('.')[1]} import" in stripped:
-                return True
+            else:
+                if f"from .{mod} import" in stripped:
+                    return True
         return False
 
     def should_replace_import(stripped: str) -> bool:
@@ -188,10 +195,15 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
         # Strip all top-level multi-line imports; also strip local multi-line imports
         # except those from inlined exact modules (primitives, synthesis, etc.)
         if (stripped.startswith("import ") or stripped.startswith("from ")) and "(" in stripped and ")" not in stripped:
-            is_inlined_module = any(
-                stripped.startswith(f"from .{m.split('/')[-1]} import")
-                for m in MODULES_EXACT
-            )
+            # Check if this is a local import from an inlined exact module
+            # Patterns: "from .<module> import" or "from ..exact.<module> import"
+            is_inlined_module = False
+            for m in MODULES_EXACT:
+                mod_name = m.split('/')[-1]
+                if (stripped.startswith(f"from .{mod_name} import") or
+                    stripped.startswith(f"from ..exact.{mod_name} import")):
+                    is_inlined_module = True
+                    break
             if not (line and line[0] in " \t"):
                 in_multiline_import = True
                 continue
@@ -295,6 +307,9 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     code = code.replace("from .identifier_inspect import", "from identifier_inspect import")
     code = code.replace("from .glob import", "from glob import")
     code = code.replace("from .unicode_policy import", "from unicode_policy import")
+    code = code.replace("from .inspect_prompt import", "from inspect_prompt import")
+    code = code.replace("from .cargo import", "from cargo import")
+    code = code.replace("from .version import", "from version import")
 
     # MCP module internal references
     code = code.replace("from .schemas import", "from schemas import")
@@ -382,6 +397,60 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     code = code.replace(
         "from .unicode_policy import (",
         "# unicode_policy imports handled inline"
+    )
+
+    # MCP imports from ..exact.<module> (indented inside functions)
+    code = code.replace(
+        "from ..exact.config import (",
+        "# config imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.identifier import (",
+        "# identifier imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.markdown import (",
+        "# markdown imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.path_tools import (",
+        "# path_tools imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.primitives import (",
+        "# primitives imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.shell import (",
+        "# shell imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.synthesis import (",
+        "# synthesis imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.transform import (",
+        "# transform imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.unicode_policy import (",
+        "# unicode_policy imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.cargo import (",
+        "# cargo imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.version import (",
+        "# version imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.validate import (",
+        "# validate imports handled inline"
+    )
+    code = code.replace(
+        "from ..exact.patch import (",
+        "# patch imports handled inline"
     )
 
     # Rename aliased primitives imports in synthesis to their actual names

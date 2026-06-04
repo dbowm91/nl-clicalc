@@ -55,9 +55,13 @@ class UnitValue:
         return abs(self.value - other.value) < FLOAT_EPSILON
 
     def __hash__(self) -> int:
-        # Use 10 decimal places to match FLOAT_EPSILON=1e-10: if __eq__
-        # returns True (values within 1e-10), the hash must be identical.
-        return hash((round(self.value, 10), self.unit))
+        # Use 9 decimal places to maintain hash/eq contract:
+        # __eq__ uses epsilon 1e-10, so values within 1e-10 are equal.
+        # Rounding to 9 places (one fewer than epsilon) ensures equal values
+        # always produce the same hash.
+        if isinstance(self.value, complex):
+            return hash((round(self.value.real, 9), round(self.value.imag, 9), self.unit))
+        return hash((round(self.value, 9), self.unit))
 
     def __add__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
@@ -524,18 +528,18 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "mps": 1.0,
         "meterpersecond": 1.0,
         "meterspersecond": 1.0,
-        "km/h": 0.277777778,
-        "kph": 0.277777778,
-        "kilometerperhour": 0.277777778,
-        "kilometersperhour": 0.277777778,
+        "km/h": 1000 / 3600,
+        "kph": 1000 / 3600,
+        "kilometerperhour": 1000 / 3600,
+        "kilometersperhour": 1000 / 3600,
         "mph": 0.44704,
         "mileperhour": 0.44704,
         "milesperhour": 0.44704,
         "mi/h": 0.44704,
-        "kn": 0.514444,
-        "knot": 0.514444,
-        "knots": 0.514444,
-        "kt": 0.514444,
+        "kn": 1852 / 3600,
+        "knot": 1852 / 3600,
+        "knots": 1852 / 3600,
+        "kt": 1852 / 3600,
         "mach": 340.29,
     },
     # Area (base: square meters)

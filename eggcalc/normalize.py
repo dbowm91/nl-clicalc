@@ -380,7 +380,7 @@ def _build_config() -> tuple[dict, dict]:
         # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
         "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in STRIPPED_PHRASES])})"),
         "int": re.compile(r"^[-+]?[0-9]\d*$"),
-        "float": re.compile(r"^[-+]?[0-9]\d*(?:\.\d+?)?(?:[eE][-+]?\d+)?$"),
+        "float": re.compile(r"^[-+]?(?:[0-9]\d*(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?$"),
         "int_number_combine": re.compile(r"^[-+*]?[0-9]\d*$"),
         "valid_operations": re.compile(
             f"^({'|'.join([re.escape(s) for s in symbols] + [re.escape(f) for f in FUNCTION_MAPPINGS.values()] + [re.escape(c) for c in CONSTANT_WORDS.keys()])}){{1}}$"
@@ -947,7 +947,7 @@ def _should_split_number_sequence(token: str) -> bool:
 # patterns and raises a clear error (e.g., "5 not 6" -> SyntaxError rather than
 # the silent "5~6" that would be produced by naive word substitution).
 _BINARY_WORD_PATTERN = re.compile(
-    r"(\d+(?:\.\d+)?|\([^)]*\))\s+"
+    r"(\d+(?:\.\d+)?|\((?:[^()]|\([^()]*\))*\))\s+"
     r"(not|in|to|as|into)\s+"
     r"(\d+(?:\.\d+)?)",
     flags=re.IGNORECASE,
@@ -991,7 +991,7 @@ _MULTI_ARG_OF_FUNCS: set[str] = {
 }
 
 
-def _binary_word_check(expr: str) -> None:
+def _binary_word_check(expr: str) -> bool:
     """Raise ValueError if expr contains <value> not/in/to/as/into <value>.
 
     These words are reserved for unary bitwise NOT or unit conversion. When
@@ -1009,19 +1009,22 @@ def _binary_word_check(expr: str) -> None:
     return True
 
 
+# Module-level multi-word function name mappings (constant, no need to recreate each call)
+_MULTI_WORD_FUNCTIONS: dict[str, str] = {
+    "square root": "sqrt",
+    "cube root": "cbrt",
+    "inverse sine": "asin",
+    "inverse cosine": "acos",
+    "inverse tangent": "atan",
+}
+
+
 def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str:
     """Normalize an expression by removing filler words and applying conversions."""
     if len(expression) > MAX_INPUT_LENGTH:
         raise ValueError(f"Input too long (max {MAX_INPUT_LENGTH} characters)")
     # Replace multi-word function names before whitespace removal collapses them
     # e.g., "square root" -> "sqrt", "cube root" -> "cbrt"
-    _MULTI_WORD_FUNCTIONS = {
-        "square root": "sqrt",
-        "cube root": "cbrt",
-        "inverse sine": "asin",
-        "inverse cosine": "acos",
-        "inverse tangent": "atan",
-    }
     for phrase, replacement in sorted(_MULTI_WORD_FUNCTIONS.items(), key=lambda x: len(x[0]), reverse=True):
         expression = re.sub(r"\b" + re.escape(phrase) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
@@ -1087,9 +1090,17 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         "quintillion": "1000000000000000000",
     }
     for scale_word, scale_val in _DIGIT_SCALES.items():
+        # Convert "N thousand" to "N*1000" (for later evaluation)
         expression = re.sub(
             r"\b(\d+(?:\.\d+)?)\s+" + re.escape(scale_word) + r"\b",
             lambda m, sv=scale_val: f"{m.group(1)}*{sv}",
+            expression,
+            flags=re.IGNORECASE,
+        )
+        # Also handle bare scale words (e.g., "thousand" alone) -> "*1000"
+        expression = re.sub(
+            r"\b" + re.escape(scale_word) + r"\b",
+            f"*{scale_val}",
             expression,
             flags=re.IGNORECASE,
         )
