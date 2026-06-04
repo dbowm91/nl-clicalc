@@ -153,7 +153,7 @@ MAX_CANCELLED_REQUESTS = 10_000
 _SHARED_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="mcp-tool")
 atexit.register(_SHARED_EXECUTOR.shutdown, wait=False)
 _running_futures: set[concurrent.futures.Future[Any]] = set()
-_cancelled_requests: set = set()
+_cancelled_requests: deque[Any] = deque(maxlen=MAX_CANCELLED_REQUESTS)
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:
@@ -455,7 +455,10 @@ def _handle_call_tool(request: dict) -> dict:
 
     req_id = request.get("id")
     if req_id is not None and req_id in _cancelled_requests:
-        _cancelled_requests.discard(req_id)
+        # Remove from deque (rebuild without the matching element)
+        remaining = [r for r in _cancelled_requests if r != req_id]
+        _cancelled_requests.clear()
+        _cancelled_requests.extend(remaining)
         return {
             "jsonrpc": "2.0",
             "id": req_id,
@@ -696,10 +699,8 @@ def handle_request(request: Any) -> dict | None:
         return None
     elif method == "notifications/cancelled":
         cancelled_id = request.get("params", {}).get("requestId")
-        if cancelled_id is not None:
-            if len(_cancelled_requests) >= MAX_CANCELLED_REQUESTS:
-                _cancelled_requests.pop()
-            _cancelled_requests.add(cancelled_id)
+        if cancelled_id is not None and isinstance(cancelled_id, (str, int)):
+            _cancelled_requests.append(cancelled_id)
         return None
     elif method == "ping":
         return {

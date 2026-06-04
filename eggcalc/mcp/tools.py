@@ -3200,6 +3200,37 @@ def line_range_compare(
                 tool="line_range_compare",
             )
 
+    if not isinstance(start_line, int) or isinstance(start_line, bool):
+        return _error_response(
+            "invalid_arguments",
+            f"start_line must be an int, got {type(start_line).__name__}",
+            tool="line_range_compare",
+        )
+    if not isinstance(end_line, int) or isinstance(end_line, bool):
+        return _error_response(
+            "invalid_arguments",
+            f"end_line must be an int, got {type(end_line).__name__}",
+            tool="line_range_compare",
+        )
+    if start_line < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"start_line must be non-negative, got {start_line}",
+            tool="line_range_compare",
+        )
+    if end_line < 0:
+        return _error_response(
+            "invalid_arguments",
+            f"end_line must be non-negative, got {end_line}",
+            tool="line_range_compare",
+        )
+    if start_line > end_line:
+        return _error_response(
+            "invalid_arguments",
+            f"start_line ({start_line}) must be <= end_line ({end_line})",
+            tool="line_range_compare",
+        )
+
     valid_modes = {"exact", "ignore_trailing_whitespace", "normalize_newlines"}
     if comparison_mode not in valid_modes:
         return _error_response(

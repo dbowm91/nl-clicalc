@@ -201,6 +201,68 @@ class TestLineRangeCompareOptions:
         assert result["right_fingerprint"] != ""
 
 
+class TestLineRangeCompareValidation:
+    """Test input validation for line_range_compare via MCP tool handler."""
+
+    def _call_compare(self, left_text, right_text, start_line, end_line):
+        from eggcalc.mcp.tools import line_range_compare
+        return line_range_compare(left_text, right_text, start_line, end_line)
+
+    def test_reject_bool_start_line(self):
+        result = self._call_compare("line1\nline2", "line1\nline2", True, 2)
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+        assert "start_line" in result["error"]
+
+    def test_reject_bool_end_line(self):
+        result = self._call_compare("line1\nline2", "line1\nline2", 1, False)
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+        assert "end_line" in result["error"]
+
+    def test_reject_negative_start_line(self):
+        result = self._call_compare("line1\nline2", "line1\nline2", -1, 2)
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+        assert "start_line" in result["error"]
+
+    def test_reject_negative_end_line(self):
+        result = self._call_compare("line1\nline2", "line1\nline2", 1, -1)
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+        assert "end_line" in result["error"]
+
+    def test_reject_start_line_greater_than_end_line(self):
+        result = self._call_compare("line1\nline2\nline3", "line1\nline2\nline3", 3, 1)
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+        assert "start_line" in result["error"]
+
+    def test_reject_string_start_line(self):
+        result = self._call_compare("line1\nline2", "line1\nline2", "1", 2)
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+        assert "start_line" in result["error"]
+
+    def test_reject_string_end_line(self):
+        result = self._call_compare("line1\nline2", "line1\nline2", 1, "2")
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+        assert "end_line" in result["error"]
+
+    def test_reject_float_start_line(self):
+        result = self._call_compare("line1\nline2", "line1\nline2", 1.5, 2)
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+        assert "start_line" in result["error"]
+
+    def test_reject_float_end_line(self):
+        result = self._call_compare("line1\nline2", "line1\nline2", 1, 2.5)
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_arguments"
+        assert "end_line" in result["error"]
+
+
 class TestLineRangeCompareEdgeCases:
     """Test edge cases."""
 

@@ -5847,3 +5847,226 @@ class TestListCompareOrderedNormalization:
         content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is True
         assert content["result"]["equal"] is True
+
+
+class TestLineRangeCompareValidation:
+    """Test line_range_compare input validation via MCP handler."""
+
+    def _call_compare(self, left_text, right_text, start_line, end_line, **kwargs):
+        args = {
+            "left_text": left_text,
+            "right_text": right_text,
+            "start_line": start_line,
+            "end_line": end_line,
+        }
+        args.update(kwargs)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5000,
+            "method": "tools/call",
+            "params": {
+                "name": "line_range_compare",
+                "arguments": args,
+            },
+        })
+        return response
+
+    def test_reject_bool_start_line(self):
+        response = self._call_compare("line1\nline2", "line1\nline2", True, 2)
+        # Schema validation rejects bool before tool runs
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_reject_bool_end_line(self):
+        response = self._call_compare("line1\nline2", "line1\nline2", 1, False)
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_reject_negative_start_line(self):
+        response = self._call_compare("line1\nline2", "line1\nline2", -1, 2)
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is False
+        assert content["error_type"] == "invalid_arguments"
+        assert "start_line" in content["error"]
+
+    def test_reject_negative_end_line(self):
+        response = self._call_compare("line1\nline2", "line1\nline2", 1, -1)
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is False
+        assert content["error_type"] == "invalid_arguments"
+        assert "end_line" in content["error"]
+
+    def test_reject_start_line_greater_than_end_line(self):
+        response = self._call_compare("line1\nline2\nline3", "line1\nline2\nline3", 3, 1)
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is False
+        assert content["error_type"] == "invalid_arguments"
+        assert "start_line" in content["error"]
+
+    def test_reject_string_start_line(self):
+        response = self._call_compare("line1\nline2", "line1\nline2", "1", 2)
+        # Schema validation rejects string before tool runs
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_reject_string_end_line(self):
+        response = self._call_compare("line1\nline2", "line1\nline2", 1, "2")
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_reject_float_start_line(self):
+        response = self._call_compare("line1\nline2", "line1\nline2", 1.5, 2)
+        # Schema validation rejects float before tool runs
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_reject_float_end_line(self):
+        response = self._call_compare("line1\nline2", "line1\nline2", 1, 2.5)
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+
+class TestCancelledRequests:
+    """Test _cancelled_requests deque behavior in MCP server."""
+
+    def test_cancelled_request_returns_cancelled_error(self):
+        """Sending a cancelled notification then a tool call with same ID returns cancelled error."""
+        from eggcalc.mcp.server import _cancelled_requests
+
+        _cancelled_requests.clear()
+        cancelled_id = "test_cancelled_1"
+
+        # Send cancelled notification
+        handle_request({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": cancelled_id},
+        })
+
+        # Send tool call with same ID
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": cancelled_id,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "1 + 1"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is False
+        assert content["error_type"] == "cancelled"
+        assert "cancelled" in content["error"].lower()
+
+    def test_cancelled_request_removed_from_deque(self):
+        """After matching a tool call, the cancelled ID is removed from the deque."""
+        from eggcalc.mcp.server import _cancelled_requests
+
+        _cancelled_requests.clear()
+        cancelled_id = "test_cancelled_2"
+
+        # Send cancelled notification
+        handle_request({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": cancelled_id},
+        })
+        assert cancelled_id in _cancelled_requests
+
+        # Send tool call with same ID
+        handle_request({
+            "jsonrpc": "2.0",
+            "id": cancelled_id,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "1 + 1"},
+            },
+        })
+
+        # ID should be removed from deque
+        assert cancelled_id not in _cancelled_requests
+
+    def test_non_string_non_int_request_id_ignored(self):
+        """Cancelled notifications with non-string/non-int requestId are ignored."""
+        from eggcalc.mcp.server import _cancelled_requests
+
+        _cancelled_requests.clear()
+
+        # Send cancelled notification with float requestId
+        handle_request({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": 3.14},
+        })
+        assert len(_cancelled_requests) == 0
+
+        # Send cancelled notification with list requestId
+        handle_request({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": [1, 2, 3]},
+        })
+        assert len(_cancelled_requests) == 0
+
+        # Send cancelled notification with dict requestId
+        handle_request({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": {"id": "test"}},
+        })
+        assert len(_cancelled_requests) == 0
+
+    def test_non_cancelled_id_not_affected(self):
+        """A tool call with an ID not in _cancelled_requests proceeds normally."""
+        from eggcalc.mcp.server import _cancelled_requests
+
+        _cancelled_requests.clear()
+        non_cancelled_id = "test_not_cancelled"
+
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": non_cancelled_id,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "5 + 3"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["value"] == "8"
+
+    def test_cancelled_int_id_stored_and_checked(self):
+        """Cancelled notifications with integer requestId work correctly."""
+        from eggcalc.mcp.server import _cancelled_requests
+
+        _cancelled_requests.clear()
+        cancelled_id = 42
+
+        # Send cancelled notification
+        handle_request({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": cancelled_id},
+        })
+        assert cancelled_id in _cancelled_requests
+
+        # Send tool call with same ID
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": cancelled_id,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "1 + 1"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is False
+        assert content["error_type"] == "cancelled"
