@@ -137,4 +137,7 @@ __all__ = [
     "clearvars",
 ]
 
-load_user_config()
+import os as _os
+
+if not _os.environ.get("EGGCALC_NO_CONFIG", ""):
+    load_user_config()

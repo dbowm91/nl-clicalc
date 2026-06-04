@@ -302,6 +302,24 @@ def _validate_value_against_schema(
     if enum_values is not None and value not in enum_values:
         return f"Argument '{path}' must be one of: {', '.join(str(v) for v in enum_values)}"
 
+    # String length constraints
+    if expected_type == "string" and isinstance(value, str):
+        min_length = prop.get("minLength")
+        if min_length is not None and len(value) < min_length:
+            return f"Argument '{path}' length {len(value)} is less than minLength {min_length}"
+        max_length = prop.get("maxLength")
+        if max_length is not None and len(value) > max_length:
+            return f"Argument '{path}' length {len(value)} exceeds maxLength {max_length}"
+
+    # Numeric range constraints
+    if expected_type in ("number", "integer") and isinstance(value, (int, float)) and not isinstance(value, bool):
+        minimum = prop.get("minimum")
+        if minimum is not None and value < minimum:
+            return f"Argument '{path}' value {value} is less than minimum {minimum}"
+        maximum = prop.get("maximum")
+        if maximum is not None and value > maximum:
+            return f"Argument '{path}' value {value} exceeds maximum {maximum}"
+
     # Recursive validation for nested objects (only when sub-schema defines properties)
     if expected_type == "object" and isinstance(value, dict):
         sub_props = prop.get("properties", {})
@@ -431,14 +449,22 @@ def _handle_call_tool(request: dict) -> dict:
 
     timed_out = False
     result = None
+    executor: concurrent.futures.ThreadPoolExecutor | None = None
+    future: concurrent.futures.Future | None = None
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(handler, **arguments)
-            try:
-                result = future.result(timeout=MAX_TOOL_TIMEOUT_SECONDS)
-            except concurrent.futures.TimeoutError:
-                timed_out = True
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(handler, **arguments)
+        try:
+            result = future.result(timeout=MAX_TOOL_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            timed_out = True
+            if future is not None:
                 future.cancel()
+            import logging as _logging
+            _logging.warning(
+                "MCP tool '%s' timed out after %ds",
+                name, MAX_TOOL_TIMEOUT_SECONDS,
+            )
     except Exception as e:
         if not timed_out:
             message = _sanitize_error(str(e))[:500]
@@ -450,6 +476,9 @@ def _handle_call_tool(request: dict) -> dict:
                     "message": f"Tool execution error: {message}",
                 },
             }
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=False)
 
     if timed_out:
         return {

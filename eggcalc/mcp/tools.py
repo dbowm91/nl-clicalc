@@ -265,6 +265,12 @@ def _build_physical_constants() -> dict[str, dict[str, Any]]:
                 "symbol": symbol,
                 "name": display_name,
             }
+        else:
+            import logging as _logging
+            _logging.debug(
+                "constant_lookup: _CONSTANT_META key %r not found in "
+                "Evaluator.CONSTANTS (stale metadata entry)", key,
+            )
     return result
 
 
@@ -3719,6 +3725,22 @@ def identifier_table_inspect_mcp(
             "input_too_large",
             f"Number of identifiers {len(identifiers)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
             [f"Maximum {MAX_LIST_ITEMS} identifiers allowed"],
+            tool="identifier_table_inspect",
+        )
+
+    bad_entries: list[str] = []
+    for i, entry in enumerate(identifiers):
+        if not isinstance(entry, dict):
+            bad_entries.append(f"[{i}] is {type(entry).__name__}, not dict")
+        elif "name" not in entry:
+            bad_entries.append(f"[{i}] missing required 'name' field")
+        elif not isinstance(entry["name"], str):
+            bad_entries.append(f"[{i}] 'name' must be a string, got {type(entry['name']).__name__}")
+    if bad_entries:
+        return _error_response(
+            "invalid_arguments",
+            "Malformed identifier entries",
+            bad_entries[:10],
             tool="identifier_table_inspect",
         )
 
