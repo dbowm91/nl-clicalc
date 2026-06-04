@@ -67,10 +67,17 @@ class UnitValue:
             if not are_units_compatible(self.unit, other.unit):
                 raise ValueError(f"Cannot add incompatible units: {self.unit} + {other.unit}")
             if self.unit == other.unit or other.unit is None or self.unit is None:
-                return UnitValue(self.value + other.value, self.unit or other.unit)
-            converted = other.convert_to(self.unit)
-            return UnitValue(self.value + converted.value, self.unit)
-        raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
+                result = self.value + other.value
+            else:
+                converted = other.convert_to(self.unit)
+                result = self.value + converted.value
+        else:
+            raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
+        if isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+        return UnitValue(result, self.unit)
     def __radd__(self, other: Numeric) -> UnitValue:
         return self.__add__(other)
 
@@ -79,10 +86,17 @@ class UnitValue:
             if not are_units_compatible(self.unit, other.unit):
                 raise ValueError(f"Cannot subtract incompatible units: {self.unit} - {other.unit}")
             if self.unit == other.unit or other.unit is None or self.unit is None:
-                return UnitValue(self.value - other.value, self.unit or other.unit)
-            converted = other.convert_to(self.unit)
-            return UnitValue(self.value - converted.value, self.unit)
-        raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
+                result = self.value - other.value
+            else:
+                converted = other.convert_to(self.unit)
+                result = self.value - converted.value
+        else:
+            raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
+        if isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+        return UnitValue(result, self.unit)
 
     def __rsub__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
@@ -92,9 +106,19 @@ class UnitValue:
     def __mul__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             if self.unit and other.unit:
-                return UnitValue(self.value * other.value, f"{self.unit}*{other.unit}")
-            return UnitValue(self.value * other.value, self.unit or other.unit)
-        return UnitValue(self.value * other, self.unit)
+                result = self.value * other.value
+                unit = f"{self.unit}*{other.unit}"
+            else:
+                result = self.value * other.value
+                unit = self.unit or other.unit
+        else:
+            result = self.value * other
+            unit = self.unit
+        if isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+        return UnitValue(result, unit)
 
     def __rmul__(self, other: Numeric) -> UnitValue:
         return self.__mul__(other)
@@ -103,12 +127,24 @@ class UnitValue:
         if isinstance(other, UnitValue):
             if self.unit and other.unit:
                 if self.unit == other.unit:
-                    return UnitValue(self.value / other.value, None)
-                return UnitValue(self.value / other.value, f"{self.unit}/{other.unit}")
-            return UnitValue(self.value / other.value, self.unit)
-        if other == 0:
-            raise ZeroDivisionError("Cannot divide UnitValue by zero")
-        return UnitValue(self.value / other, self.unit)
+                    result = self.value / other.value
+                    unit = None
+                else:
+                    result = self.value / other.value
+                    unit = f"{self.unit}/{other.unit}"
+            else:
+                result = self.value / other.value
+                unit = self.unit
+        else:
+            if other == 0:
+                raise ZeroDivisionError("Cannot divide UnitValue by zero")
+            result = self.value / other
+            unit = self.unit
+        if isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+        return UnitValue(result, unit)
 
     def __rtruediv__(self, other: Numeric) -> UnitValue:
         if self.unit:
@@ -120,16 +156,30 @@ class UnitValue:
         return UnitValue(other / self.value, None)
 
     def __pow__(self, other: Numeric) -> UnitValue:
+        if isinstance(other, bool):
+            other = int(other)
         if self.unit:
             if isinstance(other, int):
-                return UnitValue(self.value**other, f"{self.unit}**{other}")
-            if isinstance(other, float) and other.is_integer():
-                return UnitValue(self.value**other, f"{self.unit}**{int(other)}")
-            if isinstance(other, (int, float)):
+                result = self.value**other
+                unit = f"{self.unit}**{other}"
+            elif isinstance(other, float) and other.is_integer():
+                result = self.value**other
+                unit = f"{self.unit}**{int(other)}"
+            elif isinstance(other, (int, float)):
                 raise TypeError(
                     f"Cannot raise unit '{self.unit}' to non-integer power"
                 )
-        return UnitValue(self.value**other, self.unit)
+            else:
+                result = self.value**other
+                unit = self.unit
+        else:
+            result = self.value**other
+            unit = self.unit
+        if isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+        return UnitValue(result, unit)
 
     def __neg__(self) -> UnitValue:
         return UnitValue(-self.value, self.unit)
@@ -1326,6 +1376,11 @@ UNIT_CATEGORIES: dict[str, str] = {
     "floz": "volume",
     "tbsp": "volume",
     "tsp": "volume",
+    "m3": "volume",
+    "ft3": "volume",
+    "cm3": "volume",
+    "in3": "volume",
+    "yd3": "volume",
     "Pa": "pressure",
     "kPa": "pressure",
     "MPa": "pressure",
@@ -1334,6 +1389,11 @@ UNIT_CATEGORIES: dict[str, str] = {
     "mbar": "pressure",
     "atm": "pressure",
     "psi": "pressure",
+    "mmHg": "pressure",
+    "torr": "pressure",
+    "inHg": "pressure",
+    "mmH2O": "pressure",
+    "inH2O": "pressure",
     "J": "energy",
     "kJ": "energy",
     "MJ": "energy",

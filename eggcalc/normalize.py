@@ -408,7 +408,7 @@ def _build_config() -> tuple[dict, dict]:
         "parenthesis": re.compile(r"\(|\)"),
         "operators": re.compile(f"^({'|'.join([re.escape(s) for s in symbols])}){{1}}$"),
         # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
-        "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in STRIPPED_PHRASES])})"),
+        "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in sorted(STRIPPED_PHRASES, key=len, reverse=True)])})"),
         "int": re.compile(r"^[-+]?[0-9]\d*$"),
         "float": re.compile(r"^[-+]?(?:[0-9]\d*(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?$"),
         "int_number_combine": re.compile(r"^[-+*]?[0-9]\d*$"),
@@ -679,6 +679,26 @@ def apply_math_functions(
 
         if token in operators["functions"]:
             func_name = operators["functions"][token]
+
+            # Check if this token is actually a unit being used in a conversion
+            # context (e.g., "min" in "10 min in seconds"). Skip function conversion
+            # if the next non-* token is "IN" or "TO" followed by a known unit name.
+            _is_unit_conversion = False
+            if token.lower() in UNIT_ALIASES or token in UNIT_ALIASES:
+                scan_idx = i + 1
+                while scan_idx < len(tokens) and tokens[scan_idx] == "*":
+                    scan_idx += 1
+                if scan_idx < len(tokens) and tokens[scan_idx] in ("IN", "TO"):
+                    after_in = scan_idx + 1
+                    if after_in < len(tokens):
+                        candidate = tokens[after_in]
+                        if candidate in UNIT_ALIASES or candidate.lower() in UNIT_ALIASES:
+                            _is_unit_conversion = True
+
+            if _is_unit_conversion:
+                output_tokens.append(token)
+                i += 1
+                continue
             # Implicit-mul swap: <num>[*] <single-arg-func> -> <func>(<num>)
             # Only swap if there is no value (number) immediately after the function
             # name in the token stream; otherwise the trailing value is the argument
@@ -993,10 +1013,12 @@ _IMPLICIT_MUL_FUNCS: set[str] = {
     "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
     "exp", "abs", "factorial", "fact", "cbrt", "floor",
     "ceil", "round", "sign", "mean", "median", "mode",
-    "std", "variance", "gcd", "lcm", "perm", "comb",
+    "std", "variance", "var", "gcd", "lcm", "perm", "comb",
     "nPr", "nCr", "isprime", "nextprime", "prevprime",
     "primefactors", "random", "randint", "gauss", "sum",
     "max", "min", "hypot", "clamp",
+    "sine", "cosine", "tangent", "absolute", "ceiling",
+    "stdev", "average",
 }
 
 # Subset of _IMPLICIT_MUL_FUNCS that take exactly one argument. Used by
@@ -1007,7 +1029,7 @@ _SINGLE_ARG_IMPLICIT_MUL: set[str] = {
     "exp", "abs", "factorial", "fact", "cbrt", "floor",
     "ceil", "round", "sign", "isprime", "nextprime",
     "prevprime", "random", "gauss", "hypot", "primefactors",
-    "randint",
+    "randint", "sine", "cosine", "tangent", "absolute", "ceiling",
 }
 
 # Subset of _IMPLICIT_MUL_FUNCS that take multiple arguments. Used by
@@ -1015,7 +1037,7 @@ _SINGLE_ARG_IMPLICIT_MUL: set[str] = {
 # "mean(1,2,3)". Single-arg functions keep "+" / "-" as real operators
 # (e.g., "sqrt of 144 + 5" -> "sqrt(144) + 5").
 _MULTI_ARG_OF_FUNCS: set[str] = {
-    "mean", "median", "mode", "std", "variance",
+    "mean", "median", "mode", "std", "variance", "var",
     "gcd", "lcm", "perm", "comb", "nPr", "nCr",
     "sum", "max", "min", "clamp",
 }
@@ -1057,6 +1079,19 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # e.g., "square root" -> "sqrt", "cube root" -> "cbrt"
     for phrase, replacement in sorted(_MULTI_WORD_FUNCTIONS.items(), key=lambda x: len(x[0]), reverse=True):
         expression = re.sub(r"\b" + re.escape(phrase) + r"\b", replacement, expression, flags=re.IGNORECASE)
+
+    # Convert hyphens between number words to spaces
+    # e.g., "twenty-one" -> "twenty one" (prevents hyphen being treated as minus)
+    _ALL_NW: set[str] = set()
+    for _words in NUMBER_WORDS.values():
+        _ALL_NW.update(_words)
+    _nw_pat = "|".join(sorted(_ALL_NW, key=len, reverse=True))
+    expression = re.sub(
+        rf"\b({_nw_pat})-({_nw_pat})\b",
+        r"\1 \2",
+        expression,
+        flags=re.IGNORECASE,
+    )
 
     # Replace multi-word number phrases to prevent incorrect joining
     # e.g., "one hundred" -> "100", "two thousand" -> "2000"
@@ -1145,6 +1180,15 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     for word, replacement in sorted(_ALL_NUMBER_WORDS.items(), key=lambda x: len(x[0]), reverse=True):
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
+    # Strip longer filler phrases before word-to-operator conversion so that
+    # "the value of pi" → "pi" (not "value * pi" after "of" → "*").
+    # Short phrases like "the " are stripped AFTER word_to_all to avoid
+    # corrupting operator phrases like "to the power of".
+    _LONG_PHRASES = [p for p in STRIPPED_PHRASES if len(p) > 10]
+    if _LONG_PHRASES:
+        _long_pats = "|".join(sorted([re.escape(p) for p in _LONG_PHRASES], key=len, reverse=True))
+        expression = re.sub(f"({_long_pats})", "", expression)
+
     # Use combined word replacement for efficiency (single pass)
     # Use word boundaries to avoid replacing parts of words
     word_to_all = operators.get("word_to_all", {})
@@ -1165,7 +1209,7 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # This allows NL words like "fifty" to be converted to digits first
     expression = re.sub(r"(\d+(?:\.\d+)?)\s+percent\b", lambda m: str(float(m.group(1)) / 100), expression, flags=re.IGNORECASE)
 
-    # Strip phrases
+    # Strip short filler phrases after word-to-operator conversion
     expression = patterns["stripped_chars"].sub("", expression)
 
     # Handle compound unit conversions after stripping
@@ -1219,9 +1263,40 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Must be done BEFORE the 'i' -> 'j' substitution (no conflict) and BEFORE
     # whitespace removal. Use word boundaries and case-insensitive matching.
     # Also handle "degrees in <unit>" by converting the full phrase.
+    # Temperature units are skipped so "100 degrees in fahrenheit" is handled
+    # by the unit conversion system, not the angle conversion.
+    _TEMP_UNITS = frozenset({
+        "f", "c", "k", "r",
+        "fahrenheit", "celsius", "kelvin", "rankine",
+        "degf", "degc", "degk", "degr",
+    })
+    # Use a placeholder to prevent subsequent regexes from re-matching temperature expressions.
+    _DEG_PLACEHOLDER = "\x00DEG_TEMP\x00"
+
+    def _degrees_temp_handler(m: re.Match) -> str:
+        if m.group(2).lower() in _TEMP_UNITS:
+            # "100 degrees in fahrenheit" → "100 fahrenheit" (temperature, not angle)
+            return f"{m.group(1)} {_DEG_PLACEHOLDER}{m.group(2)}"
+        return f"(({m.group(1)}*pi/180)*{m.group(2)}/rad)"
+
     expression = re.sub(
         r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b\s+(?:in|IN)\s+(\w+)",
-        lambda m: f"(({m.group(1)}*pi/180)*{m.group(2)}/rad)",
+        _degrees_temp_handler,
+        expression,
+        flags=re.IGNORECASE,
+    )
+
+    def _degrees_temp_no_in_handler(m: re.Match) -> str:
+        if m.group(2).lower() in _TEMP_UNITS:
+            # "100 degrees fahrenheit" → "100 fahrenheit" (temperature, not angle)
+            return f"{m.group(1)} {_DEG_PLACEHOLDER}{m.group(2)}"
+        if is_unit(m.group(2)):
+            return f"({m.group(1)}*pi/180) {m.group(2)}"
+        return f"({m.group(1)}*pi/180)"
+
+    expression = re.sub(
+        r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b\s+(\w+)",
+        _degrees_temp_no_in_handler,
         expression,
         flags=re.IGNORECASE,
     )
@@ -1231,6 +1306,8 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         expression,
         flags=re.IGNORECASE,
     )
+    # Restore temperature expressions from placeholder (strip "degrees", keep unit)
+    expression = expression.replace(_DEG_PLACEHOLDER, "")
 
     # Join space-separated number sequences with + for proper evaluation
     # This must happen BEFORE whitespace removal so we get "3+100+20+2" instead of "3100202"

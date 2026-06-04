@@ -1494,6 +1494,8 @@ def regex_safety_check(pattern: str) -> dict:
     Returns:
         Success envelope with safety check result, or error envelope.
     """
+    if err := _require_str(pattern, "pattern", "regex_safety_check"):
+        return err
     if len(pattern) > MAX_PATTERN_LENGTH_REGEX:
         return _error_response(
             "input_too_large",

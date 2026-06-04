@@ -7,6 +7,7 @@ and measurement tools to agents.
 
 from __future__ import annotations
 
+import concurrent.futures
 import inspect
 import json
 import sys
@@ -146,6 +147,7 @@ MAX_REQUEST_BYTES = 1_000_000
 MAX_OUTPUT_BYTES = 1_000_000
 MAX_REQUESTS_PER_SECOND = 10
 MAX_REQUEST_ID_LENGTH = 1024
+MAX_TOOL_TIMEOUT_SECONDS = 30
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:
@@ -413,7 +415,32 @@ def _handle_call_tool(request: dict) -> dict:
         }
 
     try:
-        result = handler(**arguments)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(handler, **arguments)
+            try:
+                result = future.result(timeout=MAX_TOOL_TIMEOUT_SECONDS)
+            except concurrent.futures.TimeoutError:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    {
+                                        "ok": False,
+                                        "error": f"Tool '{name}' execution timed out after {MAX_TOOL_TIMEOUT_SECONDS}s",
+                                        "error_type": "timeout",
+                                        "tool": name,
+                                        "hints": ["Try a simpler input or shorter text"],
+                                    }
+                                ),
+                            }
+                        ],
+                        "isError": True,
+                    },
+                }
 
         # If result is an error envelope, return as MCP tool result with isError
         if isinstance(result, dict) and result.get("ok") is False:
