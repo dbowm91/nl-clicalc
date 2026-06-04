@@ -15,6 +15,7 @@ Provides comprehensive unit conversion support including:
 
 from __future__ import annotations
 
+import math
 import threading
 
 Numeric = float | int | complex
@@ -33,6 +34,8 @@ class UnitValue:
     def __init__(self, value: float, unit: str | None = None) -> None:
         self.value = value
         self.unit = unit
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"UnitValue does not support non-finite values: {value}")
 
     def __repr__(self) -> str:
         if self.unit:
@@ -107,11 +110,17 @@ class UnitValue:
                     return UnitValue(self.value / other.value, None)
                 return UnitValue(self.value / other.value, f"{self.unit}/{other.unit}")
             return UnitValue(self.value / other.value, self.unit)
+        if other == 0:
+            raise ZeroDivisionError("Cannot divide UnitValue by zero")
         return UnitValue(self.value / other, self.unit)
 
     def __rtruediv__(self, other: Numeric) -> UnitValue:
         if self.unit:
+            if self.value == 0:
+                raise ZeroDivisionError("Cannot divide by zero UnitValue")
             return UnitValue(other / self.value, f"1/{self.unit}")
+        if self.value == 0:
+            raise ZeroDivisionError("Cannot divide by zero UnitValue")
         return UnitValue(other / self.value, None)
 
     def __pow__(self, other: Numeric) -> UnitValue:

@@ -117,6 +117,24 @@ class TestUnitConversions:
         # Just verify it's a valid number
         assert isinstance(result, (int, float, UnitValue))
 
+    def test_unit_conversion_precision_inches_to_mm(self):
+        """1 inch = 25.4 mm exactly"""
+        result, _ = run("1 inch in mm", NORMALIZE, PATTERNS)
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 25.4) < 1e-10
+
+    def test_unit_conversion_precision_mile_to_km(self):
+        """1 mile = 1.609344 km exactly"""
+        result, _ = run("1 mile in km", NORMALIZE, PATTERNS)
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 1.609344) < 1e-10
+
+    def test_unit_conversion_precision_foot_to_meter(self):
+        """1 foot = 0.3048 m exactly"""
+        result, _ = run("1 foot in m", NORMALIZE, PATTERNS)
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 0.3048) < 1e-10
+
     def test_bitwise_not_rejects_float(self):
         """Test that bitwise NOT raises an error for float operands."""
         with pytest.raises(EvaluationError):
@@ -771,6 +789,54 @@ class TestTemperatureConversions:
         result = convert_temperature(100.0, "C", "F")
         assert abs(result - 212.0) < 1e-9
 
+    def test_kelvin_to_celsius(self):
+        """0 K = -273.15 C"""
+        result, _ = run("0K in C", NORMALIZE, PATTERNS)
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - (-273.15)) < 1e-6
+
+    def test_celsius_to_kelvin(self):
+        """0 C = 273.15 K"""
+        result, _ = run("0C in K", NORMALIZE, PATTERNS)
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 273.15) < 1e-6
+
+    def test_kelvin_to_fahrenheit(self):
+        """0 K = -459.67 F"""
+        result, _ = run("0K in F", NORMALIZE, PATTERNS)
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - (-459.67)) < 1e-6
+
+    def test_fahrenheit_to_kelvin(self):
+        """32 F = 273.15 K"""
+        result, _ = run("32F in K", NORMALIZE, PATTERNS)
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 273.15) < 1e-6
+
+    def test_rankine_to_kelvin(self):
+        """0 R = 0 K"""
+        result, _ = run("0R in K", NORMALIZE, PATTERNS)
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 0.0) < 1e-6
+
+    def test_kelvin_to_rankine(self):
+        """273.15 K = 491.67 R"""
+        from eggcalc.units import convert_temperature
+        result = convert_temperature(273.15, "K", "R")
+        assert abs(result - 491.67) < 1e-6
+
+    def test_celsius_to_rankine(self):
+        """0 C = 491.67 R"""
+        result, _ = run("0C in R", NORMALIZE, PATTERNS)
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 491.67) < 1e-6
+
+    def test_fahrenheit_to_rankine(self):
+        """0 F = 459.67 R"""
+        result, _ = run("0F in R", NORMALIZE, PATTERNS)
+        val = result.value if isinstance(result, UnitValue) else result
+        assert abs(val - 459.67) < 1e-6
+
 
 class TestUnicodeScriptOther:
     """Tests for unicode_script() returning 'Other' for digits and punctuation."""
@@ -829,6 +895,16 @@ class TestDivisionByZero:
         with pytest.raises(EvaluationError, match="Cannot divide by zero"):
             evaluate("1%0")
 
+    def test_zero_division_float(self):
+        """0.0/0.0 should raise EvaluationError"""
+        with pytest.raises(EvaluationError):
+            evaluate("0.0/0.0")
+
+    def test_unit_division_by_zero(self):
+        """5m / 0 should raise ZeroDivisionError or EvaluationError"""
+        with pytest.raises((ZeroDivisionError, EvaluationError)):
+            evaluate("5m / 0")
+
 
 class TestErrorHandling:
     """Tests for proper error handling (no raw Python exceptions)."""
@@ -869,6 +945,21 @@ class TestErrorHandling:
         """Test that factorial of non-integer raises EvaluationError."""
         with pytest.raises(EvaluationError):
             evaluate("factorial(1.5)")
+
+    def test_zero_to_zeroth_power(self):
+        """0**0 is defined as 1 in this calculator"""
+        result = evaluate("0**0")
+        assert result == 1
+
+    def test_zero_to_negative_power(self):
+        """0**-1 should raise error (division by zero)"""
+        with pytest.raises(EvaluationError):
+            evaluate("0**-1")
+
+    def test_inf_plus_one(self):
+        """inf + 1 should raise EvaluationError (result too large)"""
+        with pytest.raises(EvaluationError):
+            evaluate("1e309 + 1e309")
 
 
 class TestCompoundUnitDivision:

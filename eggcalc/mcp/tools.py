@@ -470,6 +470,10 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
             f"Value must be a finite number, got {value}",
             tool="unit_convert",
         )
+    if (err := _require_str(from_unit, "from_unit", "unit_convert")) is not None:
+        return err
+    if (err := _require_str(to_unit, "to_unit", "unit_convert")) is not None:
+        return err
     try:
         from ..units import (
             convert_temperature,
@@ -527,6 +531,9 @@ def unit_info(unit: str) -> dict:
     """
     try:
         from ..units import UNIT_ALIASES, UNIT_BASE, UNIT_CATEGORIES
+
+        if (err := _require_str(unit, "unit", "unit_info")) is not None:
+            return err
 
         if unit not in UNIT_ALIASES:
             return _error_response("invalid_arguments", f"Unknown unit: {unit}", tool="unit_info")
@@ -2978,6 +2985,10 @@ def text_replace_check(
         Success envelope with replace check result, or error envelope.
     """
     if (err := _require_str(text, "text", "text_replace_check")) is not None:
+        return err
+    if (err := _require_str(old, "old", "text_replace_check")) is not None:
+        return err
+    if (err := _require_str(new, "new", "text_replace_check")) is not None:
         return err
 
     valid_modes = {"exact", "nfc", "nfkc", "casefold", "whitespace_collapse"}

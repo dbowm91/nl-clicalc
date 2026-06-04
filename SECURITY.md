@@ -87,6 +87,8 @@ except EvaluationError:
     pass
 ```
 
+**Note on macOS**: The 256MB `RLIMIT_AS` memory limit is only enforced on Linux. On macOS, `setrlimit` silently fails and is caught by a try/except, so the time-based timeout (5 seconds by default) is the primary protection against runaway evaluations. This is acceptable for production use, but operators on macOS should be aware that memory-based isolation is not active.
+
 ### Configuration File Security
 
 - `eggcalc_config.py` is imported from the working directory
