@@ -330,6 +330,17 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     code = code.replace("from .. import EvaluationError, evaluate_raw", "from evaluator import EvaluationError, evaluate_raw")
     code = code.replace("from ..exact import", "from exact import")
 
+    # MCP server: evaluator module reference
+    # In single file, _mcp_mode is a module-level variable (no _evaluator module object)
+    code = code.replace(
+        "from .. import evaluator as _evaluator",
+        "# _evaluator is inlined; _mcp_mode is a module-level variable",
+    )
+    code = code.replace(
+        "_evaluator._mcp_mode = True",
+        "_mcp_mode = True",
+    )
+
     # Synthesis imports from exact submodules
     code = code.replace(
         "from .primitives import (",
