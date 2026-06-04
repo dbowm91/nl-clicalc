@@ -325,7 +325,7 @@ STRIPPED_PHRASES: list[str] = [
 CONSTANT_WORDS: dict[str, list[str]] = {
     "na": ["avogadro", "avogadros", "avogadro number"],
     "r": ["gas constant", "ideal gas constant", "molar gas constant"],
-    "h": ["planck", "planck constant"],
+    "planckconstant": ["planck", "planck constant"],
     "k": ["boltzmann", "boltzmann constant"],
     "c": ["speed of light", "speed of light in vacuum", "c zero"],
     "elementarycharge": ["elementary charge", "e charge"],
@@ -333,7 +333,7 @@ CONSTANT_WORDS: dict[str, list[str]] = {
     "u": ["atomic mass", "atomic mass unit", "amu"],
     "epsilon0": ["vacuum permittivity", "permittivity of free space"],
     "mu0": ["vacuum permeability", "permeability of free space", "magnetic constant"],
-    "g": ["gravity", "standard gravity", "earth gravity"],
+    "standardgravity": ["gravity", "standard gravity", "earth gravity"],
     "G": ["gravitational constant", "newton constant", "big g"],
     "me": ["electron mass"],
     "mp": ["proton mass"],

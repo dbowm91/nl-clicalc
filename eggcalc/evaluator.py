@@ -1372,7 +1372,6 @@ class Evaluator(ast.NodeVisitor):
         "r": 8.314462618,
         "gasconstant": 8.314462618,
         "idealgasconstant": 8.314462618,
-        "h": 6.62607015e-34,
         "planck": 6.62607015e-34,
         "planckconstant": 6.62607015e-34,
         "k": 1.380649e-23,
@@ -1395,7 +1394,6 @@ class Evaluator(ast.NodeVisitor):
         # Electromagnetism
         "mu0": 1.25663706212e-6,
         "vacuumpermeability": 1.25663706212e-6,
-        "g": 9.80665,
         "standardgravity": 9.80665,
         # Gravitation
         "G": 6.67430e-11,
