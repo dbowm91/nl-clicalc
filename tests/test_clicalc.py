@@ -54,8 +54,10 @@ class TestUnitConversions:
         captured = StringIO()
         old_stdout = sys.stdout
         sys.stdout = captured
-        run("30m + 100ft", NORMALIZE, PATTERNS)
-        sys.stdout = old_stdout
+        try:
+            run("30m + 100ft", NORMALIZE, PATTERNS)
+        finally:
+            sys.stdout = old_stdout
         output = captured.getvalue()
         assert "m" in output
 
@@ -80,8 +82,10 @@ class TestUnitConversions:
         captured = StringIO()
         old_stdout = sys.stdout
         sys.stdout = captured
-        run("1GB + 500MB", NORMALIZE, PATTERNS)
-        sys.stdout = old_stdout
+        try:
+            run("1GB + 500MB", NORMALIZE, PATTERNS)
+        finally:
+            sys.stdout = old_stdout
         output = captured.getvalue()
         assert "GB" in output
 
@@ -93,8 +97,10 @@ class TestUnitConversions:
         captured = StringIO()
         old_stdout = sys.stdout
         sys.stdout = captured
-        run("(30m+100ft)/2", NORMALIZE, PATTERNS)
-        sys.stdout = old_stdout
+        try:
+            run("(30m+100ft)/2", NORMALIZE, PATTERNS)
+        finally:
+            sys.stdout = old_stdout
         output = captured.getvalue()
         assert "m" in output
 
@@ -1483,8 +1489,10 @@ class TestEvaluatorEdgeCases:
         captured = StringIO()
         old_stdout = sys.stdout
         sys.stdout = captured
-        run("-1K in C", NORMALIZE, PATTERNS)
-        sys.stdout = old_stdout
+        try:
+            run("-1K in C", NORMALIZE, PATTERNS)
+        finally:
+            sys.stdout = old_stdout
         output = captured.getvalue()
         assert "-274.15" in output
 
@@ -1497,9 +1505,8 @@ class TestEvaluatorEdgeCases:
         sys.stderr = captured
         try:
             run("30m + 100gal", NORMALIZE, PATTERNS)
-        except Exception:
-            pass
-        sys.stderr = old_stderr
+        finally:
+            sys.stderr = old_stderr
         # Error should appear in stderr or as exception
         # The run() function prints errors to stderr, so just verify it doesn't crash
 
@@ -1564,6 +1571,152 @@ class TestUnitValueScalarArithmetic:
         assert isinstance(result, UnitValue)
         assert result.value == 15
         assert result.unit == "m"
+
+
+class TestReviewerEdgeCases:
+    """Tests for edge cases identified during production review."""
+
+    def test_log_negative_returns_complex(self):
+        """log(-1) should return complex result."""
+        result = evaluate("log(-1)")
+        assert isinstance(result, complex)
+        assert abs(result - 1j * 3.141592653589793) < 1e-10
+
+    def test_asin_out_of_domain_returns_complex(self):
+        """asin(2) should return complex result for out-of-domain input."""
+        result = evaluate("asin(2)")
+        assert isinstance(result, complex)
+
+    def test_acos_out_of_domain_returns_complex(self):
+        """acos(2) should return complex result for out-of-domain input."""
+        result = evaluate("acos(2)")
+        assert isinstance(result, complex)
+
+    def test_atanh_out_of_domain_returns_complex(self):
+        """atanh(2) should return complex result for out-of-domain input."""
+        result = evaluate("atanh(2)")
+        assert isinstance(result, complex)
+
+    def test_clamp_lo_greater_than_hi(self):
+        """clamp(5, 10, 1) should raise ValueError when lo > hi."""
+        from eggcalc.evaluator import _clamp
+        with pytest.raises(ValueError, match="lower bound.*exceeds upper bound"):
+            _clamp(5, 10, 1)
+
+    def test_clamp_normal_cases(self):
+        """clamp works correctly for normal cases."""
+        from eggcalc.evaluator import _clamp
+        assert _clamp(5, 1, 10) == 5
+        assert _clamp(-5, 0, 10) == 0
+        assert _clamp(15, 0, 10) == 10
+
+    def test_bin_negative(self):
+        """bin(-5) should return binary string with sign."""
+        result = evaluate("bin(-5)")
+        assert result == "-0b101"
+
+    def test_hex_negative(self):
+        """hex(-5) should return hex string with sign."""
+        result = evaluate("hex(-5)")
+        assert result == "-0x5"
+
+    def test_oct_negative(self):
+        """oct(-5) should return octal string with sign."""
+        result = evaluate("oct(-5)")
+        assert result == "-0o5"
+
+    def test_bin_float_rejected(self):
+        """bin(1.5) should raise error for non-integer."""
+        with pytest.raises(EvaluationError):
+            evaluate("bin(1.5)")
+
+    def test_gcd_zero_zero(self):
+        """gcd(0, 0) should return 0."""
+        assert evaluate("gcd(0, 0)") == 0
+
+    def test_gcd_negative(self):
+        """gcd(-12, 8) should handle negative inputs."""
+        result = evaluate("gcd(-12, 8)")
+        assert result == 4
+
+    def test_perm_r_greater_than_n(self):
+        """perm(5, 10) should return 0 when r > n."""
+        assert evaluate("perm(5, 10)") == 0
+
+    def test_comb_r_greater_than_n(self):
+        """comb(5, 10) should return 0 when r > n."""
+        assert evaluate("comb(5, 10)") == 0
+
+    def test_unitvalue_pow_integer(self):
+        """UnitValue raised to integer power should work correctly."""
+        from eggcalc.units import UnitValue
+        result = UnitValue(2, "m") ** 3
+        assert result.value == 8
+        assert result.unit == "m**3"
+
+    def test_unitvalue_pow_non_integer_rejected(self):
+        """UnitValue raised to non-integer power should raise ValueError."""
+        from eggcalc.units import UnitValue
+        with pytest.raises(ValueError, match="non-integer power"):
+            UnitValue(2, "m") ** 1.5
+
+    def test_unitvalue_pow_float_integer(self):
+        """UnitValue raised to float integer power should work."""
+        from eggcalc.units import UnitValue
+        result = UnitValue(2, "m") ** 2.0
+        assert result.value == 4
+        assert result.unit == "m**2"
+
+    def test_atan2_function(self):
+        """atan2 function should work correctly."""
+        import math
+        result = evaluate("atan2(1, 1)")
+        assert abs(result - math.pi / 4) < 1e-10
+
+    def test_degrees_function(self):
+        """degrees function should convert radians to degrees."""
+        import math
+        result = evaluate("degrees(pi)")
+        assert abs(result - 180.0) < 1e-10
+
+    def test_radians_function(self):
+        """radians function should convert degrees to radians."""
+        import math
+        result = evaluate("radians(180)")
+        assert abs(result - math.pi) < 1e-10
+
+    def test_expm1_function(self):
+        """expm1 function should compute exp(x) - 1."""
+        import math
+        result = evaluate("expm1(1)")
+        assert abs(result - (math.e - 1)) < 1e-10
+
+    def test_log1p_function(self):
+        """log1p function should compute log(1+x)."""
+        import math
+        result = evaluate("log1p(1)")
+        assert abs(result - math.log(2)) < 1e-10
+
+    def test_sign_zero(self):
+        """sign(0) should return 0."""
+        assert evaluate("sign(0)") == 0
+
+    def test_mean_empty_raises(self):
+        """mean() with no args should raise error."""
+        with pytest.raises(EvaluationError):
+            evaluate("mean()")
+
+    def test_std_single_arg(self):
+        """std(1) with single arg should raise error."""
+        with pytest.raises(EvaluationError):
+            evaluate("std(1)")
+
+    def test_conj_real_number(self):
+        """conj(5) with real number should return complex."""
+        result = evaluate("conj(5)")
+        assert isinstance(result, complex)
+        assert result.real == 5
+        assert result.imag == 0
 
 
 if __name__ == "__main__":

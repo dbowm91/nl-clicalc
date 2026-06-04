@@ -6070,3 +6070,71 @@ class TestCancelledRequests:
         content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is False
         assert content["error_type"] == "cancelled"
+
+
+class TestProductionReviewFixes:
+    """Tests for production review security fixes."""
+
+    def test_levenshtein_threshold_rejects_distant_names(self):
+        """Tool name matching should reject distant matches."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7000,
+            "method": "tools/call",
+            "params": {
+                "name": "hello",
+                "arguments": {},
+            },
+        })
+        assert "error" in response
+
+    def test_jsonrpc_id_type_rejects_array(self):
+        """JSON-RPC id should reject array types."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": [1, 2, 3],
+            "method": "ping",
+        })
+        assert "error" in response
+
+    def test_jsonrpc_id_type_rejects_object(self):
+        """JSON-RPC id should reject object types."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": {"a": 1},
+            "method": "ping",
+        })
+        assert "error" in response
+
+    def test_jsonrpc_id_allows_string_number_null(self):
+        """JSON-RPC id should accept string, number, and null."""
+        # String id
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": "test-123",
+            "method": "ping",
+        })
+        assert response.get("id") == "test-123"
+        assert "result" in response
+
+        # Integer id
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "ping",
+        })
+        assert response.get("id") == 42
+        assert "result" in response
+
+    def test_sanitize_error_catches_extensionless_paths(self):
+        """Error sanitization should redact system paths without extensions."""
+        from eggcalc.mcp.tools import _sanitize_error
+        result = _sanitize_error("Error reading /etc/passwd")
+        assert "/etc/passwd" not in result
+        assert "<path>" in result
+
+    def test_sanitize_error_catches_proc_paths(self):
+        """Error sanitization should redact /proc paths."""
+        from eggcalc.mcp.tools import _sanitize_error
+        result = _sanitize_error("Error reading /proc/1/status")
+        assert "/proc/1/status" not in result

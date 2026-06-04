@@ -1911,12 +1911,17 @@ def _run_repl(show_expression: bool = True) -> int:
 
         atexit.register(_save_history)
 
+    MAX_REPL_LINE_LENGTH = 100_000
     while True:
         try:
             line = input(">>> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
+
+        if len(line) > MAX_REPL_LINE_LENGTH:
+            print(f"Input too long ({len(line)} chars, max {MAX_REPL_LINE_LENGTH})")
+            continue
 
         if not line:
             continue

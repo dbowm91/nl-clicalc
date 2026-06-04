@@ -957,7 +957,9 @@ def _sign(x: float) -> int:
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
-    """Clamp x to range [lo, hi]."""
+    """Clamp x to range [lo, hi]. If lo > hi, raise ValueError."""
+    if lo > hi:
+        raise ValueError(f"clamp: lower bound {lo} exceeds upper bound {hi}")
     return max(lo, min(hi, x))
 
 
@@ -1957,9 +1959,15 @@ class Evaluator(ast.NodeVisitor):
         if node_type in _ALLOWED_AST_TYPES:
             # Attribute access needs extra validation (restrict to math.* and real/imag/conjugate)
             if node_type is ast.Attribute:
-                if not (isinstance(node.value, ast.Name) and node.value.id == "math"):
-                    if node.attr not in ("real", "imag", "conjugate"):
-                        raise EvaluationError(f"Attribute access '{node.attr}' is not allowed")
+                # Only allow attribute access on math module and
+                # real/imag/conjugate on complex numbers
+                if isinstance(node.value, ast.Name) and node.value.id == "math":
+                    # Allow math.* - validated at call time
+                    pass
+                elif node.attr in ("real", "imag", "conjugate"):
+                    pass
+                else:
+                    raise EvaluationError(f"Attribute access '{node.attr}' is not allowed")
             return
 
         # Explicit forbidden types with helpful error messages

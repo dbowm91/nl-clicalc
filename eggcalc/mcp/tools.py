@@ -292,9 +292,15 @@ def _regex_test_worker(
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
     except (ImportError, ValueError, OSError):
-        # RLIMIT_AS may not be supported or enforced on all platforms (e.g., macOS).
-        # On failure, we rely solely on the time-based timeout for protection.
-        pass
+        # RLIMIT_AS may not be enforced on all platforms (e.g., macOS). Fall back to CPU time limit.
+        try:
+            import sys as _sys
+            if _sys.platform == "darwin":
+                import resource
+                # Set CPU time limit as fallback (soft=5s, hard=10s)
+                resource.setrlimit(resource.RLIMIT_CPU, (5, 10))
+        except (ImportError, ValueError, OSError):
+            pass
     try:
         result = _regex_test(pattern, samples, flags, ignore_case, multiline, dotall, ascii)
         result_queue.put(("ok", result))
@@ -316,7 +322,15 @@ def _regex_finditer_worker(
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
     except (ImportError, ValueError, OSError):
-        pass
+        # RLIMIT_AS may not be enforced on all platforms (e.g., macOS). Fall back to CPU time limit.
+        try:
+            import sys as _sys
+            if _sys.platform == "darwin":
+                import resource
+                # Set CPU time limit as fallback (soft=5s, hard=10s)
+                resource.setrlimit(resource.RLIMIT_CPU, (5, 10))
+        except (ImportError, ValueError, OSError):
+            pass
     try:
         result = _regex_finditer(pattern, text, flags, max_matches, include_line_column, include_groups)
         result_queue.put(("ok", result))
@@ -342,6 +356,8 @@ def _sanitize_error(message: str) -> str:
     text = re.sub(r'^\s*[A-Za-z_]\w*\s*=\s*["\'][^"\']*["\']', '<var>=<redacted>', text, flags=re.MULTILINE)
     # Bare absolute file paths (Unix /path/to/file.py or Windows C:\path\file.py)
     text = re.sub(r'(?:/[\w.-]+){2,}\.\w+', '<path>', text)
+    # Also match common system directory paths without file extensions
+    text = re.sub(r'(?:/(?:etc|proc|dev|sys|run|tmp|var|usr|lib|bin|sbin)(?:/[\w.-]+)+)', '<path>', text)
     text = re.sub(r'[A-Za-z]:\\(?:[\w.-]+\\)+\w+\.\w+', '<path>', text)
     # "No such file or directory" messages with paths
     text = re.sub(r"No such file or directory:\s*['\"][^'\"]*['\"]", "No such file or directory: '<redacted>'", text)
@@ -3498,6 +3514,17 @@ def dotenv_validate_mcp(
             "unsafe_pattern",
             f"key_pattern has {pattern_safety.get('risk', 'unknown')} risk of catastrophic backtracking",
             ["Use a simpler regex pattern for key_pattern"],
+            tool="dotenv_validate",
+        )
+    # Reject inline flags in pattern (e.g., (?s), (?i), (?x)) which bypass
+    # the explicit flag parameters and could enable unintended behavior.
+    inline_flag_match = re.search(r'\(\?([aiLmsux]+)\)', key_pattern)
+    if inline_flag_match:
+        return _error_response(
+            "unsafe_pattern",
+            f"key_pattern contains inline flags '{inline_flag_match.group(0)}'; "
+            "use the explicit boolean parameters instead",
+            ["Remove inline flags and use ignore_case, multiline, dotall parameters"],
             tool="dotenv_validate",
         )
 

@@ -232,7 +232,7 @@ def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
 
         # Compute edit distance
         distance = _levenshtein_distance(name_lower, tool_lower)
-        threshold = max(len(name_lower), len(tool_lower)) // 2
+        threshold = min(len(name_lower), len(tool_lower)) // 2
 
         if distance < best_distance and distance <= threshold:
             best_distance = distance
@@ -495,10 +495,18 @@ def _handle_call_tool(request: dict) -> dict:
                 "handler continues in thread pool worker until completion)",
                 name, MAX_TOOL_TIMEOUT_SECONDS,
             )
+            # Track the orphaned future so it doesn't block the pool indefinitely.
             # future.cancel() is a no-op for already-running tasks — the
-            # handler keeps executing in its thread-pool worker.  Discard
-            # our reference so the Future (and any result) can be GC'd.
+            # handler keeps executing in its thread-pool worker.
             _running_futures.discard(future)
+            # Wrap completion logging in a callback
+            def _log_orphan_completion(f: concurrent.futures.Future) -> None:
+                try:
+                    f.result(timeout=0)
+                except Exception:
+                    pass
+                _logging.debug("Orphaned MCP tool '%s' handler completed", name)
+            future.add_done_callback(_log_orphan_completion)
             future = None
     except Exception as e:
         if not timed_out:
@@ -675,6 +683,11 @@ def handle_request(request: Any) -> dict | None:
 
     request_id = request.get("id")
     if request_id is not None:
+        if not isinstance(request_id, (str, int, float)):
+            return _invalid_request(
+                None,
+                "Invalid Request: 'id' must be a string, number, or null",
+            )
         id_str = str(request_id)
         if len(id_str) > MAX_REQUEST_ID_LENGTH:
             return _invalid_request(

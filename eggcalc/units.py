@@ -191,7 +191,7 @@ class UnitValue:
                 result = self.value**other
                 unit = f"{self.unit}**{int(other)}"
             elif isinstance(other, (int, float)):
-                raise TypeError(
+                raise ValueError(
                     f"Cannot raise unit '{self.unit}' to non-integer power"
                 )
             else:

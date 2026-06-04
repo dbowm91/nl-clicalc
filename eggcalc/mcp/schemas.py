@@ -457,6 +457,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Flag names (IGNORECASE, MULTILINE, etc.)",
+                    "maxItems": 10,
                 },
                 "ignore_case": {
                     "type": "boolean",

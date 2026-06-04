@@ -45,15 +45,27 @@ def build_single_file():
 
 
 def create_executable(source_path: str, install_dir: str) -> str:
-    """Copy the single-file executable to install directory."""
+    """Copy the single-file executable to install directory atomically."""
     os.makedirs(install_dir, exist_ok=True)
     dest_path = os.path.join(install_dir, "calc")
 
     with open(source_path, "r") as f:
         content = f.read()
 
-    with open(dest_path, "w") as f:
-        f.write(content)
+    # Write to a temp file first, then rename atomically
+    import tempfile
+    fd, tmp_path = tempfile.mkstemp(dir=install_dir, prefix=".calc_tmp_")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp_path, dest_path)
+    except BaseException:
+        # Clean up temp file on any failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
     os.chmod(dest_path, os.stat(dest_path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -218,8 +230,19 @@ def update_calc(install_dir: str) -> bool:
     with open(single_file, "r") as f:
         new_content = f.read()
 
-    with open(calc_path, "w") as f:
-        f.write(new_content)
+    # Write to a temp file first, then rename atomically
+    import tempfile
+    fd, tmp_path = tempfile.mkstemp(dir=install_dir, prefix=".calc_tmp_")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(new_content)
+        os.replace(tmp_path, calc_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
     os.chmod(calc_path, os.stat(calc_path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -227,13 +250,38 @@ def update_calc(install_dir: str) -> bool:
     return True
 
 
-def uninstall_calc(install_dir: str) -> bool:
+def uninstall_calc(install_dir: str, force: bool = False) -> bool:
     """Remove calc from the specified directory and PATH. Returns True if successful."""
-    if os.path.exists(install_dir):
-        shutil.rmtree(install_dir)
-        print(f"Removed {install_dir}")
-    else:
+    if not os.path.exists(install_dir):
         print(f"calc is not installed at {install_dir}")
+        remove_from_path(install_dir)
+        return True
+
+    if not force:
+        print(f"This will remove all files in: {install_dir}")
+        confirm = input("Are you sure? [y/N]: ").strip().lower()
+        if confirm not in ("y", "yes"):
+            print("Uninstall cancelled.")
+            return False
+
+    # Only remove files we created (calc and .calc_tmp_*), not the whole directory
+    calc_path = get_calc_path(install_dir)
+    if os.path.exists(calc_path):
+        os.remove(calc_path)
+        print(f"Removed {calc_path}")
+    # Clean up any leftover temp files
+    import glob as _glob
+    for tmp in _glob.glob(os.path.join(install_dir, ".calc_tmp_*")):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    # Remove directory if empty
+    try:
+        os.rmdir(install_dir)
+        print(f"Removed empty directory {install_dir}")
+    except OSError:
+        print(f"Left non-empty directory {install_dir} (contains other files)")
 
     remove_from_path(install_dir)
     return True
