@@ -80,7 +80,11 @@ class UnitValue:
                 result = self.value + converted.value
                 out_unit = self.unit
         else:
-            raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
+            if self.unit is None:
+                result = self.value + other
+                out_unit = None
+            else:
+                raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
         if isinstance(result, float) and not math.isfinite(result):
             raise OverflowError("Result too large")
         if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
@@ -107,7 +111,11 @@ class UnitValue:
                 result = self.value - converted.value
                 out_unit = self.unit
         else:
-            raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
+            if self.unit is None:
+                result = self.value - other
+                out_unit = None
+            else:
+                raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
         if isinstance(result, float) and not math.isfinite(result):
             raise OverflowError("Result too large")
         if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:

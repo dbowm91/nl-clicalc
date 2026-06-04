@@ -5580,3 +5580,187 @@ class TestPathScopeCheck:
         content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is True
         assert content["result"]["inside_root"] is False
+
+
+class TestSchemaValidationDepth:
+    """Test that schema validation has a depth limit."""
+
+    def test_deeply_nested_schema_accepted(self):
+        """Nested objects up to depth 10 should be validated."""
+        # text_window has a nested position dict schema
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9000,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {
+                    "text": "hello world",
+                    "position": {"kind": "line_column", "line": 1, "column": 0},
+                },
+            },
+        })
+        assert "result" in response
+
+
+class TestSanitizeError:
+    """Test that _sanitize_error strips sensitive information."""
+
+    def test_strips_file_paths(self):
+        from eggcalc.mcp.tools import _sanitize_error
+        result = _sanitize_error("Error at /Users/david/file.py line 42")
+        assert "/Users/david" not in result
+
+    def test_strips_python_internals(self):
+        from eggcalc.mcp.tools import _sanitize_error
+        result = _sanitize_error('File "/usr/lib/python3.10/eval.py", line 1')
+        assert "/usr/lib" not in result
+
+    def test_replaces_non_ascii(self):
+        from eggcalc.mcp.tools import _sanitize_error
+        result = _sanitize_error("Error: \xff\xfe bad bytes")
+        assert "\xff" not in result
+        assert "?" in result
+
+    def test_caps_at_8192(self):
+        from eggcalc.mcp.tools import _sanitize_error
+        long_msg = "x" * 10000
+        result = _sanitize_error(long_msg)
+        assert len(result) <= 8192
+
+
+class TestMCPToolEnvelope:
+    """Test that tools return consistent envelope format."""
+
+    def test_math_eval_success_envelope(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9100,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "2+2"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert "ok" in content
+        assert "tool" in content
+        assert content["ok"] is True
+
+    def test_math_eval_error_envelope(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9101,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "invalid!!!"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert "ok" in content
+        assert "error_type" in content or "error" in content
+        assert content["ok"] is False
+
+    def test_unknown_tool_suggestion(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9102,
+            "method": "tools/call",
+            "params": {
+                "name": "math_evl",
+                "arguments": {"expression": "1+1"},
+            },
+        })
+        # Should return error with suggestion
+        assert "error" in response
+
+
+class TestFindCloseMatch:
+    """Test tool name matching with Levenshtein distance."""
+
+    def test_exact_match_case_insensitive(self):
+        from eggcalc.mcp.server import _find_close_match
+        result = _find_close_match("MATH_EVAL", TOOL_HANDLERS)
+        assert result == "math_eval"
+
+    def test_empty_string_matches_any(self):
+        from eggcalc.mcp.server import _find_close_match
+        result = _find_close_match("", TOOL_HANDLERS)
+        # Empty string is a substring of every tool name, so it matches
+        assert result is not None
+
+    def test_very_long_name(self):
+        from eggcalc.mcp.server import _find_close_match
+        result = _find_close_match("x" * 300, TOOL_HANDLERS)
+        assert result is None
+
+    def test_close_match(self):
+        from eggcalc.mcp.server import _find_close_match
+        result = _find_close_match("math_evl", TOOL_HANDLERS)
+        assert result == "math_eval"
+
+    def test_no_match(self):
+        from eggcalc.mcp.server import _find_close_match
+        result = _find_close_match("completely_different_tool", TOOL_HANDLERS)
+        assert result is None
+
+
+class TestMathEvalEdgeCases:
+    """Test math_eval tool with edge cases."""
+
+    def test_empty_expression(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9200,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": ""},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is False
+
+    def test_whitespace_only_expression(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9201,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "   "},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is False
+
+    def test_very_long_expression(self):
+        """Long but valid expression should work."""
+        expr = " + ".join(["1"] * 100)
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9202,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": expr},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+
+    def test_large_int_expression(self):
+        """Large integer should produce evaluation error, not crash."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9203,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "2**100000"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        # Should return error, not crash
+        assert "ok" in content

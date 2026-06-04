@@ -126,8 +126,12 @@ def _check_result_size(result: Any) -> Any:
             if math.isnan(result.value.real) or math.isnan(result.value.imag) or \
                math.isinf(result.value.real) or math.isinf(result.value.imag):
                 raise EvaluationError("Result too large")
-        elif not math.isfinite(result.value):
-            raise EvaluationError("Result too large")
+        else:
+            try:
+                if not math.isfinite(result.value):
+                    raise EvaluationError("Result too large")
+            except (OverflowError, ValueError):
+                raise EvaluationError("Result too large")
         if isinstance(result.value, int) and not isinstance(result.value, bool):
             if _int_digit_count(result.value) > MAX_RESULT_DIGITS:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
@@ -368,11 +372,22 @@ def _safe_pow(base: float, exp: float) -> float:
     if abs(exp) > MAX_EXPONENT:
         raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
     if not isinstance(base, complex) and base < 0:
-        try:
-            if exp != int(exp):
-                raise EvaluationError("Cannot raise negative number to non-integer power")
-        except (ValueError, TypeError):
-            raise EvaluationError("Cannot raise negative number to non-integer power")
+        if isinstance(exp, complex):
+            if exp.imag != 0 or exp.real != int(exp.real):
+                raise EvaluationError(
+                    "Cannot raise negative number to non-integer power"
+                )
+            exp = int(exp.real)
+        else:
+            try:
+                if exp != int(exp):
+                    raise EvaluationError(
+                        "Cannot raise negative number to non-integer power"
+                    )
+            except (TypeError, ValueError):
+                raise EvaluationError(
+                    "Cannot raise negative number to non-integer power"
+                )
     try:
         result = pow(base, exp)
     except ZeroDivisionError:
@@ -498,23 +513,26 @@ _TEMP_UNIT_FLOAT_MAP: dict[float, str] = {
 
 def _temp(value: float, from_unit: float | str, to_unit: float | str) -> float:
     """Convert temperature between units."""
-    if isinstance(from_unit, float):
-        mapped = _TEMP_UNIT_FLOAT_MAP.get(from_unit)
-        if mapped is None:
-            raise EvaluationError(
-                f"Unrecognized temperature unit value: {from_unit}. "
-                f"Expected a unit name string (e.g., 'C', 'K', 'F') or a known constant."
-            )
-        from_unit = mapped
-    if isinstance(to_unit, float):
-        mapped = _TEMP_UNIT_FLOAT_MAP.get(to_unit)
-        if mapped is None:
-            raise EvaluationError(
-                f"Unrecognized temperature unit value: {to_unit}. "
-                f"Expected a unit name string (e.g., 'C', 'K', 'F') or a known constant."
-            )
-        to_unit = mapped
-    return convert_temperature(value, str(from_unit), str(to_unit))
+    try:
+        if isinstance(from_unit, float):
+            mapped = _TEMP_UNIT_FLOAT_MAP.get(from_unit)
+            if mapped is None:
+                raise EvaluationError(
+                    f"Unrecognized temperature unit value: {from_unit}. "
+                    f"Expected a unit name string (e.g., 'C', 'K', 'F') or a known constant."
+                )
+            from_unit = mapped
+        if isinstance(to_unit, float):
+            mapped = _TEMP_UNIT_FLOAT_MAP.get(to_unit)
+            if mapped is None:
+                raise EvaluationError(
+                    f"Unrecognized temperature unit value: {to_unit}. "
+                    f"Expected a unit name string (e.g., 'C', 'K', 'F') or a known constant."
+                )
+            to_unit = mapped
+        return convert_temperature(value, str(from_unit), str(to_unit))
+    except (TypeError, ValueError) as e:
+        raise EvaluationError(str(e)) from None
 
 
 def _convert(value: Any, to_unit: str | Any) -> Any:
@@ -527,25 +545,30 @@ def _convert(value: Any, to_unit: str | Any) -> Any:
     Returns:
         UnitValue with the converted value and unit
     """
-    # Handle case where to_unit is passed as a function (e.g., min function instead of "min" unit)
-    if callable(to_unit) and not isinstance(to_unit, UnitValue):
-        to_unit = to_unit.__name__ if hasattr(to_unit, '__name__') else str(to_unit)
-    # Handle case where to_unit is passed as a UnitValue (unit name like 'ft')
-    if isinstance(to_unit, UnitValue):
-        to_unit = to_unit.unit if to_unit.unit else str(to_unit.value)
-
-    if isinstance(value, UnitValue):
-        # Check for temperature conversions (special handling needed)
-        cat = get_unit_category(value.unit) if value.unit else None
-        if cat == "temperature" and value.unit:
-            converted_val = convert_temperature(value.value, value.unit, to_unit)
-            return UnitValue(converted_val, to_unit)
-        return value.convert_to(to_unit)
-    # If it's just a number without units, assume it's a dimensionless value
-    # and try to convert (will fail if not a valid unit)
     try:
-        return UnitValue(float(value), None).convert_to(to_unit)
-    except ValueError as e:
+        # Handle case where to_unit is passed as a function (e.g., min function instead of "min" unit)
+        if callable(to_unit) and not isinstance(to_unit, UnitValue):
+            to_unit = to_unit.__name__ if hasattr(to_unit, '__name__') else str(to_unit)
+        # Handle case where to_unit is passed as a UnitValue (unit name like 'ft')
+        if isinstance(to_unit, UnitValue):
+            to_unit = to_unit.unit if to_unit.unit else str(to_unit.value)
+
+        if isinstance(value, UnitValue):
+            # Check for temperature conversions (special handling needed)
+            cat = get_unit_category(value.unit) if value.unit else None
+            if cat == "temperature" and value.unit:
+                converted_val = convert_temperature(value.value, value.unit, to_unit)
+                return UnitValue(converted_val, to_unit)
+            return value.convert_to(to_unit)
+        # If it's just a number without units, assume it's a dimensionless value
+        # and try to convert (will fail if not a valid unit)
+        try:
+            return UnitValue(float(value), None).convert_to(to_unit)
+        except ValueError as e:
+            raise EvaluationError(str(e)) from None
+    except (TypeError, ValueError) as e:
+        if isinstance(e, EvaluationError):
+            raise
         raise EvaluationError(str(e)) from None
 
 
@@ -1743,7 +1766,12 @@ class Evaluator(ast.NodeVisitor):
         if op_class not in self.BINOPS:
             raise EvaluationError(f"Unsupported binary operator: '{node.op.__class__.__name__}'")
 
-        result = self.BINOPS[op_class](left_val, right_val)
+        try:
+            result = self.BINOPS[op_class](left_val, right_val)
+        except TypeError:
+            raise EvaluationError(
+                f"Cannot apply {op_class.__name__} to {type(left_val).__name__} and {type(right_val).__name__}"
+            )
 
         # Check for NaN/inf in float results (int results cannot be NaN/inf)
         if isinstance(result, float) and (math.isnan(result) or math.isinf(result)):
@@ -1852,7 +1880,10 @@ class Evaluator(ast.NodeVisitor):
                     args.append(result)
                 else:
                     args.append(result)
-            return self.FUNCTIONS[func_name](*args)
+            try:
+                return self.FUNCTIONS[func_name](*args)
+            except (TypeError, ValueError) as e:
+                raise EvaluationError(str(e)) from None
 
         # Special handling for convert function to preserve UnitValue arguments
         if func_name == "convert":
@@ -1861,7 +1892,10 @@ class Evaluator(ast.NodeVisitor):
                 result = self.visit(arg)
                 # Pass the full UnitValue, not just the value
                 args.append(result)
-            return self.FUNCTIONS[func_name](*args)
+            try:
+                return self.FUNCTIONS[func_name](*args)
+            except (TypeError, ValueError) as e:
+                raise EvaluationError(str(e)) from None
 
         # Extract values from arguments, handling UnitValues
         args = []

@@ -260,13 +260,16 @@ def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
 
 
 def _validate_value_against_schema(
-    value: Any, prop: dict, path: str
+    value: Any, prop: dict, path: str, max_depth: int = 10
 ) -> str | None:
     """Validate a single value against a JSON schema property definition.
 
     Returns None if valid, or an error message string if invalid.
     Supports recursive validation for nested objects and arrays.
     """
+    if max_depth <= 0:
+        return None
+
     expected_type = prop.get("type")
     if expected_type is None:
         return None
@@ -312,7 +315,7 @@ def _validate_value_against_schema(
             for sub_key, sub_val in value.items():
                 if sub_key in sub_props:
                     err = _validate_value_against_schema(
-                        sub_val, sub_props[sub_key], f"{path}.{sub_key}"
+                        sub_val, sub_props[sub_key], f"{path}.{sub_key}", max_depth=max_depth - 1
                     )
                     if err:
                         return err
@@ -323,7 +326,7 @@ def _validate_value_against_schema(
         if items_schema:
             for i, item in enumerate(value):
                 err = _validate_value_against_schema(
-                    item, items_schema, f"{path}[{i}]"
+                    item, items_schema, f"{path}[{i}]", max_depth=max_depth - 1
                 )
                 if err:
                     return err
@@ -414,70 +417,29 @@ def _handle_call_tool(request: dict) -> dict:
             },
         }
 
+    timed_out = False
+    result = None
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(handler, **arguments)
             try:
                 result = future.result(timeout=MAX_TOOL_TIMEOUT_SECONDS)
             except concurrent.futures.TimeoutError:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": request.get("id"),
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": json.dumps(
-                                    {
-                                        "ok": False,
-                                        "error": f"Tool '{name}' execution timed out after {MAX_TOOL_TIMEOUT_SECONDS}s",
-                                        "error_type": "timeout",
-                                        "tool": name,
-                                        "hints": ["Try a simpler input or shorter text"],
-                                    }
-                                ),
-                            }
-                        ],
-                        "isError": True,
-                    },
-                }
-
-        # If result is an error envelope, return as MCP tool result with isError
-        if isinstance(result, dict) and result.get("ok") is False:
-            serialized = json.dumps(result)
+                timed_out = True
+                future.cancel()
+    except Exception as e:
+        if not timed_out:
+            message = _sanitize_error(str(e))[:500]
             return {
                 "jsonrpc": "2.0",
                 "id": request.get("id"),
-                "result": {
-                    "content": [{"type": "text", "text": serialized}],
-                    "isError": True,
+                "error": {
+                    "code": -32000,
+                    "message": f"Tool execution error: {message}",
                 },
             }
 
-        serialized = json.dumps(result)
-        if len(serialized.encode("utf-8")) > MAX_OUTPUT_BYTES:
-            truncated = {
-                "ok": False,
-                "tool": name,
-                "error_type": "output_too_large",
-                "error": f"Output exceeds {MAX_OUTPUT_BYTES} bytes and was truncated",
-                "hints": ["Try reducing input size or using a summary/detail option"],
-                "warnings": ["Output was truncated due to size limit"],
-            }
-            return {
-                "jsonrpc": "2.0",
-                "id": request.get("id"),
-                "result": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(truncated),
-                        }
-                    ],
-                    "isError": True,
-                },
-            }
-
+    if timed_out:
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
@@ -485,22 +447,69 @@ def _handle_call_tool(request: dict) -> dict:
                 "content": [
                     {
                         "type": "text",
-                        "text": serialized,
+                        "text": json.dumps(
+                            {
+                                "ok": False,
+                                "error": f"Tool '{name}' execution timed out after {MAX_TOOL_TIMEOUT_SECONDS}s",
+                                "error_type": "timeout",
+                                "tool": name,
+                                "hints": ["Try a simpler input or shorter text"],
+                            }
+                        ),
                     }
-                ]
+                ],
+                "isError": True,
             },
         }
 
-    except Exception as e:
-        message = _sanitize_error(str(e))[:500]
+    # If result is an error envelope, return as MCP tool result with isError
+    if isinstance(result, dict) and result.get("ok") is False:
+        serialized = json.dumps(result)
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
-            "error": {
-                "code": -32000,
-                "message": f"Tool execution error: {message}",
+            "result": {
+                "content": [{"type": "text", "text": serialized}],
+                "isError": True,
             },
         }
+
+    serialized = json.dumps(result)
+    if len(serialized.encode("utf-8")) > MAX_OUTPUT_BYTES:
+        truncated = {
+            "ok": False,
+            "tool": name,
+            "error_type": "output_too_large",
+            "error": f"Output exceeds {MAX_OUTPUT_BYTES} bytes and was truncated",
+            "hints": ["Try reducing input size or using a summary/detail option"],
+            "warnings": ["Output was truncated due to size limit"],
+        }
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(truncated),
+                    }
+                ],
+                "isError": True,
+            },
+        }
+
+    return {
+        "jsonrpc": "2.0",
+        "id": request.get("id"),
+        "result": {
+            "content": [
+                {
+                    "type": "text",
+                    "text": serialized,
+                }
+            ]
+        },
+    }
 
 
 def _handle_list_tools(request: dict) -> dict:
@@ -714,7 +723,18 @@ def main() -> int:
                 }
 
             if response is not None:
-                print(json.dumps(response), flush=True)
+                try:
+                    print(json.dumps(response), flush=True)
+                except TypeError:
+                    fallback = {
+                        "jsonrpc": "2.0",
+                        "id": None,
+                        "error": {
+                            "code": -32603,
+                            "message": "Internal error: response not JSON-serializable",
+                        },
+                    }
+                    print(json.dumps(fallback), flush=True)
         except BrokenPipeError:
             return 0
 
