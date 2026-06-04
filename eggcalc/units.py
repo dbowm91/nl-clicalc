@@ -1496,7 +1496,7 @@ def are_units_compatible(unit1: str | None, unit2: str | None) -> bool:
 
     Returns True if:
     - Both units are None (dimensionless)
-    - One unit is None and the other is not (dimensionless can mix with units)
+    - Either unit is None (dimensionless is compatible with any unit)
     - Both units belong to the same category (e.g., both length)
 
     Returns False if:

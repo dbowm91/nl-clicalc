@@ -74,8 +74,6 @@ Or make executable: chmod +x eggcalc.py && ./eggcalc.py "five plus two"
 import sys
 import os
 
-os.environ["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
-
 '''
 
 
@@ -85,8 +83,12 @@ def get_version() -> str:
     with open(init_path, "r") as f:
         for line in f:
             if line.startswith("__version__"):
-                return line.split("=")[1].strip().strip('"')
-    return "1.0.0"
+                import re as _re
+                m = _re.match(r'__version__\s*=\s*["\']([^"\']+)["\']', line)
+                if m:
+                    return m.group(1)
+                raise SystemExit(f"ERROR: Malformed __version__ line in {init_path}: {line.strip()!r}")
+    raise SystemExit(f"ERROR: __version__ not found in {init_path}")
 
 
 def get_module_code(module_name: str) -> tuple[str, list[str]]:
@@ -600,8 +602,11 @@ def _main():
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress expression in output")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--usage", action="store_true", help="Show full usage information and examples")
-    # Parse known args - let normalize_main handle the rest (-v, -i, -s, -h, etc.)
-    args, extra = parser.parse_known_args()
+    parser.add_argument("-v", "--version", action="store_true", help="Show version information")
+    parser.add_argument("-i", "--interactive", action="store_true", help="Start interactive REPL mode")
+    parser.add_argument("-s", "--show", action="store_true", help="Show expression in output (default for interactive)")
+    parser.add_argument("--verbose", action="store_true", help="Show expression in output")
+    args = parser.parse_args()
 
     if args.mcp:
         return mcp_main()
@@ -618,13 +623,25 @@ def _main():
             sys.argv.append("--json")
         if args.quiet:
             sys.argv.append("-q")
-        if extra:
-            sys.argv.extend(extra)
+        if args.verbose:
+            sys.argv.append("--verbose")
+        if args.interactive:
+            sys.argv.append("-i")
+        if args.show:
+            sys.argv.append("-s")
         return normalize_main()
     else:
-        # No expression given - forward all args to normalize_main (handles -v, -i, -s, -h, etc.)
-        if extra:
-            sys.argv = ["eggcalc"] + extra
+        # No expression given - forward recognized flags to normalize_main
+        sys.argv = ["eggcalc"]
+        if args.version:
+            sys.argv.append("-v")
+        if args.interactive:
+            sys.argv.append("-i")
+        if args.show:
+            sys.argv.append("-s")
+        if args.verbose:
+            sys.argv.append("--verbose")
+        if len(sys.argv) > 1:
             return normalize_main()
         parser.print_help()
         return 0

@@ -1861,10 +1861,33 @@ def run(
 def _run_repl(show_expression: bool = True) -> int:
     """Run interactive REPL mode."""
 
+    import atexit
+    import os
+
+    try:
+        import readline
+    except ImportError:
+        readline = None  # type: ignore[assignment]
+
     print("eggcalc interactive mode. Type 'help' for available commands, 'quit' or 'exit' to exit.")
     print()
 
     history: list[tuple[str, Any]] = []
+
+    history_path = os.path.expanduser("~/.eggcalc_history")
+    if readline is not None:
+        try:
+            readline.read_history_file(history_path)
+        except OSError:
+            pass
+
+        def _save_history() -> None:
+            try:
+                readline.write_history_file(history_path)  # type: ignore[union-attr]
+            except OSError:
+                pass
+
+        atexit.register(_save_history)
 
     while True:
         try:
@@ -2350,7 +2373,21 @@ def _cli_text_command(expression: str, json_output: bool = False) -> int:
 def main() -> int:
     """Main entry point for CLI."""
     import os
+    import signal
     import eggcalc
+
+    try:
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+    except (AttributeError, OSError):
+        pass
+
+    def _sigterm_handler(signum: int, frame: object) -> None:
+        raise SystemExit(0)
+
+    try:
+        signal.signal(signal.SIGTERM, _sigterm_handler)
+    except (AttributeError, OSError):
+        pass
 
     parser = argparse.ArgumentParser(
         description="Natural language math expression calculator",

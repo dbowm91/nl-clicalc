@@ -7,6 +7,7 @@ and measurement tools to agents.
 
 from __future__ import annotations
 
+import atexit
 import concurrent.futures
 import inspect
 import json
@@ -149,6 +150,9 @@ MAX_REQUESTS_PER_SECOND = 10
 MAX_REQUEST_ID_LENGTH = 1024
 MAX_TOOL_TIMEOUT_SECONDS = 30
 _SHARED_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="mcp-tool")
+atexit.register(_SHARED_EXECUTOR.shutdown, wait=False)
+_running_futures: set[concurrent.futures.Future[Any]] = set()
+_cancelled_requests: set = set()
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:
@@ -448,25 +452,55 @@ def _handle_call_tool(request: dict) -> dict:
             },
         }
 
+    req_id = request.get("id")
+    if req_id is not None and req_id in _cancelled_requests:
+        _cancelled_requests.discard(req_id)
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps({
+                            "ok": False,
+                            "error": f"Tool '{name}' request was cancelled",
+                            "error_type": "cancelled",
+                            "tool": name,
+                        }),
+                    }
+                ],
+                "isError": True,
+            },
+        }
+
     timed_out = False
     result = None
     future: concurrent.futures.Future | None = None
     try:
         future = _SHARED_EXECUTOR.submit(handler, **arguments)
+        _running_futures.add(future)
         try:
             result = future.result(timeout=MAX_TOOL_TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
             timed_out = True
-            if future is not None:
-                future.cancel()
             import logging as _logging
             _logging.warning(
-                "MCP tool '%s' timed out after %ds",
+                "MCP tool '%s' timed out after %ds "
+                "(cancel() is a no-op for already-running tasks; "
+                "handler continues in thread pool worker until completion)",
                 name, MAX_TOOL_TIMEOUT_SECONDS,
             )
+            # future.cancel() is a no-op for already-running tasks — the
+            # handler keeps executing in its thread-pool worker.  Discard
+            # our reference so the Future (and any result) can be GC'd.
+            _running_futures.discard(future)
+            future = None
     except Exception as e:
         if not timed_out:
-            message = _sanitize_error(str(e))[:500]
+            if future is not None:
+                _running_futures.discard(future)
+            message = _sanitize_error(str(e))[:2000]
             return {
                 "jsonrpc": "2.0",
                 "id": request.get("id"),
@@ -475,6 +509,9 @@ def _handle_call_tool(request: dict) -> dict:
                     "message": f"Tool execution error: {message}",
                 },
             }
+
+    if future is not None:
+        _running_futures.discard(future)
 
     if timed_out:
         return {
@@ -657,6 +694,9 @@ def handle_request(request: Any) -> dict | None:
     elif method == "notifications/initialized":
         return None
     elif method == "notifications/cancelled":
+        cancelled_id = request.get("params", {}).get("requestId")
+        if cancelled_id is not None:
+            _cancelled_requests.add(cancelled_id)
         return None
     elif method == "ping":
         return {
@@ -751,7 +791,7 @@ def main() -> int:
             try:
                 response = handle_request(request)
             except Exception as e:
-                message = _sanitize_error(str(e))[:500]
+                message = _sanitize_error(str(e))[:2000]
                 response = {
                     "jsonrpc": "2.0",
                     "id": request.get("id") if isinstance(request, dict) else None,

@@ -1306,6 +1306,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "description": "Shell dialect (only posix is supported)",
                 },
             },
+            # XOR required: exactly one of left_command/left_argv and one of right_command/right_argv.
+            # JSON Schema cannot express XOR, so required is empty; validation is in the handler.
             "required": [],
         },
         "outputSchema": {

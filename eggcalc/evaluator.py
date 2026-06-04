@@ -1552,16 +1552,19 @@ class Evaluator(ast.NodeVisitor):
     }
 
     # Safe binary operators
+    @staticmethod
     def _safe_div(a: float, b: float) -> float:
         if b == 0:
             raise EvaluationError("Cannot divide by zero")
         return a / b
 
+    @staticmethod
     def _safe_floordiv(a: float, b: float) -> float:
         if b == 0:
             raise EvaluationError("Cannot divide by zero")
         return a // b
 
+    @staticmethod
     def _safe_mod(a: float, b: float) -> float:
         if b == 0:
             raise EvaluationError("Cannot divide by zero")
