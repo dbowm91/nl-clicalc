@@ -148,6 +148,7 @@ MAX_OUTPUT_BYTES = 1_000_000
 MAX_REQUESTS_PER_SECOND = 10
 MAX_REQUEST_ID_LENGTH = 1024
 MAX_TOOL_TIMEOUT_SECONDS = 30
+_SHARED_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="mcp-tool")
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:
@@ -449,11 +450,9 @@ def _handle_call_tool(request: dict) -> dict:
 
     timed_out = False
     result = None
-    executor: concurrent.futures.ThreadPoolExecutor | None = None
     future: concurrent.futures.Future | None = None
     try:
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(handler, **arguments)
+        future = _SHARED_EXECUTOR.submit(handler, **arguments)
         try:
             result = future.result(timeout=MAX_TOOL_TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
@@ -476,9 +475,6 @@ def _handle_call_tool(request: dict) -> dict:
                     "message": f"Tool execution error: {message}",
                 },
             }
-    finally:
-        if executor is not None:
-            executor.shutdown(wait=False)
 
     if timed_out:
         return {

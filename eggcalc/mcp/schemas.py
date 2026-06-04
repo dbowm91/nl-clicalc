@@ -442,11 +442,16 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "pattern": {"type": "string", "description": "Regular expression pattern"},
+                "pattern": {
+                    "type": "string",
+                    "description": "Regular expression pattern",
+                    "maxLength": 1000,
+                },
                 "samples": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "List of strings to test against",
+                    "maxItems": 100,
                 },
                 "flags": {
                     "type": "array",
@@ -497,11 +502,13 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "First list",
+                    "maxItems": 10000,
                 },
                 "b": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Second list",
+                    "maxItems": 10000,
                 },
                 "mode": {
                     "type": "string",
@@ -710,10 +717,14 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "pattern": {"type": "string", "description": "Regular expression pattern"},
+                "pattern": {
+                    "type": "string",
+                    "description": "Regular expression pattern",
+                    "maxLength": 1000,
+                },
                 "text": {"type": "string", "description": "Input string to search"},
                 "flags": {"type": "array", "items": {"type": "string"}, "description": "Flag names (IGNORECASE, MULTILINE, DOTALL, etc.)"},
-                "max_matches": {"type": "integer", "default": 100, "description": "Maximum matches to return"},
+                "max_matches": {"type": "integer", "default": 100, "description": "Maximum matches to return", "maximum": 1000},
                 "include_line_column": {"type": "boolean", "default": True, "description": "Include line and column info"},
                 "include_groups": {"type": "boolean", "default": True, "description": "Include capture groups"},
             },
@@ -943,7 +954,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "identifiers": {"type": "array", "items": {"type": "string"}, "description": "List of identifier strings to inspect"},
+                "identifiers": {"type": "array", "items": {"type": "string"}, "description": "List of identifier strings to inspect", "maxItems": 10000},
                 "language": {"type": "string", "enum": ["generic", "python", "rust", "javascript", "typescript", "json_key"], "default": "generic", "description": "Language for validation"},
                 "normalization": {"type": "string", "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"], "default": "NFC", "description": "Unicode normalization form"},
                 "casefold": {"type": "boolean", "default": False, "description": "Apply casefolding for collision detection"},
@@ -996,7 +1007,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "items": {"type": "array", "items": {"type": "string"}, "description": "List of strings to dedupe"},
+                "items": {"type": "array", "items": {"type": "string"}, "description": "List of strings to dedupe", "maxItems": 10000},
                 "normalization": {"type": "string", "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"], "default": "NFC"},
                 "casefold": {"type": "boolean", "default": False, "description": "Apply casefolding before comparison"},
                 "stable": {"type": "boolean", "default": True, "description": "Preserve first occurrence order"},
@@ -1020,7 +1031,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "items": {"type": "array", "items": {"type": "string"}, "description": "List of strings to sort"},
+                "items": {"type": "array", "items": {"type": "string"}, "description": "List of strings to sort", "maxItems": 10000},
                 "normalization": {"type": "string", "enum": ["raw", "NFC", "NFD", "NFKC", "NFKD"], "default": "NFC"},
                 "casefold": {"type": "boolean", "default": False, "description": "Apply casefolding for sorting"},
                 "reverse": {"type": "boolean", "default": False, "description": "Sort in descending order"},
@@ -1241,6 +1252,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "List of argument strings to join",
+                    "maxItems": 10000,
                 },
                 "shell": {
                     "type": "string",
@@ -1279,11 +1291,13 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Left pre-parsed argv list",
+                    "maxItems": 10000,
                 },
                 "right_argv": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Right pre-parsed argv list",
+                    "maxItems": 10000,
                 },
                 "shell": {
                     "type": "string",
@@ -1629,6 +1643,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "required": ["name"],
                     },
                     "description": "List of identifier entries to inspect",
+                    "maxItems": 10000,
                 },
                 "language": {
                     "type": "string",

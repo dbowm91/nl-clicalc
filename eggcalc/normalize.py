@@ -1090,6 +1090,104 @@ _MULTI_WORD_FUNCTIONS: dict[str, str] = {
     "inverse tangent": "atan",
 }
 
+# --- Pre-computed constants for normalize() (avoid per-call rebuild) ---
+
+_NUMBER_SCALES: dict[str, list[str]] = {
+    "100": ["hundred"],
+    "1000": ["thousand"],
+    "1000000": ["million"],
+    "1000000000": ["billion"],
+    "1000000000000": ["trillion"],
+    "1000000000000000": ["quadrillion"],
+    "1000000000000000000": ["quintillion"],
+}
+
+_NUMBER_WORDS_SINGLE: dict[str, list[str]] = {
+    "1": ["one"], "2": ["two"], "3": ["three"], "4": ["four"], "5": ["five"],
+    "6": ["six"], "7": ["seven"], "8": ["eight"], "9": ["nine"],
+}
+
+_NUMBER_WORDS_TEENS: dict[str, list[str]] = {
+    "10": ["ten"], "11": ["eleven"], "12": ["twelve"], "13": ["thirteen"],
+    "14": ["fourteen"], "15": ["fifteen"], "16": ["sixteen"], "17": ["seventeen"],
+    "18": ["eighteen"], "19": ["nineteen"],
+}
+
+_NUMBER_WORDS_TENS: dict[str, list[str]] = {
+    "20": ["twenty"], "30": ["thirty"], "40": ["forty"], "50": ["fifty"],
+    "60": ["sixty"], "70": ["seventy"], "80": ["eighty"], "90": ["ninety"],
+}
+
+
+def _build_multi_word_numbers() -> dict[str, str]:
+    """Build mapping of multi-word number phrases to their numeric values.
+
+    E.g., "one hundred" -> "100", "twenty one thousand" -> "21000".
+    Computed once at module import time.
+    """
+    result: dict[str, str] = {}
+    all_small = {**_NUMBER_WORDS_SINGLE, **_NUMBER_WORDS_TEENS, **_NUMBER_WORDS_TENS}
+    for num_val, words in all_small.items():
+        for scale_val, scale_words in _NUMBER_SCALES.items():
+            for word in words:
+                for scale_word in scale_words:
+                    key = f"{word} {scale_word}"
+                    result[key] = str(int(num_val) * int(scale_val))
+    for tens_val, tens_words in _NUMBER_WORDS_TENS.items():
+        for ones_val, ones_words in {**_NUMBER_WORDS_SINGLE, **_NUMBER_WORDS_TEENS}.items():
+            for scale_val, scale_words in _NUMBER_SCALES.items():
+                for tens_word in tens_words:
+                    for ones_word in ones_words:
+                        for scale_word in scale_words:
+                            key = f"{tens_word} {ones_word} {scale_word}"
+                            result[key] = str(
+                                (int(tens_val) + int(ones_val)) * int(scale_val)
+                            )
+    return result
+
+
+_MULTI_WORD_NUMBERS: dict[str, str] = _build_multi_word_numbers()
+
+# Set of all number words (for hyphen detection)
+_ALL_NUMBER_WORDS_SET: frozenset[str] = frozenset(
+    word for words in NUMBER_WORDS.values() for word in words
+)
+_NUMBER_WORDS_HYPHEN_PATTERN: str = "|".join(
+    sorted(_ALL_NUMBER_WORDS_SET, key=len, reverse=True)
+)
+
+# Flattened word -> digit mapping (for single-word replacement)
+_ALL_NUMBER_WORDS_FLAT: dict[str, str] = {}
+for _val, _words in NUMBER_WORDS.items():
+    for _word in _words:
+        _ALL_NUMBER_WORDS_FLAT[_word] = _val
+_SORTED_ALL_NUMBER_WORDS: list[tuple[str, str]] = sorted(
+    _ALL_NUMBER_WORDS_FLAT.items(), key=lambda x: len(x[0]), reverse=True
+)
+
+# Long filler phrases (>10 chars) for stripping
+_LONG_PHRASES: list[str] = [p for p in STRIPPED_PHRASES if len(p) > 10]
+_LONG_PHRASES_PATTERN: str = (
+    "|".join(sorted([re.escape(p) for p in _LONG_PHRASES], key=len, reverse=True))
+    if _LONG_PHRASES
+    else ""
+)
+
+# Sorted multi-word number phrases for replacement (longest first)
+_SORTED_MULTI_WORD_NUMBERS: list[tuple[str, str]] = sorted(
+    _MULTI_WORD_NUMBERS.items(), key=lambda x: len(x[0]), reverse=True
+)
+
+# Digit scale words for "N thousand" -> "N*1000" conversion
+_DIGIT_SCALES: dict[str, str] = {
+    "thousand": "1000",
+    "million": "1000000",
+    "billion": "1000000000",
+    "trillion": "1000000000000",
+    "quadrillion": "1000000000000000",
+    "quintillion": "1000000000000000000",
+}
+
 
 def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str:
     """Normalize an expression by removing filler words and applying conversions."""
@@ -1102,12 +1200,8 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     # Convert hyphens between number words to spaces
     # e.g., "twenty-one" -> "twenty one" (prevents hyphen being treated as minus)
-    _ALL_NW: set[str] = set()
-    for _words in NUMBER_WORDS.values():
-        _ALL_NW.update(_words)
-    _nw_pat = "|".join(sorted(_ALL_NW, key=len, reverse=True))
     expression = re.sub(
-        rf"\b({_nw_pat})-({_nw_pat})\b",
+        rf"\b({_NUMBER_WORDS_HYPHEN_PATTERN})-({_NUMBER_WORDS_HYPHEN_PATTERN})\b",
         r"\1 \2",
         expression,
         flags=re.IGNORECASE,
@@ -1115,50 +1209,7 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     # Replace multi-word number phrases to prevent incorrect joining
     # e.g., "one hundred" -> "100", "two thousand" -> "2000"
-    _NUMBER_SCALES = {
-        "100": ["hundred"],
-        "1000": ["thousand"],
-        "1000000": ["million"],
-        "1000000000": ["billion"],
-        "1000000000000": ["trillion"],
-        "1000000000000000": ["quadrillion"],
-        "1000000000000000000": ["quintillion"],
-    }
-    _NUMBER_WORDS_SINGLE = {
-        "1": ["one"], "2": ["two"], "3": ["three"], "4": ["four"], "5": ["five"],
-        "6": ["six"], "7": ["seven"], "8": ["eight"], "9": ["nine"],
-    }
-    _NUMBER_WORDS_TEENS = {
-        "10": ["ten"], "11": ["eleven"], "12": ["twelve"], "13": ["thirteen"],
-        "14": ["fourteen"], "15": ["fifteen"], "16": ["sixteen"], "17": ["seventeen"],
-        "18": ["eighteen"], "19": ["nineteen"],
-    }
-    _NUMBER_WORDS_TENS = {
-        "20": ["twenty"], "30": ["thirty"], "40": ["forty"], "50": ["fifty"],
-        "60": ["sixty"], "70": ["seventy"], "80": ["eighty"], "90": ["ninety"],
-    }
-    # Build multi-word number phrases: "one hundred" -> "100", "twenty thousand" -> "20000"
-    _MULTI_WORD_NUMBERS: dict[str, str] = {}
-    all_small = {**_NUMBER_WORDS_SINGLE, **_NUMBER_WORDS_TEENS, **_NUMBER_WORDS_TENS}
-    for num_val, words in all_small.items():
-        for scale_val, scale_words in _NUMBER_SCALES.items():
-            for word in words:
-                for scale_word in scale_words:
-                    key = f"{word} {scale_word}"
-                    _MULTI_WORD_NUMBERS[key] = str(int(num_val) * int(scale_val))
-    # Add combinations of tens + ones + scale: "twenty one hundred" -> 2100,
-    # "fifty six thousand" -> 56000, "thirty two million" -> 32000000, etc.
-    for tens_val, tens_words in _NUMBER_WORDS_TENS.items():
-        for ones_val, ones_words in {**_NUMBER_WORDS_SINGLE, **_NUMBER_WORDS_TEENS}.items():
-            for scale_val, scale_words in _NUMBER_SCALES.items():
-                for tens_word in tens_words:
-                    for ones_word in ones_words:
-                        for scale_word in scale_words:
-                            key = f"{tens_word} {ones_word} {scale_word}"
-                            _MULTI_WORD_NUMBERS[key] = str(
-                                (int(tens_val) + int(ones_val)) * int(scale_val)
-                            )
-    for phrase, replacement in sorted(_MULTI_WORD_NUMBERS.items(), key=lambda x: len(x[0]), reverse=True):
+    for phrase, replacement in _SORTED_MULTI_WORD_NUMBERS:
         expression = re.sub(r"\b" + re.escape(phrase) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
     # Strip "and" as a filler word in NL number expressions
@@ -1166,14 +1217,6 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     _binary_word_check(expression)
 
-    _DIGIT_SCALES: dict[str, str] = {
-        "thousand": "1000",
-        "million": "1000000",
-        "billion": "1000000000",
-        "trillion": "1000000000000",
-        "quadrillion": "1000000000000000",
-        "quintillion": "1000000000000000000",
-    }
     for scale_word, scale_val in _DIGIT_SCALES.items():
         # Convert "N thousand" to "N*1000" (for later evaluation)
         expression = re.sub(
@@ -1193,21 +1236,15 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     # Replace single number words with digits BEFORE _join_number_parts runs
     # This ensures "forty four" → "40 4" → "40+4" (correct) instead of remaining as words
-    _ALL_NUMBER_WORDS: dict[str, str] = {}
-    for val, words in NUMBER_WORDS.items():
-        for word in words:
-            _ALL_NUMBER_WORDS[word] = val
-    for word, replacement in sorted(_ALL_NUMBER_WORDS.items(), key=lambda x: len(x[0]), reverse=True):
+    for word, replacement in _SORTED_ALL_NUMBER_WORDS:
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
     # Strip longer filler phrases before word-to-operator conversion so that
     # "the value of pi" → "pi" (not "value * pi" after "of" → "*").
     # Short phrases like "the " are stripped AFTER word_to_all to avoid
     # corrupting operator phrases like "to the power of".
-    _LONG_PHRASES = [p for p in STRIPPED_PHRASES if len(p) > 10]
-    if _LONG_PHRASES:
-        _long_pats = "|".join(sorted([re.escape(p) for p in _LONG_PHRASES], key=len, reverse=True))
-        expression = re.sub(f"({_long_pats})", "", expression)
+    if _LONG_PHRASES_PATTERN:
+        expression = re.sub(f"({_LONG_PHRASES_PATTERN})", "", expression)
 
     # Use combined word replacement for efficiency (single pass)
     # Use word boundaries to avoid replacing parts of words

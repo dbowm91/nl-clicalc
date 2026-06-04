@@ -343,6 +343,12 @@ def _sanitize_error(message: str) -> str:
     # Bare absolute file paths (Unix /path/to/file.py or Windows C:\path\file.py)
     text = re.sub(r'(?:/[\w.-]+){2,}\.\w+', '<path>', text)
     text = re.sub(r'[A-Za-z]:\\(?:[\w.-]+\\)+\w+\.\w+', '<path>', text)
+    # "No such file or directory" messages with paths
+    text = re.sub(r"No such file or directory:\s*['\"][^'\"]*['\"]", "No such file or directory: '<redacted>'", text)
+    # Memory addresses (0x...)
+    text = re.sub(r'0x[0-9a-fA-F]{8,}', '<address>', text)
+    # JSON decode error positions (e.g., "line 5 column 10")
+    text = re.sub(r'line\s+(\d+)\s+column\s+(\d+)', r'line <redacted> column <redacted>', text, flags=re.IGNORECASE)
     return text
 
 
@@ -1435,6 +1441,14 @@ def regex_finditer(
             "invalid_arguments",
             f"max_matches must be at least 1, got {max_matches}",
             ["Set max_matches to 1 or higher"],
+            tool="regex_finditer",
+        )
+
+    if max_matches > 1000:
+        return _error_response(
+            "invalid_arguments",
+            f"max_matches {max_matches} exceeds maximum of 1000",
+            ["Set max_matches to 1000 or lower"],
             tool="regex_finditer",
         )
 
