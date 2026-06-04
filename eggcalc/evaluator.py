@@ -629,7 +629,11 @@ def _median(*args: float) -> float:
 
 
 def _mode(*args: float) -> float:
-    """Calculate mode of arguments."""
+    """Calculate mode of arguments.
+
+    When multiple values share the highest frequency, the first one encountered
+    (in argument order) is returned, since Counter preserves insertion order.
+    """
     if not args:
         raise EvaluationError("mode requires at least one argument")
     from collections import Counter
@@ -760,18 +764,41 @@ def _lcm(*args: int) -> int:
 
 
 def _is_prime(n: int) -> bool:
-    """Check if a number is prime."""
+    """Check if a number is prime using deterministic Miller-Rabin for large n."""
     n = int(n)
     if n > 10**12:
         raise EvaluationError("primality test not available for numbers > 10^12")
     if n < 2:
         return False
-    if n == 2:
+    if n == 2 or n == 3:
         return True
-    if n % 2 == 0:
+    if n % 2 == 0 or n % 3 == 0:
         return False
-    for i in range(3, int(n**0.5) + 1, 2):
-        if n % i == 0:
+    # Small numbers: trial division is faster
+    if n < 1000:
+        i = 5
+        while i * i <= n:
+            if n % i == 0 or n % (i + 2) == 0:
+                return False
+            i += 6
+        return True
+    # Deterministic Miller-Rabin (sufficient for n < 2.15 × 10^12)
+    d = n - 1
+    r = 0
+    while d % 2 == 0:
+        d //= 2
+        r += 1
+    for a in (2, 3, 5, 7, 11):
+        if a >= n:
+            continue
+        x = pow(a, d, n)
+        if x == 1 or x == n - 1:
+            continue
+        for _ in range(r - 1):
+            x = pow(x, 2, n)
+            if x == n - 1:
+                break
+        else:
             return False
     return True
 
@@ -849,6 +876,8 @@ def _prev_prime(n: int) -> int:
 
 # === Random functions ===
 
+# NOTE: This generator is shared across all Evaluator instances.
+# Calling seed() on it affects every evaluator's random output.
 _random_generator = random.Random()
 
 

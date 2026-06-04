@@ -149,7 +149,8 @@ MAX_OUTPUT_BYTES = 1_000_000
 MAX_REQUESTS_PER_SECOND = 10
 MAX_REQUEST_ID_LENGTH = 1024
 MAX_TOOL_TIMEOUT_SECONDS = 30
-_SHARED_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="mcp-tool")
+MAX_CANCELLED_REQUESTS = 10_000
+_SHARED_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="mcp-tool")
 atexit.register(_SHARED_EXECUTOR.shutdown, wait=False)
 _running_futures: set[concurrent.futures.Future[Any]] = set()
 _cancelled_requests: set = set()
@@ -696,6 +697,8 @@ def handle_request(request: Any) -> dict | None:
     elif method == "notifications/cancelled":
         cancelled_id = request.get("params", {}).get("requestId")
         if cancelled_id is not None:
+            if len(_cancelled_requests) >= MAX_CANCELLED_REQUESTS:
+                _cancelled_requests.pop()
             _cancelled_requests.add(cancelled_id)
         return None
     elif method == "ping":

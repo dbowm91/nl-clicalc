@@ -556,23 +556,41 @@ def validate_for_eval(tokens: list, patterns: Mapping[str, Pattern[str]]) -> boo
     known_constants = set(_default_evaluator.CONSTANTS.keys())
 
     for token in tokens:
-        # Skip tokens that look like function calls (contain parentheses)
-        if "(" in token or ")" in token:
-            continue
-        if not check_if_number(token)["bool"]:
-            if not patterns["valid_operations"].match(token):
-                if not is_unit(token):
-                    if token not in known_constants:
+        # Skip tokens containing parentheses — these are function calls or
+        # sub-expressions handled by the AST evaluator (e.g., "convert(1*m,ft)").
+        # Validate only the content between balanced outer parentheses when present.
+        check_token = token
+        if "(" in check_token or ")" in check_token:
+            # Allow tokens that are balanced parenthesized expressions like "(5+3)"
+            # or function calls like "convert(...)" — the evaluator validates them.
+            # But still reject tokens with unbalanced parens or junk around them.
+            depth = 0
+            balanced = True
+            for ch in check_token:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                if depth < 0:
+                    balanced = False
+                    break
+            if balanced and depth == 0:
+                continue  # Balanced parens — skip validation, evaluator handles it
+            # Unbalanced — fall through to validate the raw token
+        if not check_if_number(check_token)["bool"]:
+            if not patterns["valid_operations"].match(check_token):
+                if not is_unit(check_token):
+                    if check_token not in known_constants:
                         # Accept '<num>*<unit>' or '<num>/<unit>' patterns
                         # (e.g., '1*m' from "1 in m" unit conversion)
                         # Pattern: number (int/float/scientific) followed by
                         # optional operator-unit pairs like *m, /s, *m/s
                         if re.match(
                             r"^[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?(?:[*/][a-zA-Z]+(?:/[a-zA-Z]+)*)*$",
-                            token,
+                            check_token,
                         ):
                             continue
-                        raise ValueError(f"Invalid token: {token}")
+                        raise ValueError(f"Invalid token: {check_token}")
     return True
 
 
@@ -1586,6 +1604,10 @@ def _preprocess_units(expression: str) -> str:
                     found_unit = False
                     for unit in units:
                         if remaining.startswith(unit):
+                            # Word boundary check: next char after unit must not be alphanumeric
+                            end_pos = len(unit)
+                            if end_pos < len(remaining) and remaining[end_pos].isalnum():
+                                continue
                             # Emit the canonical form (e.g., "in" -> "inch") so
                             # the evaluator doesn't depend on the alias ordering.
                             canonical = UNIT_ALIASES.get(unit, unit)

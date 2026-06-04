@@ -348,7 +348,7 @@ def _sanitize_error(message: str) -> str:
     # Memory addresses (0x...)
     text = re.sub(r'0x[0-9a-fA-F]{8,}', '<address>', text)
     # JSON decode error positions (e.g., "line 5 column 10")
-    text = re.sub(r'line\s+(\d+)\s+column\s+(\d+)', r'line <redacted> column <redacted>', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bline\s+(\d+)\s+column\s+(\d+)\b', r'line <redacted> column <redacted>', text, flags=re.IGNORECASE)
     return text
 
 
