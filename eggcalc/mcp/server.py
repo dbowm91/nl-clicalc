@@ -181,6 +181,9 @@ def _levenshtein_distance(s1: str, s2: str) -> int:
     return prev_row[-1]
 
 
+_MAX_TOOL_NAME_LENGTH = 200
+
+
 def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
     """Find a case-insensitive close match for tool name using edit distance.
 
@@ -188,6 +191,8 @@ def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
     A match is considered good if the edit distance is at most half the length
     of the shorter string, or if it's a prefix/substring match.
     """
+    if len(name) > _MAX_TOOL_NAME_LENGTH:
+        return None
     name_lower = name.lower()
 
     # First check for exact case-insensitive match
@@ -593,81 +598,84 @@ def main() -> int:
     window = 1.0  # sliding window in seconds
 
     for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-
-        if len(line.encode('utf-8')) > MAX_REQUEST_BYTES:
-            response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32700,
-                    "message": f"Request exceeds maximum size of {MAX_REQUEST_BYTES} bytes",
-                },
-            }
-            print(json.dumps(response), flush=True)
-            continue
-
-        if line.startswith('['):
-            response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32600,
-                    "message": "Batch requests are not supported",
-                },
-            }
-            print(json.dumps(response), flush=True)
-            continue
-
         try:
-            request = json.loads(line)
-        except json.JSONDecodeError:
-            response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32700,
-                    "message": "Parse error: invalid JSON",
-                },
-            }
-            print(json.dumps(response), flush=True)
-            continue
+            line = line.strip()
+            if not line:
+                continue
 
-        now = time.monotonic()
-        while request_times and request_times[0] < now - window:
-            request_times.popleft()
+            if len(line.encode('utf-8')) > MAX_REQUEST_BYTES:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32700,
+                        "message": f"Request exceeds maximum size of {MAX_REQUEST_BYTES} bytes",
+                    },
+                }
+                print(json.dumps(response), flush=True)
+                continue
 
-        if len(request_times) >= MAX_REQUESTS_PER_SECOND:
-            response = {
-                "jsonrpc": "2.0",
-                "id": request.get("id") if isinstance(request, dict) else None,
-                "error": {
-                    "code": -32600,
-                    "message": f"Rate limit exceeded: max {MAX_REQUESTS_PER_SECOND} requests per second",
-                },
-            }
-            print(json.dumps(response), flush=True)
-            continue
+            if line.startswith('['):
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32600,
+                        "message": "Batch requests are not supported",
+                    },
+                }
+                print(json.dumps(response), flush=True)
+                continue
 
-        request_times.append(now)
+            try:
+                request = json.loads(line)
+            except json.JSONDecodeError:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32700,
+                        "message": "Parse error: invalid JSON",
+                    },
+                }
+                print(json.dumps(response), flush=True)
+                continue
 
-        try:
-            response = handle_request(request)
-        except Exception as e:
-            message = _sanitize_error(str(e))[:500]
-            response = {
-                "jsonrpc": "2.0",
-                "id": request.get("id") if isinstance(request, dict) else None,
-                "error": {
-                    "code": -32603,
-                    "message": f"Internal error: {message}",
-                },
-            }
+            now = time.monotonic()
+            while request_times and request_times[0] < now - window:
+                request_times.popleft()
 
-        if response is not None:
-            print(json.dumps(response), flush=True)
+            if len(request_times) >= MAX_REQUESTS_PER_SECOND:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request.get("id") if isinstance(request, dict) else None,
+                    "error": {
+                        "code": -32600,
+                        "message": f"Rate limit exceeded: max {MAX_REQUESTS_PER_SECOND} requests per second",
+                    },
+                }
+                print(json.dumps(response), flush=True)
+                continue
+
+            request_times.append(now)
+
+            try:
+                response = handle_request(request)
+            except Exception as e:
+                message = _sanitize_error(str(e))[:500]
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request.get("id") if isinstance(request, dict) else None,
+                    "error": {
+                        "code": -32603,
+                        "message": f"Internal error: {message}",
+                    },
+                }
+
+            if response is not None:
+                print(json.dumps(response), flush=True)
+        except BrokenPipeError:
+            return 0
 
     return 0
 

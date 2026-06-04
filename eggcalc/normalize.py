@@ -154,6 +154,21 @@ FUNCTION_MAPPINGS: dict[str, str] = {
     "arctan": "atan",
     "atan": "atan",
     "inverse tangent": "atan",
+    "sinh": "sinh",
+    "hyperbolic sine": "sinh",
+    "cosh": "cosh",
+    "hyperbolic cosine": "cosh",
+    "tanh": "tanh",
+    "hyperbolic tangent": "tanh",
+    "arcsinh": "asinh",
+    "asinh": "asinh",
+    "inverse hyperbolic sine": "asinh",
+    "arccosh": "acosh",
+    "acosh": "acosh",
+    "inverse hyperbolic cosine": "acosh",
+    "arctanh": "atanh",
+    "atanh": "atanh",
+    "inverse hyperbolic tangent": "atanh",
     "absolute": "abs",
     "abs": "abs",
     "magnitude": "abs",
@@ -289,6 +304,21 @@ STRIPPED_PHRASES: list[str] = [
     "tell me",
     "give me",
     "the ",
+    "please ",
+    "hey ",
+    "hi ",
+    "can you ",
+    "could you ",
+    "would you ",
+    "i want to know ",
+    "i'd like to know ",
+    "what's the value of ",
+    "what's the result of ",
+    "what is the value of ",
+    "what is the result of ",
+    "the value of ",
+    "the result of ",
+    "the answer is ",
 ]
 
 # Physical constants word mappings
@@ -731,10 +761,10 @@ def apply_math_functions(
 def error_message(original: str, exception: BaseException, verbose: bool = False) -> None:
     """Print an error message based on the exception type."""
     # Sanitize input for safe terminal display
-    safe_original = ''.join(c if c.isprintable() and c not in '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f' else '?' for c in original)
+    safe_original = ''.join(c if c.isprintable() and c not in '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0a\x0b\x0c\x0d\x0e\x0f' else '?' for c in original)
     exc_type = type(exception)
     if exc_type is ValueError:
-        print(f"Unrecognized command: '{safe_original}'", file=sys.stderr)
+        print(f"Error: {exception}: '{safe_original}'", file=sys.stderr)
     elif exc_type is ZeroDivisionError:
         print(f"Can't divide by 0: '{safe_original}'", file=sys.stderr)
     elif exc_type is EvaluationError:
@@ -949,7 +979,7 @@ def _should_split_number_sequence(token: str) -> bool:
 _BINARY_WORD_PATTERN = re.compile(
     r"(\d+(?:\.\d+)?|\((?:[^()]|\([^()]*\))*\))\s+"
     r"(not|in|to|as|into)\s+"
-    r"(\d+(?:\.\d+)?)",
+    r"(\d+(?:\.\d+)?)\b",
     flags=re.IGNORECASE,
 )
 
@@ -1097,9 +1127,10 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
             expression,
             flags=re.IGNORECASE,
         )
-        # Also handle bare scale words (e.g., "thousand" alone) -> "*1000"
+        # Also handle bare scale words (e.g., "5 thousand" after first sub)
+        # Only replace when preceded by a digit or ')' to avoid invalid "*1000"
         expression = re.sub(
-            r"\b" + re.escape(scale_word) + r"\b",
+            r"(?<=[\d)])\s*" + re.escape(scale_word) + r"\b",
             f"*{scale_val}",
             expression,
             flags=re.IGNORECASE,
@@ -1187,6 +1218,13 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # This makes sin(30 degrees) interpret the argument as degrees rather than radians.
     # Must be done BEFORE the 'i' -> 'j' substitution (no conflict) and BEFORE
     # whitespace removal. Use word boundaries and case-insensitive matching.
+    # Also handle "degrees in <unit>" by converting the full phrase.
+    expression = re.sub(
+        r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b\s+(?:in|IN)\s+(\w+)",
+        lambda m: f"(({m.group(1)}*pi/180)*{m.group(2)}/rad)",
+        expression,
+        flags=re.IGNORECASE,
+    )
     expression = re.sub(
         r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b",
         lambda m: f"({m.group(1)}*pi/180)",
@@ -1304,6 +1342,24 @@ def _join_number_parts(expression: str) -> str:
 
     def _is_unit_token(tok: str) -> bool:
         return tok in UNIT_ALIASES or tok.lower() in UNIT_ALIASES
+
+    # Pre-merge decimal point sequences: "5" "." "3" -> "5.3"
+    # This handles 'point' -> '.' conversions where spaces separate the tokens.
+    merged: list[str] = []
+    mi = 0
+    while mi < len(tokens):
+        if (
+            _is_digit_token(tokens[mi])
+            and mi + 2 < len(tokens)
+            and tokens[mi + 1] == "."
+            and _is_digit_token(tokens[mi + 2])
+        ):
+            merged.append(tokens[mi] + "." + tokens[mi + 2])
+            mi += 3
+        else:
+            merged.append(tokens[mi])
+            mi += 1
+    tokens = merged
 
     result: list[str] = []
     current_number_seq: list[str] = []
@@ -1630,6 +1686,9 @@ def run(
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return None, 1
+    except Exception as e:
+        error_message(original, e)
+        return None, 1
 
     if exit_code != 0:
         if exit_code == 2:
@@ -1641,7 +1700,7 @@ def run(
         if output_format == "json":
             import json
 
-            print(json.dumps({"expression": joined, "result": str(result)}))
+            print(json.dumps({"expression": original, "result": str(result)}))
         else:
             print(result)
         return result, 0
@@ -1649,6 +1708,9 @@ def run(
         error_message(original, e)
         return None, 1
     except EvaluationError as e:
+        error_message(original, e)
+        return None, 1
+    except Exception as e:
         error_message(original, e)
         return None, 1
 
@@ -1671,7 +1733,7 @@ def _run_repl(show_expression: bool = True) -> int:
         if not line:
             continue
 
-        if line.lower() in ("quit", "exit", "exit()"):
+        if line.lower() in ("quit", "quit()", "exit", "exit()"):
             break
 
         if line.lower() == "help":
@@ -1680,7 +1742,7 @@ def _run_repl(show_expression: bool = True) -> int:
 
         if line.lower() == "history":
             for expr, result in history:
-                print(result)
+                print(f"{expr} = {result}")
             continue
 
         if line.lower() == "clear":

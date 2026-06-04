@@ -125,6 +125,10 @@ class UnitValue:
                 return UnitValue(self.value**other, f"{self.unit}**{other}")
             if isinstance(other, float) and other.is_integer():
                 return UnitValue(self.value**other, f"{self.unit}**{int(other)}")
+            if isinstance(other, (int, float)):
+                raise TypeError(
+                    f"Cannot raise unit '{self.unit}' to non-integer power"
+                )
         return UnitValue(self.value**other, self.unit)
 
     def __neg__(self) -> UnitValue:
@@ -407,6 +411,27 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "tsp": 0.00492892159,
         "teaspoon": 0.00492892159,
         "teaspoons": 0.00492892159,
+        "m3": 1000.0,
+        "m^3": 1000.0,
+        "cubicmeter": 1000.0,
+        "cubicmeters": 1000.0,
+        "cm3": 0.001,
+        "cm^3": 0.001,
+        "cc": 0.001,
+        "cubiccentimeter": 0.001,
+        "cubiccentimeters": 0.001,
+        "ft3": 28.316846592,
+        "ft^3": 28.316846592,
+        "cubicfoot": 28.316846592,
+        "cubicfeet": 28.316846592,
+        "in3": 0.016387064,
+        "in^3": 0.016387064,
+        "cubicinch": 0.016387064,
+        "cubicinches": 0.016387064,
+        "yd3": 764.554857984,
+        "yd^3": 764.554857984,
+        "cubicyard": 764.554857984,
+        "cubicyards": 764.554857984,
     },
     # Pressure (base: Pascal)
     "Pa": {
@@ -430,6 +455,11 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "atmosphere": 101325.0,
         "atmospheres": 101325.0,
         "psi": 6894.757293168,
+        "mmHg": 133.32236842105,
+        "torr": 133.32236842105,
+        "inHg": 3386.389,
+        "mmH2O": 9.80665,
+        "inH2O": 249.08891,
     },
     # Energy (base: Joules)
     "J": {

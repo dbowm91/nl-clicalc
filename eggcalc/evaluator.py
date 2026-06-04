@@ -101,10 +101,9 @@ def _check_constant_unit_collisions() -> None:
     # In assembled single-file mode, UNIT_ALIASES is inlined at the top.
     # In package mode, _IS_ASSEMBLED is False and we use the imported name.
     aliases = UNIT_ALIASES  # type: ignore[name-defined]
-    alias_lower = {a.lower() for a in aliases}
     collisions: list[str] = []
     for c in Evaluator.CONSTANTS:
-        if c.lower() in alias_lower:
+        if c in aliases:
             collisions.append(c)
     if collisions:
         import sys
@@ -650,6 +649,8 @@ def _perm(n: int, r: int | None = None) -> int:
     n = int(n)
     if n < 0:
         raise EvaluationError("perm requires non-negative input")
+    if n > 10000:
+        raise EvaluationError(f"perm input too large (max 10000, got {n})")
     if r is None:
         result = math.factorial(n)
         if _int_digit_count(result) > MAX_RESULT_DIGITS:
@@ -660,14 +661,25 @@ def _perm(n: int, r: int | None = None) -> int:
         raise EvaluationError("perm requires non-negative arguments")
     if r > n:
         return 0
-    return math.perm(n, r)
+    if r > 10000:
+        raise EvaluationError(f"perm input too large (max 10000, got {r})")
+    result = math.perm(n, r)
+    if _int_digit_count(result) > MAX_RESULT_DIGITS:
+        raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+    return result
 
 
 def _comb(n: int, r: int) -> int:
     """Calculate combinations C(n,r) = n!/(r!(n-r)!)."""
     n, r = int(n), int(r)
+    if n < 0 or r < 0:
+        raise EvaluationError("comb requires non-negative arguments")
+    if n > 10000:
+        raise EvaluationError(f"comb input too large (max 10000, got {n})")
     if r > n:
         return 0
+    if r > 10000:
+        raise EvaluationError(f"comb input too large (max 10000, got {r})")
     return math.comb(n, r)
 
 
@@ -933,8 +945,18 @@ _sinh = _complex_aware(math.sinh, cmath.sinh)
 _cosh = _complex_aware(math.cosh, cmath.cosh)
 _tanh = _complex_aware(math.tanh, cmath.tanh)
 _asinh = _complex_aware(math.asinh, cmath.asinh)
-_acosh = _complex_aware(math.acosh, cmath.acosh)
-_atanh = _complex_aware(math.atanh, cmath.atanh)
+
+
+def _acosh(x):
+    """acosh that handles complex numbers for out-of-domain real inputs."""
+    if isinstance(x, complex):
+        return cmath.acosh(x)
+    if x < 1:
+        return cmath.acosh(x)
+    return math.acosh(x)
+
+
+_atanh = _complex_aware(math.atanh, cmath.atanh, use_complex_for_abs_gt_one=True)
 def _cbrt_impl(x: float) -> float:
     return math.copysign(abs(x) ** (1/3), x)
 
@@ -1687,6 +1709,17 @@ class Evaluator(ast.NodeVisitor):
         if op_class in (ast.LShift, ast.RShift):
             if isinstance(result, int) and _int_digit_count(result) > MAX_RESULT_DIGITS:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
+
+        # Power operator: handle unit exponentiation (e.g., 5m ** 2 -> 25 m**2)
+        if op_class is ast.Pow and isinstance(left, UnitValue) and left.unit:
+            if isinstance(right, int):
+                return UnitValue(result, f"{left.unit}**{right}")
+            if isinstance(right, float) and right.is_integer():
+                return UnitValue(result, f"{left.unit}**{int(right)}")
+            # Non-integer exponent on a unit is physically nonsensical
+            raise EvaluationError(
+                f"Cannot raise unit '{left.unit}' to non-integer power"
+            )
 
         # Compound unit detection for division:
         # 1. UnitValue / UnitValue with different units -> "left_unit/right_unit"
