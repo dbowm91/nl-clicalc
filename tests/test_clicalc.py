@@ -1388,5 +1388,59 @@ class TestNestingDepth:
             evaluate(expr)
 
 
+class TestUnitValueHashEqContract:
+    """Test that UnitValue maintains the hash/eq contract."""
+
+    def test_equal_values_have_same_hash(self):
+        a = UnitValue(1.0, "m")
+        b = UnitValue(1.0, "m")
+        assert a == b
+        assert hash(a) == hash(b)
+
+    def test_different_values_different_hash(self):
+        a = UnitValue(1.0, "m")
+        b = UnitValue(2.0, "m")
+        assert a != b
+
+    def test_dict_lookup_works(self):
+        d = {UnitValue(5.0, "m"): "found"}
+        assert d[UnitValue(5.0, "m")] == "found"
+
+    def test_set_membership(self):
+        s = {UnitValue(1.0, "m"), UnitValue(2.0, "m")}
+        assert UnitValue(1.0, "m") in s
+        assert UnitValue(3.0, "m") not in s
+
+    def test_different_units_not_equal(self):
+        a = UnitValue(1.0, "m")
+        b = UnitValue(1.0, "km")
+        assert a != b
+
+    def test_exact_comparison(self):
+        a = UnitValue(1.0, "m")
+        b = UnitValue(1.000000000000001, "m")
+        assert a != b
+
+
+class TestBitShiftSafety:
+    """Test that bitlshift/bitrshift functions reject negative shift counts."""
+
+    def test_bitlshift_negative_raises(self):
+        with pytest.raises(EvaluationError, match="non-negative"):
+            evaluate("bitlshift(5, -3)")
+
+    def test_bitrshift_negative_raises(self):
+        with pytest.raises(EvaluationError, match="non-negative"):
+            evaluate("bitrshift(5, -3)")
+
+    def test_bitlshift_positive_works(self):
+        result = evaluate("bitlshift(1, 3)")
+        assert result == 8
+
+    def test_bitrshift_positive_works(self):
+        result = evaluate("bitrshift(8, 2)")
+        assert result == 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

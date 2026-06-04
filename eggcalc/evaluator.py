@@ -1414,8 +1414,8 @@ class Evaluator(ast.NodeVisitor):
         "bitor": _bitor,
         "bitxor": _bitxor,
         "bitnot": _bitnot,
-        "bitlshift": _bitlshift,
-        "bitrshift": _bitrshift,
+        "bitlshift": _bitlshift_safe,
+        "bitrshift": _bitrshift_safe,
         # Prime functions
         "isprime": _is_prime,
         "is_prime": _is_prime,
@@ -1665,7 +1665,9 @@ class Evaluator(ast.NodeVisitor):
                     left_val = left_val * factor
                     left_unit = right_unit
                 except EvaluationError:
-                    pass
+                    raise EvaluationError(
+                        f"Cannot convert between incompatible units: '{left_unit}' and '{right_unit}'"
+                    )
 
         result_unit = left_unit or right_unit
 

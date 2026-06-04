@@ -55,16 +55,12 @@ class UnitValue:
             return NotImplemented
         if self.unit != other.unit:
             return False
-        return abs(self.value - other.value) < FLOAT_EPSILON
+        return self.value == other.value
 
     def __hash__(self) -> int:
-        # Use 9 decimal places to maintain hash/eq contract:
-        # __eq__ uses epsilon 1e-10, so values within 1e-10 are equal.
-        # Rounding to 9 places (one fewer than epsilon) ensures equal values
-        # always produce the same hash.
         if isinstance(self.value, complex):
-            return hash((round(self.value.real, 9), round(self.value.imag, 9), self.unit))
-        return hash((round(self.value, 9), self.unit))
+            return hash((self.value.real, self.value.imag, self.unit))
+        return hash((self.value, self.unit))
 
     def __add__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):

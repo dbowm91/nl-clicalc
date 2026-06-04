@@ -736,7 +736,7 @@ def error_message(original: str, exception: BaseException, verbose: bool = False
     if exc_type is ValueError:
         print(f"Unrecognized command: '{safe_original}'", file=sys.stderr)
     elif exc_type is ZeroDivisionError:
-        print(f"Can't divide by 0: '{original}'", file=sys.stderr)
+        print(f"Can't divide by 0: '{safe_original}'", file=sys.stderr)
     elif exc_type is EvaluationError:
         print(f"Evaluation error: {exception}", file=sys.stderr)
     else:

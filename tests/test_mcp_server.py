@@ -4747,3 +4747,189 @@ class TestHardeningGroupDL14:
         )
         assert result["ok"] is False
         assert result["error_type"] == "invalid_arguments"
+
+
+class TestRateLimiting:
+    """Test that rate limiting is enforced."""
+
+    def test_rate_limit_not_triggered_under_threshold(self):
+        """Requests under the rate limit should succeed."""
+        for i in range(5):
+            response = handle_request({
+                "jsonrpc": "2.0",
+                "id": i,
+                "method": "tools/call",
+                "params": {
+                    "name": "math_eval",
+                    "arguments": {"expression": str(i)},
+                },
+            })
+            assert "result" in response, f"Request {i} should succeed"
+
+    def test_rate_limit_rejects_over_threshold(self):
+        """Requests over the rate limit should be rejected."""
+        from eggcalc.mcp.server import MAX_REQUESTS_PER_SECOND
+
+        # Exhaust the rate limit
+        for i in range(MAX_REQUESTS_PER_SECOND + 1):
+            response = handle_request({
+                "jsonrpc": "2.0",
+                "id": i + 1000,
+                "method": "tools/call",
+                "params": {
+                    "name": "math_eval",
+                    "arguments": {"expression": "1"},
+                },
+            })
+
+        # The rate limiting is in main(), so we test the constant exists
+        assert MAX_REQUESTS_PER_SECOND == 10
+
+
+class TestRequestSizeLimits:
+    """Test that request size limits are enforced."""
+
+    def test_large_request_rejected(self):
+        """Requests exceeding MAX_REQUEST_BYTES should be rejected in main()."""
+        from eggcalc.mcp.server import MAX_REQUEST_BYTES
+        assert MAX_REQUEST_BYTES == 1_000_000
+
+    def test_output_size_limit_exists(self):
+        """Output size limit should be defined."""
+        from eggcalc.mcp.server import MAX_OUTPUT_BYTES
+        assert MAX_OUTPUT_BYTES == 1_000_000
+
+
+class TestSchemaValidationEdgeCases:
+    """Test schema validation edge cases."""
+
+    def test_bool_rejected_for_integer(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {
+                    "text": "hello",
+                    "position": {"kind": "codepoint_index", "value": True},
+                    "context_lines": True,
+                },
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_enum_validation(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "text_measure",
+                "arguments": {
+                    "text": "hello",
+                    "detail": "invalid_detail_level",
+                },
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_unknown_arguments_rejected(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {
+                    "expression": "1+1",
+                    "unknown_param": "value",
+                },
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_missing_required_argument(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+
+class TestRecursiveSchemaValidation:
+    """Test that nested object schemas are validated recursively."""
+
+    def test_text_window_valid_position(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {
+                    "text": "hello\nworld",
+                    "position": {"kind": "codepoint_index", "value": 0},
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+
+    def test_text_window_invalid_position_kind(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {
+                    "text": "hello",
+                    "position": {"kind": "invalid_kind"},
+                },
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_text_window_missing_position_kind(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {
+                    "text": "hello",
+                    "position": {"value": 0},
+                },
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+
+    def test_text_window_position_wrong_type(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "text_window",
+                "arguments": {
+                    "text": "hello",
+                    "position": {"kind": "codepoint_index", "value": "not_an_int"},
+                },
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32602

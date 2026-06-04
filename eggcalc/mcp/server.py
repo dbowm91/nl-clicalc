@@ -246,6 +246,78 @@ def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
     return None
 
 
+def _validate_value_against_schema(
+    value: Any, prop: dict, path: str
+) -> str | None:
+    """Validate a single value against a JSON schema property definition.
+
+    Returns None if valid, or an error message string if invalid.
+    Supports recursive validation for nested objects and arrays.
+    """
+    expected_type = prop.get("type")
+    if expected_type is None:
+        return None
+
+    type_map = {
+        "string": str,
+        "number": (int, float),
+        "integer": int,
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+    }
+    python_type = type_map.get(expected_type)
+    if python_type is not None and not isinstance(value, python_type):
+        return f"Argument '{path}' must be {expected_type}, got {type(value).__name__}"
+
+    # Bool is subclass of int in Python; reject bool for integer/number
+    if expected_type in ("integer", "number") and isinstance(value, bool):
+        return f"Argument '{path}' must be {expected_type}, got bool"
+
+    enum_values = prop.get("enum")
+    if enum_values is not None and value not in enum_values:
+        return f"Argument '{path}' must be one of: {', '.join(str(v) for v in enum_values)}"
+
+    # Recursive validation for nested objects (only when sub-schema defines properties)
+    if expected_type == "object" and isinstance(value, dict):
+        sub_props = prop.get("properties", {})
+        sub_required = prop.get("required", [])
+        sub_additional = prop.get("additionalProperties", False)
+
+        # Only validate recursively if the schema actually defines sub-properties
+        # or required fields. Opaque object types (no sub-schema) are accepted as-is.
+        if sub_props or sub_required:
+            for field in sub_required:
+                if field not in value:
+                    return f"Missing required field '{field}' in '{path}'"
+
+            if not sub_additional:
+                unknown = set(value.keys()) - set(sub_props.keys())
+                if unknown:
+                    return f"Unexpected field(s) in '{path}': {', '.join(sorted(unknown))}"
+
+            for sub_key, sub_val in value.items():
+                if sub_key in sub_props:
+                    err = _validate_value_against_schema(
+                        sub_val, sub_props[sub_key], f"{path}.{sub_key}"
+                    )
+                    if err:
+                        return err
+
+    # Recursive validation for arrays
+    if expected_type == "array" and isinstance(value, list):
+        items_schema = prop.get("items")
+        if items_schema:
+            for i, item in enumerate(value):
+                err = _validate_value_against_schema(
+                    item, items_schema, f"{path}[{i}]"
+                )
+                if err:
+                    return err
+
+    return None
+
+
 def _validate_arguments_schema(name: str, arguments: dict[str, Any]) -> str | None:
     """Validate arguments against the tool's inputSchema from TOOL_SCHEMAS.
 
@@ -271,30 +343,9 @@ def _validate_arguments_schema(name: str, arguments: dict[str, Any]) -> str | No
     for key, value in arguments.items():
         if key not in props:
             continue
-        prop = props[key]
-        expected_type = prop.get("type")
-        if expected_type is None:
-            continue
-
-        type_map = {
-            "string": str,
-            "number": (int, float),
-            "integer": int,
-            "boolean": bool,
-            "array": list,
-            "object": dict,
-        }
-        python_type = type_map.get(expected_type)
-        if python_type is not None and not isinstance(value, python_type):
-            return f"Argument '{key}' must be {expected_type}, got {type(value).__name__}"
-
-        # Bool is subclass of int in Python; reject bool for integer/number
-        if expected_type in ("integer", "number") and isinstance(value, bool):
-            return f"Argument '{key}' must be {expected_type}, got bool"
-
-        enum_values = prop.get("enum")
-        if enum_values is not None and value not in enum_values:
-            return f"Argument '{key}' must be one of: {', '.join(str(v) for v in enum_values)}"
+        err = _validate_value_against_schema(value, props[key], key)
+        if err:
+            return err
 
     return None
 
