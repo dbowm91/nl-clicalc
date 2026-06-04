@@ -209,8 +209,16 @@ def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
     for tool_name in handlers:
         tool_lower = tool_name.lower()
 
-        # Prefix/substring match is always good
-        if name_lower in tool_lower or tool_lower in name_lower:
+        # Prefix/substring match at word boundary is always good
+        def _at_word_boundary(sub: str, s: str) -> bool:
+            idx = s.find(sub)
+            if idx == -1:
+                return False
+            if idx == 0:
+                return True
+            return s[idx - 1] in ('_', '-')
+
+        if _at_word_boundary(name_lower, tool_lower) or _at_word_boundary(tool_lower, name_lower):
             if best_match is None or len(tool_name) < len(best_match):
                 best_match = tool_name
                 best_distance = 0
@@ -268,7 +276,7 @@ def _validate_value_against_schema(
     Supports recursive validation for nested objects and arrays.
     """
     if max_depth <= 0:
-        return None
+        return f"Schema nesting too deep at '{path}'"
 
     expected_type = prop.get("type")
     if expected_type is None:
@@ -618,6 +626,8 @@ def handle_request(request: Any) -> dict | None:
     elif method == "initialize":
         return _handle_initialize(request)
     elif method == "notifications/initialized":
+        return None
+    elif method == "notifications/cancelled":
         return None
     elif method == "ping":
         return {

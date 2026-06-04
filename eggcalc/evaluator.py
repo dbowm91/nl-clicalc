@@ -11,9 +11,11 @@ from __future__ import annotations
 import ast
 import cmath
 import contextvars
+import logging
 import math
 import multiprocessing
 import os
+import queue
 import random
 import threading
 from collections import OrderedDict
@@ -373,14 +375,14 @@ def _safe_pow(base: float, exp: float) -> float:
         raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
     if not isinstance(base, complex) and base < 0:
         if isinstance(exp, complex):
-            if exp.imag != 0 or exp.real != int(exp.real):
+            if exp.imag != 0 or not math.isclose(exp.real, round(exp.real), rel_tol=1e-9):
                 raise EvaluationError(
                     "Cannot raise negative number to non-integer power"
                 )
-            exp = int(exp.real)
+            exp = int(round(exp.real))
         else:
             try:
-                if exp != int(exp):
+                if not math.isclose(exp, round(exp), rel_tol=1e-9):
                     raise EvaluationError(
                         "Cannot raise negative number to non-integer power"
                     )
@@ -2078,7 +2080,14 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
 
     try:
         status, value = queue.get(timeout=timeout)
-    except Exception:
+    except queue.Empty:
+        raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
+    except Exception as exc:
+        logging.warning(
+            "Unexpected exception reading evaluation result: %s",
+            type(exc).__name__,
+            exc_info=True,
+        )
         raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
     finally:
         try:

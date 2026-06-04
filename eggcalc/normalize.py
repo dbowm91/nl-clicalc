@@ -347,7 +347,15 @@ CONSTANT_WORDS: dict[str, list[str]] = {
 
 
 def _build_config() -> tuple[dict, dict]:
-    """Build normalization configuration."""
+    """Build normalization configuration.
+
+    Recompiles all regex patterns on every call intentionally. This ensures
+    thread safety during config rebuilds (via _rebuild_config) because callers
+    always get freshly compiled patterns rather than sharing potentially stale
+    references. The resulting config is cached at module level via
+    ``NORMALIZE, PATTERNS = _build_config()`` and only rebuilt when new custom
+    words are added at runtime.
+    """
     # Sort numbers by key descending for matching
     sorted_numbers = {k: NUMBER_WORDS[k] for k in sorted(NUMBER_WORDS.keys(), reverse=True)}
 
@@ -451,6 +459,13 @@ def _rebuild_config() -> None:
 def check_if_number(token: str) -> dict:
     """Check if a token represents a number.
 
+    The LRU cache is cleared during _rebuild_config() so that cached results
+    from before a config rebuild don't leak into the new configuration. There
+    is a brief window where concurrent reads may return stale cached values
+    between the config swap and the cache clear; this is acceptable because
+    the cache is per-process and any stale value would still be valid for the
+    (now-superseded) old configuration.
+
     Returns a dict with:
         bool: whether the token is a number
         converted: the parsed number or original string
@@ -550,7 +565,12 @@ def validate_for_eval(tokens: list, patterns: Mapping[str, Pattern[str]]) -> boo
                     if token not in known_constants:
                         # Accept '<num>*<unit>' or '<num>/<unit>' patterns
                         # (e.g., '1*m' from "1 in m" unit conversion)
-                        if re.match(r"^[0-9][0-9+\-*/.%a-zA-Z]*$", token):
+                        # Pattern: number (int/float/scientific) followed by
+                        # optional operator-unit pairs like *m, /s, *m/s
+                        if re.match(
+                            r"^[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?(?:[*/][a-zA-Z]+(?:/[a-zA-Z]+)*)*$",
+                            token,
+                        ):
                             continue
                         raise ValueError(f"Invalid token: {token}")
     return True

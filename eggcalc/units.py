@@ -58,6 +58,7 @@ class UnitValue:
         return self.value == other.value
 
     def __hash__(self) -> int:
+        """Hash consistent with __eq__: real/imag components and unit are compared."""
         if isinstance(self.value, complex):
             return hash((self.value.real, self.value.imag, self.unit))
         return hash((self.value, self.unit))
@@ -84,7 +85,7 @@ class UnitValue:
                 result = self.value + other
                 out_unit = None
             else:
-                raise ValueError(f"Cannot add scalar to dimensional value: {self.unit}")
+                raise ValueError(f"Cannot add a dimensionless value to {self.unit}; use matching units or convert first")
         if isinstance(result, float) and not math.isfinite(result):
             raise OverflowError("Result too large")
         if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
@@ -115,7 +116,7 @@ class UnitValue:
                 result = self.value - other
                 out_unit = None
             else:
-                raise ValueError(f"Cannot subtract scalar from dimensional value: {self.unit}")
+                raise ValueError(f"Cannot subtract a dimensionless value from {self.unit}; use matching units or convert first")
         if isinstance(result, float) and not math.isfinite(result):
             raise OverflowError("Result too large")
         if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
@@ -125,7 +126,7 @@ class UnitValue:
     def __rsub__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             return other.__sub__(self)
-        raise ValueError("Cannot subtract dimensional value from scalar")
+        raise ValueError("Cannot subtract a unit value from a dimensionless number")
 
     def __mul__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
