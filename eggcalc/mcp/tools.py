@@ -8,6 +8,7 @@ and handles input validation and error wrapping.
 from __future__ import annotations
 
 import json
+import logging
 import multiprocessing
 import re
 import threading
@@ -276,8 +277,7 @@ def _build_physical_constants() -> dict[str, dict[str, Any]]:
                 "name": display_name,
             }
         else:
-            import logging as _logging
-            _logging.debug(
+            logging.debug(
                 "constant_lookup: _CONSTANT_META key %r not found in "
                 "Evaluator.CONSTANTS (stale metadata entry)", key,
             )
