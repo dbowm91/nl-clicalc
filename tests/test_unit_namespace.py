@@ -349,3 +349,121 @@ class TestCompoundSpeedUnits:
         assert isinstance(result, UnitValue)
         assert result.unit == "mph"
         assert abs(result.value - 37.282271534) < 1e-3
+
+
+# ---------------------------------------------------------------------------
+# are_units_compatible edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestAreUnitsCompatible:
+    """Edge cases for are_units_compatible function."""
+
+    def test_both_none(self):
+        from eggcalc.units import are_units_compatible
+        assert are_units_compatible(None, None) is True
+
+    def test_first_none(self):
+        from eggcalc.units import are_units_compatible
+        assert are_units_compatible(None, "m") is True
+
+    def test_second_none(self):
+        from eggcalc.units import are_units_compatible
+        assert are_units_compatible("m", None) is True
+
+    def test_same_category(self):
+        from eggcalc.units import are_units_compatible
+        assert are_units_compatible("m", "ft") is True
+
+    def test_different_category(self):
+        from eggcalc.units import are_units_compatible
+        assert are_units_compatible("m", "kg") is False
+
+    def test_unknown_unknown(self):
+        from eggcalc.units import are_units_compatible
+        assert are_units_compatible("frob", "blarg") is False
+
+    def test_known_unknown(self):
+        from eggcalc.units import are_units_compatible
+        assert are_units_compatible("m", "frob") is False
+
+
+# ---------------------------------------------------------------------------
+# UnitValue type conversions
+# ---------------------------------------------------------------------------
+
+
+class TestUnitValueConversions:
+    """Test UnitValue numeric type conversions and rounding."""
+
+    def test_int_conversion(self):
+        uv = UnitValue(3.7, "m")
+        assert int(uv) == 3
+
+    def test_float_conversion(self):
+        uv = UnitValue(3, "m")
+        assert float(uv) == 3.0
+
+    def test_complex_conversion(self):
+        uv = UnitValue(3, "m")
+        assert complex(uv) == (3+0j)
+
+    def test_complex_conversion_with_decimal(self):
+        uv = UnitValue(3.5, "kg")
+        assert complex(uv) == (3.5+0j)
+
+    def test_round_default(self):
+        uv = UnitValue(3.14159, "m")
+        result = round(uv)
+        assert isinstance(result, UnitValue)
+        assert result.value == 3
+        assert result.unit == "m"
+
+    def test_round_with_digits(self):
+        uv = UnitValue(3.14159, "m")
+        result = round(uv, 2)
+        assert isinstance(result, UnitValue)
+        assert result.value == 3.14
+        assert result.unit == "m"
+
+    def test_abs_positive(self):
+        uv = UnitValue(-5.0, "m")
+        result = abs(uv)
+        assert isinstance(result, UnitValue)
+        assert result.value == 5.0
+        assert result.unit == "m"
+
+    def test_abs_negative(self):
+        uv = UnitValue(-3.0, "kg")
+        result = abs(uv)
+        assert result.value == 3.0
+        assert result.unit == "kg"
+
+
+# ---------------------------------------------------------------------------
+# get_all_units
+# ---------------------------------------------------------------------------
+
+
+class TestGetAllUnits:
+    """Test get_all_units returns expected units."""
+
+    def test_returns_list(self):
+        from eggcalc.units import get_all_units
+        result = get_all_units()
+        assert isinstance(result, list)
+
+    def test_sorted(self):
+        from eggcalc.units import get_all_units
+        result = get_all_units()
+        assert result == sorted(result)
+
+    def test_contains_common_units(self):
+        from eggcalc.units import get_all_units
+        result = get_all_units()
+        for unit in ["m", "kg", "s", "L", "K", "C", "F", "Pa", "J", "W", "N", "V", "A", "Hz"]:
+            assert unit in result
+
+    def test_non_empty(self):
+        from eggcalc.units import get_all_units
+        assert len(get_all_units()) > 100

@@ -1327,10 +1327,10 @@ def get_conversion_factor(from_unit: str, to_unit: str) -> float:
 
 def is_unit(text: str) -> bool:
     """Check if text represents a unit (case-insensitive)."""
-    if text in UNIT_ALIASES or text in UNIT_CONVERSIONS:
+    if text in UNIT_ALIASES:
         return True
     for candidate in (text.lower(), text.upper(), text.title(), text.capitalize()):
-        if candidate in UNIT_ALIASES or candidate in UNIT_CONVERSIONS:
+        if candidate in UNIT_ALIASES:
             return True
     return False
 

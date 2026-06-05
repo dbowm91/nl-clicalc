@@ -577,21 +577,17 @@ def unit_info(unit: str) -> dict:
         Success response with unit information.
     """
     try:
-        from ..units import UNIT_ALIASES, UNIT_BASE, UNIT_CATEGORIES
+        from ..units import UNIT_ALIASES, UNIT_BASE, UNIT_CATEGORIES, normalize_unit
 
         if (err := _require_str(unit, "unit", "unit_info")) is not None:
             return err
 
-        if unit not in UNIT_ALIASES:
+        normalized = normalize_unit(unit)
+        if normalized not in UNIT_ALIASES:
             return _error_response("invalid_arguments", f"Unknown unit: {unit}", tool="unit_info")
 
-        canonical = UNIT_ALIASES[unit]
-        category = None
-        for cat, units in UNIT_CATEGORIES.items():
-            if canonical in units:
-                category = cat
-                break
-
+        canonical = UNIT_ALIASES[normalized]
+        category = UNIT_CATEGORIES.get(canonical)
         if category is None:
             for base_unit, units_dict in UNIT_BASE.items():
                 if canonical in units_dict:

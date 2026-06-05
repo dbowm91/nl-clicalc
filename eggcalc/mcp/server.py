@@ -404,6 +404,9 @@ def _validate_value_against_schema(
 
     # Recursive validation for arrays
     if expected_type == "array" and isinstance(value, list):
+        min_items = prop.get("minItems")
+        if min_items is not None and len(value) < min_items:
+            return f"Argument '{path}' has {len(value)} items, less than minItems {min_items}"
         max_items = prop.get("maxItems")
         if max_items is not None and len(value) > max_items:
             return f"Argument '{path}' has {len(value)} items, exceeds maxItems {max_items}"

@@ -5000,6 +5000,137 @@ class TestUnitConvert:
         assert "result" in response
         assert response["result"]["isError"] is True
 
+    def test_pressure_conversion(self):
+        """unit_convert should handle pressure units (Pa to atm)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5004,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": 101325, "from_unit": "Pa", "to_unit": "atm"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert abs(content["result"]["value"] - 1.0) < 0.01
+
+    def test_energy_conversion(self):
+        """unit_convert should handle energy units (J to cal)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5005,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": 4184, "from_unit": "J", "to_unit": "kcal"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert abs(content["result"]["value"] - 1.0) < 0.01
+
+    def test_force_conversion(self):
+        """unit_convert should handle force units (N to lbf)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5006,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": 1, "from_unit": "N", "to_unit": "lbf"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert abs(content["result"]["value"] - 0.224809) < 0.001
+
+    def test_area_conversion(self):
+        """unit_convert should handle area units (m2 to acre)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5007,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": 4046.8564224, "from_unit": "m2", "to_unit": "acre"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert abs(content["result"]["value"] - 1.0) < 0.01
+
+    def test_frequency_conversion(self):
+        """unit_convert should handle frequency units (kHz to Hz)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5008,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": 1, "from_unit": "kHz", "to_unit": "Hz"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["value"] == 1000.0
+
+    def test_angle_conversion(self):
+        """unit_convert should handle angle units (deg to rad)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5009,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": 180, "from_unit": "deg", "to_unit": "rad"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert abs(content["result"]["value"] - 3.14159) < 0.01
+
+    def test_bool_value_rejected(self):
+        """unit_convert should reject boolean value."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5010,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": True, "from_unit": "m", "to_unit": "ft"},
+            },
+        })
+        assert "error" in response
+
+    def test_inf_value_rejected(self):
+        """unit_convert should reject infinite value."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5011,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": float("inf"), "from_unit": "m", "to_unit": "ft"},
+            },
+        })
+        assert "result" in response
+        assert response["result"]["isError"] is True
+
+    def test_nan_value_rejected(self):
+        """unit_convert should reject NaN value."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5012,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": float("nan"), "from_unit": "m", "to_unit": "ft"},
+            },
+        })
+        assert "result" in response
+        assert response["result"]["isError"] is True
+
 
 class TestUnitInfo:
     """Test unit_info tool."""
@@ -5046,6 +5177,53 @@ class TestUnitInfo:
         })
         assert "result" in response
         assert response["result"]["isError"] is True
+
+    def test_case_insensitive_uppercase(self):
+        """unit_info should handle uppercase unit names like 'METER'."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5013,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_info",
+                "arguments": {"unit": "METER"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["canonical"] == "m"
+        assert content["result"]["category"] == "length"
+
+    def test_case_insensitive_title_case(self):
+        """unit_info should handle title-case unit names like 'Kilometer'."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5014,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_info",
+                "arguments": {"unit": "Kilometer"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["canonical"] == "km"
+
+    def test_case_insensitive_temperature(self):
+        """unit_info should handle lowercase temperature names like 'celsius'."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 5015,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_info",
+                "arguments": {"unit": "celsius"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["canonical"] == "C"
+        assert content["result"]["category"] == "temperature"
 
 
 class TestJsonShape:
