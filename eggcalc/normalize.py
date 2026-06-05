@@ -1823,6 +1823,8 @@ def normalize_expression(
         tuple: (normalized_expression, exit_code) - normalized_expression is the
                normalized string, exit_code is 0 on success, non-zero on error
     """
+    if not expression or not expression.strip():
+        return "", 1
     if len(expression) > MAX_INPUT_LENGTH:
         return f"Error: Input too long (max {MAX_INPUT_LENGTH} characters)", 2
 
@@ -1926,15 +1928,8 @@ def _run_repl(show_expression: bool = True) -> int:
 
         def _save_history() -> None:
             try:
-                # Create history file with owner-only permissions to prevent
-                # other users on the system from reading calculator history.
-                fd = os.open(history_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "w") as f:
-                    hist_len = readline.get_current_history_length()
-                    for i in range(1, hist_len + 1):
-                        item = readline.get_history_item(i)
-                        if item is not None:
-                            f.write(item + "\n")
+                readline.write_history_file(history_path)  # type: ignore[union-attr]
+                os.chmod(history_path, 0o600)
             except OSError:
                 pass
 
@@ -2032,7 +2027,7 @@ def print_help() -> None:
         "  Other: sqrt, pow, factorial, gcd, lcm, mean, median",
         "",
         "Constants:",
-        "  pi, e, tau, inf, nan",
+        "  pi, e, tau",
         "  avogadro, gasconstant, planck, boltzmann",
         "  c (speed of light), elementarycharge, faraday, amu",
         "",

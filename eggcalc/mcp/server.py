@@ -336,24 +336,9 @@ def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
     return None
 
 
-def _run_handler_in_thread(
-    handler: Any, arguments: dict[str, Any], result_box: dict[str, Any] | None = None,
-) -> Any:
-    """Run a tool handler, capturing result or error.
-
-    When *result_box* is provided (legacy path), stores the result or
-    exception in the dict. Otherwise returns the result directly (used
-    with :class:`ThreadPoolExecutor` which captures via :class:`Future`).
-    """
-    try:
-        result = handler(**arguments)
-    except BaseException as exc:  # noqa: BLE001 - we re-raise in joiner
-        if result_box is not None:
-            result_box["error"] = exc
-        raise
-    if result_box is not None:
-        result_box["result"] = result
-    return result
+def _run_handler_in_thread(handler: Any, arguments: dict[str, Any]) -> Any:
+    """Run a tool handler on a pool thread, returning the result or raising."""
+    return handler(**arguments)
 
 
 def _validate_value_against_schema(
@@ -575,7 +560,6 @@ def _handle_call_tool(request: dict) -> dict:
     timed_out = False
     result = None
     future: Future | None = None
-    result_box: dict[str, Any] = {}
     try:
         # Submit to a bounded thread pool instead of spawning unbounded
         # daemon threads. This prevents thread accumulation when tools
@@ -591,16 +575,15 @@ def _handle_call_tool(request: dict) -> dict:
             name, MAX_TOOL_TIMEOUT_SECONDS,
         )
     except Exception as e:
-        if not timed_out:
-            message = _sanitize_error(str(e))[:2000]
-            return {
-                "jsonrpc": "2.0",
-                "id": request.get("id"),
-                "error": {
-                    "code": -32000,
-                    "message": f"Tool execution error: {message}",
-                },
-            }
+        message = _sanitize_error(str(e))[:2000]
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32000,
+                "message": f"Tool execution error: {message}",
+            },
+        }
 
     if timed_out:
         return {
