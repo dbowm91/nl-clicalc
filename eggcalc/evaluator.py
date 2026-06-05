@@ -1116,7 +1116,7 @@ def _safe_log(*args):
     try:
         return _complex_aware(math.log, cmath.log, use_complex_for_negative=True)(*args)
     except ValueError:
-        if args and args[0] <= 0:
+        if args and isinstance(args[0], (int, float)) and args[0] <= 0:
             raise EvaluationError("Logarithm undefined for non-positive values")
         raise
 
@@ -1124,7 +1124,7 @@ def _safe_log10(*args):
     try:
         return _complex_aware(math.log10, cmath.log10, use_complex_for_negative=True)(*args)
     except ValueError:
-        if args and args[0] <= 0:
+        if args and isinstance(args[0], (int, float)) and args[0] <= 0:
             raise EvaluationError("Logarithm undefined for non-positive values")
         raise
 
@@ -1132,7 +1132,7 @@ def _safe_log2(*args):
     try:
         return _complex_aware(math.log2, lambda x: cmath.log(x, 2), use_complex_for_negative=True)(*args)
     except ValueError:
-        if args and args[0] <= 0:
+        if args and isinstance(args[0], (int, float)) and args[0] <= 0:
             raise EvaluationError("Logarithm undefined for non-positive values")
         raise
 
