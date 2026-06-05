@@ -1968,8 +1968,12 @@ class Evaluator(ast.NodeVisitor):
         # Power operator: handle unit exponentiation (e.g., 5m ** 2 -> 25 m**2)
         if op_class is ast.Pow and isinstance(left, UnitValue) and left.unit:
             if isinstance(right, int):
+                if right == 0:
+                    return result  # anything**0 is dimensionless
                 return UnitValue(result, f"{left.unit}**{right}")
             if isinstance(right, float) and right.is_integer():
+                if int(right) == 0:
+                    return result
                 return UnitValue(result, f"{left.unit}**{int(right)}")
             # Non-integer exponent on a unit is physically nonsensical
             raise EvaluationError(
@@ -1990,6 +1994,12 @@ class Evaluator(ast.NodeVisitor):
                 unit_name = UNIT_ALIASES[right_name]
                 compound = f"{left.unit}/{unit_name}"
                 return UnitValue(left_val / right_val, compound)
+
+        # Compound unit detection for floor division and modulo:
+        # Same-unit -> dimensionless (e.g., 6m // 3m -> 2, 7m % 3m -> 1)
+        if op_class in (ast.FloorDiv, ast.Mod) and isinstance(left, UnitValue) and left.unit:
+            if isinstance(right, UnitValue) and right.unit and left.unit == right.unit:
+                return result  # dimensionless
 
         # Compound unit detection for multiplication:
         # UnitValue * UnitValue -> "left_unit*right_unit" (including same-unit: m*m -> m*m)

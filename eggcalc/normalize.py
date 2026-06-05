@@ -300,7 +300,6 @@ STRIPPED_PHRASES: list[str] = [
     "?",
     "calculate",
     "compute",
-    "convert",
     "tell me",
     "give me",
     "the ",
@@ -598,6 +597,9 @@ def validate_for_eval(tokens: list, patterns: Mapping[str, Pattern[str]]) -> boo
                             r"^[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?(?:[*/][a-zA-Z]+(?:/[a-zA-Z]+)*)*$",
                             check_token,
                         ):
+                            continue
+                        # Allow unary minus before function names (e.g., "-sqrt")
+                        if check_token.startswith("-") and check_token[1:] in _IMPLICIT_MUL_FUNCS:
                             continue
                         raise ValueError(f"Invalid token: {check_token}")
     return True
@@ -1072,6 +1074,12 @@ _IMPLICIT_MUL_FUNCS: set[str] = {
     "stdev", "average",
 }
 
+# Named constants that participate in implicit multiplication with numbers.
+# Only multi-letter constants to avoid conflicts (e.g., "2e3" is scientific notation).
+_IMPLICIT_MUL_CONSTANTS: set[str] = {
+    "pi", "tau",
+}
+
 # Subset of _IMPLICIT_MUL_FUNCS that take exactly one argument. Used by
 # apply_math_functions to detect "<num> <func>" -> "<func>(<num>)" swap.
 _SINGLE_ARG_IMPLICIT_MUL: set[str] = {
@@ -1483,7 +1491,7 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
                     j += 1
                 candidate = "".join(trail)
                 # Skip if the candidate is a unit alias (e.g., "30 min" -> "30min", not "30*min()")
-                if candidate in _IMPLICIT_MUL_FUNCS and candidate not in UNIT_ALIASES and candidate.lower() not in UNIT_ALIASES:
+                if (candidate in _IMPLICIT_MUL_FUNCS or candidate in _IMPLICIT_MUL_CONSTANTS) and candidate not in UNIT_ALIASES and candidate.lower() not in UNIT_ALIASES:
                     result.append("*")
                     for c in candidate:
                         result.append(c)
@@ -1896,6 +1904,16 @@ def normalize_expression(
     joined = "".join(tokens)
 
     joined = _preprocess_units(joined)
+
+    # Fix operator precedence for floor division and modulo with units.
+    # After _preprocess_units, "6m//3m" becomes "6*m//3*m", which Python
+    # parses as "((6*m)//3)*m" due to left-to-right associativity.
+    # Wrap both sides in parens to get "(6*m)//(3*m)".
+    joined = re.sub(
+        r"(\d+(?:\.\d+)?\*[a-zA-Z_][a-zA-Z0-9_]*)(//|%)(\d+(?:\.\d+)?\*[a-zA-Z_][a-zA-Z0-9_]*)",
+        r"(\1)\2(\3)",
+        joined,
+    )
 
     if not skip_validation:
         try:
