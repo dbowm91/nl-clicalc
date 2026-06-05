@@ -76,12 +76,13 @@ DEFAULT_CACHE_SIZE = 1024
 MAX_CACHE_BYTES = 64 * 1024 * 1024  # 64 MB soft cap for _cache
 _SORTED_UNIT_ALIASES: list[str] = sorted(UNIT_ALIASES.keys(), key=len, reverse=True)
 
-# One-letter physical-constant names that are now unreachable as constants
-# because visit_Name checks UNIT_ALIASES first. Documented for users who
-# might be surprised. To access these constants, use the long-form name.
-_UNREACHABLE_CONSTANT_ALIASES: frozenset[str] = frozenset(
-    {"h", "g", "c", "k", "G", "f", "R", "r"}
-)
+# Historical note: some one-letter constant names (e.g., 'c', 'k', 'r') are
+# effectively shadowed by UNIT_ALIASES in visit_Name's lookup order, but
+# the set below is not used in any logic. It exists purely as documentation
+# for users who might be surprised that 'c' resolves to "speed of light in
+# vacuum" unit rather than the speed-of-light constant. Use long-form names
+# ('speedoflight', 'boltzmann', 'gasconstant') for clarity.
+_UNREACHABLE_CONSTANT_ALIASES: frozenset[str] = frozenset()
 
 
 _COLLISION_WARNING_EMITTED = False  # legacy alias, see Evaluator._COLLISION_WARNING_EMITTED
@@ -1411,12 +1412,13 @@ class Evaluator(ast.NodeVisitor):
     _COLLISION_WARNING_EMITTED: bool = False
 
     # Safe mathematical constants
+    # Note: inf and nan are intentionally excluded — they can be accessed
+    # via math.inf and math.nan attribute access, but not as bare names,
+    # to prevent accidental NaN/inf propagation from user expressions.
     CONSTANTS: dict[str, Any] = {
         "pi": math.pi,
         "e": math.e,
         "tau": math.tau,
-        "inf": math.inf,
-        "nan": math.nan,
         # Imaginary unit
         "i": 1j,
         "j": 1j,

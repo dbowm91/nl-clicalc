@@ -419,7 +419,6 @@ def _build_config() -> tuple[dict, dict]:
         "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in sorted(STRIPPED_PHRASES, key=len, reverse=True)])})"),
         "int": re.compile(r"^[-+]?[0-9]\d*$"),
         "float": re.compile(r"^[-+]?(?:[0-9]\d*(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?$"),
-        "int_number_combine": re.compile(r"^[-+]?[0-9]\d*$"),
         "valid_operations": re.compile(
             f"^({'|'.join([re.escape(s) for s in symbols] + [re.escape(f) for f in FUNCTION_MAPPINGS.values()] + [re.escape(c) for c in CONSTANT_WORDS.keys()])}){{1}}$"
         ),
@@ -532,8 +531,6 @@ def check_if_number(token: str) -> dict:
         return {"bool": True, "converted": int(cleaned), "type": type(token)}
     if patterns["float"].match(cleaned):
         return {"bool": True, "converted": float(cleaned), "type": type(token)}
-    if patterns["int_number_combine"].match(cleaned):
-        return {"bool": True, "converted": cleaned, "type": type(token)}
 
     # Check if it's a number with unit (use pre-computed sorted list)
     for unit in _UNITS_BY_LENGTH:
@@ -1213,6 +1210,8 @@ _DIGIT_SCALES: dict[str, str] = {
 
 def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[str]]) -> str:
     """Normalize an expression by removing filler words and applying conversions."""
+    if not expression or not expression.strip():
+        raise ValueError("Empty expression")
     if len(expression) > MAX_INPUT_LENGTH:
         raise ValueError(f"Input too long (max {MAX_INPUT_LENGTH} characters)")
     # Replace multi-word function names before whitespace removal collapses them
@@ -1927,7 +1926,15 @@ def _run_repl(show_expression: bool = True) -> int:
 
         def _save_history() -> None:
             try:
-                readline.write_history_file(history_path)  # type: ignore[union-attr]
+                # Create history file with owner-only permissions to prevent
+                # other users on the system from reading calculator history.
+                fd = os.open(history_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w") as f:
+                    hist_len = readline.get_current_history_length()
+                    for i in range(1, hist_len + 1):
+                        item = readline.get_history_item(i)
+                        if item is not None:
+                            f.write(item + "\n")
             except OSError:
                 pass
 

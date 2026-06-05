@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from .. import __version__
@@ -152,6 +153,23 @@ MAX_REQUEST_ID_LENGTH = 1024
 MAX_TOOL_TIMEOUT_SECONDS = 30
 MAX_CANCELLED_REQUESTS = 10_000
 _cancelled_requests: deque[Any] = deque(maxlen=MAX_CANCELLED_REQUESTS)
+
+# Bounded thread pool for tool invocations. Prevents unbounded thread
+# accumulation when tools time out. Tasks submitted to a full pool queue
+# until a worker becomes available, providing natural back-pressure.
+_MAX_TOOL_WORKERS = 16
+_tool_executor: ThreadPoolExecutor | None = None
+
+
+def _get_tool_executor() -> ThreadPoolExecutor:
+    """Lazily initialize the bounded thread pool for tool invocations."""
+    global _tool_executor
+    if _tool_executor is None:
+        _tool_executor = ThreadPoolExecutor(
+            max_workers=_MAX_TOOL_WORKERS,
+            thread_name_prefix="mcp-tool",
+        )
+    return _tool_executor
 
 # Track orphaned child processes for defensive cleanup. When a tool times out,
 # its handler may have spawned a child process (via evaluate_with_timeout or
@@ -319,18 +337,23 @@ def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
 
 
 def _run_handler_in_thread(
-    handler: Any, arguments: dict[str, Any], result_box: dict[str, Any]
-) -> None:
-    """Run a tool handler on the calling thread, capturing result or error.
+    handler: Any, arguments: dict[str, Any], result_box: dict[str, Any] | None = None,
+) -> Any:
+    """Run a tool handler, capturing result or error.
 
-    Runs as the target of a dedicated daemon thread. Stores either the
-    return value under ``result_box['result']`` or the raised exception
-    under ``result_box['error']`` so the joiner can pick it up.
+    When *result_box* is provided (legacy path), stores the result or
+    exception in the dict. Otherwise returns the result directly (used
+    with :class:`ThreadPoolExecutor` which captures via :class:`Future`).
     """
     try:
-        result_box["result"] = handler(**arguments)
+        result = handler(**arguments)
     except BaseException as exc:  # noqa: BLE001 - we re-raise in joiner
-        result_box["error"] = exc
+        if result_box is not None:
+            result_box["error"] = exc
+        raise
+    if result_box is not None:
+        result_box["result"] = result
+    return result
 
 
 def _validate_value_against_schema(
@@ -551,33 +574,22 @@ def _handle_call_tool(request: dict) -> dict:
 
     timed_out = False
     result = None
-    worker_thread: threading.Thread | None = None
+    future: Future | None = None
     result_box: dict[str, Any] = {}
     try:
-        # Run each tool invocation on a dedicated thread so that a slow
-        # tool (or a tool that spawned a child process) cannot starve a
-        # small fixed-size pool of workers. The thread is joined with a
-        # wall-clock timeout; if it has not returned, we treat the call
-        # as timed out and stop waiting, letting the thread continue in
-        # the background to drain child processes naturally.
-        worker_thread = threading.Thread(
-            target=_run_handler_in_thread,
-            name=f"mcp-tool-{name}",
-            args=(handler, arguments, result_box),
-            daemon=True,
+        # Submit to a bounded thread pool instead of spawning unbounded
+        # daemon threads. This prevents thread accumulation when tools
+        # consistently time out under sustained load. The pool provides
+        # natural back-pressure: tasks queue when all workers are busy.
+        executor = _get_tool_executor()
+        future = executor.submit(_run_handler_in_thread, handler, arguments)
+        result = future.result(timeout=MAX_TOOL_TIMEOUT_SECONDS)
+    except FuturesTimeoutError:
+        timed_out = True
+        logging.warning(
+            "MCP tool '%s' timed out after %ds; background thread continues",
+            name, MAX_TOOL_TIMEOUT_SECONDS,
         )
-        worker_thread.start()
-        worker_thread.join(timeout=MAX_TOOL_TIMEOUT_SECONDS)
-        if worker_thread.is_alive():
-            timed_out = True
-            logging.warning(
-                "MCP tool '%s' timed out after %ds; thread continues in background",
-                name, MAX_TOOL_TIMEOUT_SECONDS,
-            )
-        else:
-            result = result_box.get("result")
-            if result_box.get("error") is not None:
-                raise result_box["error"]
     except Exception as e:
         if not timed_out:
             message = _sanitize_error(str(e))[:2000]
@@ -791,12 +803,14 @@ def handle_request(request: Any) -> dict | None:
             "result": {},
         }
     else:
+        # Cap method name to prevent large error messages from oversized input
+        display_method = method[:100] + "..." if len(method) > 100 else method
         return {
             "jsonrpc": "2.0",
             "id": request.get("id"),
             "error": {
                 "code": -32601,
-                "message": f"Method not found: {method}",
+                "message": f"Method not found: {display_method}",
             },
         }
 

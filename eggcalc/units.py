@@ -45,7 +45,10 @@ class UnitValue:
     def __init__(self, value: float, unit: str | None = None) -> None:
         self.value = value
         self.unit = unit
-        if isinstance(value, float) and not math.isfinite(value):
+        if isinstance(value, complex):
+            if not math.isfinite(value.real) or not math.isfinite(value.imag):
+                raise ValueError(f"UnitValue does not support non-finite values: {value}")
+        elif isinstance(value, float) and not math.isfinite(value):
             raise ValueError(f"UnitValue does not support non-finite values: {value}")
 
     def __repr__(self) -> str:

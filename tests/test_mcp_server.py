@@ -6417,42 +6417,22 @@ class TestProductionReview2026_06:
         assert 1 not in after
 
     def test_per_request_thread_does_not_starve(self):
-        """Tool execution should not be blocked by a 4-worker pool.
+        """Tool execution should complete via bounded thread pool.
 
-        Send a small burst of tool calls; they should each spawn their
-        own mcp-tool-* thread rather than competing for slots in a
-        fixed-size pool. We verify by spying on threading.Thread
-        construction.
+        Send a burst of tool calls; they should all complete successfully
+        using the bounded thread pool without deadlock or starvation.
         """
-        import threading
-        seen_count: list[str] = []
-
-        original = threading.Thread.__init__
-
-        def spy_init(self, *args, **kwargs):
-            original(self, *args, **kwargs)
-            name = kwargs.get("name") or (args[0] if args else None)
-            if isinstance(name, str) and name.startswith("mcp-tool-"):
-                seen_count.append(name)
-
-        threading.Thread.__init__ = spy_init  # type: ignore[assignment]
-        try:
-            for i in range(8):
-                resp = handle_request({
-                    "jsonrpc": "2.0",
-                    "id": 9000 + i,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "text_measure",
-                        "arguments": {"text": f"hello {i}"},
-                    },
-                })
-                assert "result" in resp
-        finally:
-            threading.Thread.__init__ = original  # type: ignore[assignment]
-
-        # Each tool call should have spawned its own mcp-tool-* thread.
-        assert len(seen_count) == 8, f"Expected 8 per-request threads, got {seen_count}"
+        for i in range(8):
+            resp = handle_request({
+                "jsonrpc": "2.0",
+                "id": 9000 + i,
+                "method": "tools/call",
+                "params": {
+                    "name": "text_measure",
+                    "arguments": {"text": f"hello {i}"},
+                },
+            })
+            assert "result" in resp
 
 
 class TestHandleCallToolErrors:
