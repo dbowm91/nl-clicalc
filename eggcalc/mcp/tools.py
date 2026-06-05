@@ -867,6 +867,8 @@ def text_inspect(
         return _success_response(result, tool="text_inspect", findings=findings or None, machine_code=machine_code)
     except ValueError as e:
         return _error_response("invalid_arguments", str(e), tool="text_inspect")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_inspect")
 
 
 def text_count(
@@ -949,6 +951,8 @@ def text_count(
         return _success_response(result, tool="text_count")
     except ValueError as e:
         return _error_response("invalid_arguments", str(e), tool="text_count")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_count")
 
 
 def validate_brackets(text: str, pairs: dict[str, str] | None = None) -> dict:
@@ -1931,6 +1935,14 @@ def text_transform(text: str, operations: list[str], detail: str = "normal") -> 
         return _error_response(
             "invalid_arguments",
             f"operations must be a list, got {type(operations).__name__}",
+            tool="text_transform",
+        )
+
+    if len(operations) > 100:
+        return _error_response(
+            "invalid_arguments",
+            f"operations list too large ({len(operations)} items, max 100)",
+            ["Maximum 100 operations allowed per call"],
             tool="text_transform",
         )
 
@@ -3836,6 +3848,8 @@ def identifier_table_inspect_mcp(
             bad_entries.append(f"[{i}] missing required 'name' field")
         elif not isinstance(entry["name"], str):
             bad_entries.append(f"[{i}] 'name' must be a string, got {type(entry['name']).__name__}")
+        elif len(entry["name"]) > MAX_TEXT_LENGTH:
+            bad_entries.append(f"[{i}] 'name' length {len(entry['name'])} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
     if bad_entries:
         return _error_response(
             "invalid_arguments",

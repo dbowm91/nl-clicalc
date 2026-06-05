@@ -1692,5 +1692,63 @@ class TestReviewerEdgeCases:
         assert result.imag == 0
 
 
+class TestGapCoverage:
+    """Tests for identified coverage gaps."""
+
+    def test_same_unit_division_dimensionless(self):
+        """5m / 3m should be dimensionless (1.666...)."""
+        r = run('5m / 3m', NORMALIZE, PATTERNS)
+        assert isinstance(r[0], float)
+        assert abs(r[0] - 5 / 3) < 1e-10
+
+    def test_safe_pow_negative_base_near_integer_float_exp(self):
+        """(-4)**2.000000000001 should return 16, not complex."""
+        from eggcalc.evaluator import _safe_pow
+        result = _safe_pow(-4, 2.000000000001)
+        assert result == 16
+        assert isinstance(result, int)
+
+    def test_unitvalue_rsub_dimensionless(self):
+        """10 - UnitValue(5, None) should work."""
+        from eggcalc.units import UnitValue
+        result = 10 - UnitValue(5, None)
+        assert result.value == 5
+        assert result.unit is None
+
+    def test_overflow_error_clean_message(self):
+        """std(0, 1e308) should produce 'Result too large', not raw errno tuple."""
+        with pytest.raises(EvaluationError, match="Result too large"):
+            evaluate('std(0, 1e308)')
+
+    def test_evaluate_rejects_nl_input(self):
+        """evaluate() should fail on natural language input."""
+        with pytest.raises(EvaluationError):
+            evaluate("five plus three")
+        with pytest.raises(EvaluationError):
+            evaluate("30m + 100ft")
+
+    def test_factorial_boundary(self):
+        """factorial(MAX_FACTORIAL) works, factorial(MAX_FACTORIAL+1) fails."""
+        from eggcalc.evaluator import MAX_FACTORIAL
+        evaluate(f'factorial({MAX_FACTORIAL})')  # should not raise
+        with pytest.raises(EvaluationError):
+            evaluate(f'factorial({MAX_FACTORIAL + 1})')
+
+    def test_division_by_zero_edge_cases(self):
+        """Various division by zero forms should all raise."""
+        with pytest.raises(EvaluationError):
+            evaluate('0.0 // 0.0')
+        with pytest.raises(EvaluationError):
+            evaluate('0 % 0')
+
+    def test_dimensionless_subtraction_unitvalue(self):
+        """10 - UnitValue(5, None) should produce UnitValue(5, None)."""
+        from eggcalc.units import UnitValue
+        result = 10 - UnitValue(5, None)
+        assert isinstance(result, UnitValue)
+        assert result.value == 5
+        assert result.unit is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

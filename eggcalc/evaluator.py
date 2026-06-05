@@ -93,6 +93,7 @@ _COLLISION_WARNING_EMITTED = False  # legacy alias, see Evaluator._COLLISION_WAR
 MAX_ORPHANED_PROCESSES = 256
 _orphaned_eval_processes: set[multiprocessing.Process] = set()
 _orphaned_eval_order: list[multiprocessing.Process] = []
+_orphaned_eval_lock: threading.Lock = threading.Lock()
 
 
 def _check_constant_unit_collisions() -> None:
@@ -395,6 +396,7 @@ def _safe_pow(base: float, exp: float) -> float:
                     raise EvaluationError(
                         "Cannot raise negative number to non-integer power"
                     )
+                exp = int(round(exp))
             except (TypeError, ValueError):
                 raise EvaluationError(
                     "Cannot raise negative number to non-integer power"
@@ -1849,10 +1851,13 @@ class Evaluator(ast.NodeVisitor):
             )
 
         # Compound unit detection for division:
+        # 0. UnitValue / UnitValue with same units -> dimensionless (e.g., 5m / 3m -> 1.666...)
         # 1. UnitValue / UnitValue with different units -> "left_unit/right_unit"
         # 2. UnitValue / number whose AST name is a unit -> "left_unit/name" (e.g., km/h, mi/h)
         if op_class is ast.Div and isinstance(left, UnitValue) and left.unit:
-            if isinstance(right, UnitValue) and right.unit and left.unit != right.unit:
+            if isinstance(right, UnitValue) and right.unit:
+                if left.unit == right.unit:
+                    return left_val / right_val
                 compound = f"{left.unit}/{right.unit}"
                 return UnitValue(left_val / right_val, compound)
             if not isinstance(right, UnitValue) and right_name and right_name in UNIT_ALIASES:
@@ -1964,7 +1969,9 @@ class Evaluator(ast.NodeVisitor):
 
         try:
             return self.FUNCTIONS[func_name](*args)
-        except (ValueError, TypeError, ZeroDivisionError, OverflowError) as e:
+        except OverflowError:
+            raise EvaluationError("Result too large") from None
+        except (ValueError, TypeError, ZeroDivisionError) as e:
             raise EvaluationError(str(e)) from None
 
     def _validate_node(self, node: ast.AST) -> None:
@@ -2175,11 +2182,12 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
             # If the process survived terminate+kill, register it for
             # defensive cleanup by the MCP server's orphan tracker.
             if proc.is_alive() and _mcp_mode:
-                _orphaned_eval_processes.add(proc)
-                _orphaned_eval_order.append(proc)
-                while len(_orphaned_eval_order) > MAX_ORPHANED_PROCESSES:
-                    oldest = _orphaned_eval_order.pop(0)
-                    _orphaned_eval_processes.discard(oldest)
+                with _orphaned_eval_lock:
+                    _orphaned_eval_processes.add(proc)
+                    _orphaned_eval_order.append(proc)
+                    while len(_orphaned_eval_order) > MAX_ORPHANED_PROCESSES:
+                        oldest = _orphaned_eval_order.pop(0)
+                        _orphaned_eval_processes.discard(oldest)
             try:
                 proc.close()
             except Exception:

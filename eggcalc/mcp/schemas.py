@@ -385,6 +385,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "operations": {
                     "type": "array",
                     "items": {"type": "string"},
+                    "maxItems": 100,
                     "description": "Operations to apply: normalize_nfc, normalize_nfd, normalize_nfkc, normalize_nfkd, casefold, trim, trim_trailing_whitespace, normalize_newlines_lf, ensure_final_newline, strip_final_newline, remove_zero_width, remove_bidi_controls, visible_repr",
                 },
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
@@ -621,6 +622,27 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid_json": {"type": "boolean"},
+                "found": {"type": "boolean"},
+                "pointer": {"type": "string"},
+                "value_type": {"type": ["string", "null"]},
+                "value": {"description": "Extracted value"},
+                "preview": {"type": ["string", "null"]},
+                "child_keys": {"type": ["array", "null"], "items": {"type": "string"}},
+                "array_length": {"type": ["integer", "null"]},
+                "truncated": {"type": "boolean"},
+                "missing_at": {"type": ["string", "null"]},
+                "reason": {"type": ["string", "null"]},
+                "available_keys": {"type": ["array", "null"], "items": {"type": "string"}},
+                "error": {"type": ["string", "null"]},
+                "line": {"type": ["integer", "null"]},
+                "column": {"type": ["integer", "null"]},
+                "summary": {"type": "string"},
+            },
+        },
     },
     "json_compare": {
         "description": "Compare two JSON documents semantically, ignoring formatting and key order.",
@@ -640,6 +662,19 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["a", "b"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid_json_a": {"type": "boolean"},
+                "valid_json_b": {"type": "boolean"},
+                "equal": {"type": "boolean"},
+                "same_type": {"type": "boolean"},
+                "diff_count": {"type": "integer"},
+                "diffs": {"type": "array", "description": "List of differences"},
+                "truncated": {"type": "boolean"},
+                "summary": {"type": "string"},
+            },
         },
     },
     "text_position": {
@@ -661,6 +696,25 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid": {"type": "boolean"},
+                "byte_offset": {"type": ["integer", "null"]},
+                "codepoint_index": {"type": ["integer", "null"]},
+                "utf16_offset": {"type": ["integer", "null"]},
+                "line": {"type": ["integer", "null"]},
+                "column": {"type": ["integer", "null"]},
+                "line_base": {"type": "integer"},
+                "column_base": {"type": "integer"},
+                "char": {"type": ["string", "null"]},
+                "codepoint": {"type": ["string", "null"]},
+                "name": {"type": ["string", "null"]},
+                "line_text_preview": {"type": ["string", "null"]},
+                "error": {"type": ["string", "null"]},
+                "summary": {"type": "string"},
+            },
+        },
     },
     "text_hash": {
         "description": "Compute cryptographic hashes of text for identity checking.",
@@ -681,6 +735,17 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "encoding": {"type": "string"},
+                "bytes": {"type": "integer"},
+                "codepoints": {"type": "integer"},
+                "hashes": {"type": "object", "description": "Map of algorithm to hash value"},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+                "summary": {"type": "string"},
+            },
+        },
     },
     "escape_text": {
         "description": "Escape text for various output formats.",
@@ -698,6 +763,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text", "mode"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string"},
+                "escaped": {"type": "string"},
+                "changed": {"type": "boolean"},
+                "summary": {"type": "string"},
+            },
+        },
     },
     "unescape_text": {
         "description": "Unescape text from various formats.",
@@ -714,6 +788,16 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["text", "mode"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string"},
+                "unescaped": {"type": "string"},
+                "changed": {"type": "boolean"},
+                "error": {"type": ["string", "null"]},
+                "summary": {"type": "string"},
+            },
         },
     },
     "identifier_analyze": {
@@ -733,6 +817,21 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "classification": {"type": "string"},
+                "python_valid": {"type": "boolean"},
+                "python_keyword": {"type": "boolean"},
+                "rust_valid": {"type": ["boolean", "null"]},
+                "javascript_valid": {"type": ["boolean", "null"]},
+                "env_valid": {"type": "boolean"},
+                "suggestions": {"type": "object", "description": "Map of language to suggested name"},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+                "summary": {"type": "string"},
+            },
         },
     },
     "regex_finditer": {
@@ -755,6 +854,16 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["pattern", "text"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid_pattern": {"type": "boolean"},
+                "matches": {"type": "array", "description": "List of regex matches with positions and groups"},
+                "truncated": {"type": "boolean"},
+                "match_count": {"type": "integer"},
+                "error": {"type": ["string", "null"]},
+            },
+        },
     },
     "regex_safety_check": {
         "description": "Heuristic check for potential catastrophic backtracking risks in regex patterns. Flags nested quantifiers, repeated alternations, ambiguous dot-star, and backreferences.",
@@ -766,6 +875,25 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "pattern": {"type": "string", "description": "Regular expression pattern to check"},
             },
             "required": ["pattern"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid_pattern": {"type": "boolean"},
+                "risk": {"type": "string", "enum": ["low", "medium", "high"]},
+                "findings": {
+                    "type": "array",
+                    "description": "Safety findings with kind, span, and message",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string"},
+                            "span": {"type": "array", "items": {"type": "integer"}},
+                            "message": {"type": "string"},
+                        },
+                    },
+                },
+            },
         },
     },
     "validate_schema_light": {
@@ -780,6 +908,27 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["text", "schema"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid": {"type": "boolean"},
+                "violations": {
+                    "type": "array",
+                    "description": "Schema violations with path and message",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "message": {"type": "string"},
+                            "value_type": {"type": ["string", "null"]},
+                            "expected_type": {"type": ["string", "null"]},
+                        },
+                    },
+                },
+                "truncated": {"type": "boolean"},
+                "summary": {"type": "string"},
+            },
         },
     },
     "path_normalize": {
@@ -796,6 +945,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["path"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "normalized": {"type": "string"},
+                "is_absolute": {"type": "boolean"},
+                "components": {"type": "array", "items": {"type": "string"}},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+            },
+        },
     },
     "path_analyze": {
         "description": "Analyze path components, extensions, hidden status, and traversal without filesystem access.",
@@ -809,6 +967,25 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["path"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "input": {"type": "string"},
+                "style": {"type": "string"},
+                "absolute": {"type": "boolean"},
+                "has_traversal": {"type": "boolean"},
+                "components": {"type": "array", "items": {"type": "string"}},
+                "parent": {"type": ["string", "null"]},
+                "name": {"type": ["string", "null"]},
+                "stem": {"type": ["string", "null"]},
+                "suffix": {"type": ["string", "null"]},
+                "suffixes": {"type": "array", "items": {"type": "string"}},
+                "hidden": {"type": "boolean"},
+                "normalized_lexical": {"type": "string"},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+                "summary": {"type": "string"},
+            },
         },
     },
     "path_compare": {
@@ -879,6 +1056,25 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid": {"type": "boolean"},
+                "shape": {
+                    "type": ["object", "null"],
+                    "description": "Nested shape structure with type, keys, and counts",
+                    "properties": {
+                        "type": {"type": "string"},
+                        "keys": {"type": ["object", "null"]},
+                        "key_count": {"type": ["integer", "null"]},
+                        "item_types": {"type": ["array", "null"]},
+                        "item_count": {"type": ["integer", "null"]},
+                    },
+                },
+                "truncated": {"type": "boolean"},
+                "summary": {"type": "string"},
+            },
+        },
     },
     "text_window": {
         "description": "Get a window around a position in text with context lines. Shows line at position with surrounding context, position metrics, and character details.",
@@ -909,6 +1105,22 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text", "position"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "position": {
+                    "type": "object",
+                    "description": "Resolved position with byte_offset, codepoint_index, grapheme_index, line, column",
+                },
+                "line_text": {"type": "string"},
+                "line_visible_repr": {"type": "string"},
+                "before": {"type": "array", "description": "Context lines before"},
+                "after": {"type": "array", "description": "Context lines after"},
+                "newline_style": {"type": "string"},
+                "at_codepoint": {"type": ["object", "null"]},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+            },
+        },
     },
     "json_canonicalize": {
         "description": "Canonicalize JSON with deterministic formatting, key ordering, duplicate key detection, and stable hashes.",
@@ -926,6 +1138,21 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid": {"type": "boolean"},
+                "canonical": {"type": ["string", "null"]},
+                "minified": {"type": ["string", "null"]},
+                "sha256": {"type": ["string", "null"]},
+                "duplicate_keys": {"type": "array", "items": {"type": "string"}},
+                "top_level_type": {"type": ["string", "null"]},
+                "top_level_keys": {"type": ["array", "null"], "items": {"type": "string"}},
+                "error": {"type": ["string", "null"]},
+                "line": {"type": ["integer", "null"]},
+                "column": {"type": ["integer", "null"]},
+            },
+        },
     },
     "json_query": {
         "description": "Extract a value from JSON using RFC 6901 JSON Pointer. Navigate nested objects and arrays. Deprecated: use json_extract instead, which provides richer output including available_keys, missing_at, and detail levels.",
@@ -939,6 +1166,20 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "pointer": {"type": "string", "default": "", "description": "RFC 6901 JSON Pointer path (e.g., /foo/bar/0)"},
             },
             "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "found": {"type": "boolean"},
+                "pointer": {"type": "string"},
+                "value": {"description": "Extracted value"},
+                "type": {"type": ["string", "null"]},
+                "missing_at": {"type": ["string", "null"]},
+                "reason": {"type": ["string", "null"]},
+                "error": {"type": ["string", "null"]},
+                "line": {"type": ["integer", "null"]},
+                "column": {"type": ["integer", "null"]},
+            },
         },
     },
     "glob_match": {
@@ -954,6 +1195,17 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "case_sensitive": {"type": "boolean", "default": True, "description": "Case-sensitive matching"},
             },
             "required": ["pattern", "path"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "matches": {"type": "boolean"},
+                "normalized_pattern": {"type": "string"},
+                "normalized_path": {"type": "string"},
+                "matched_segment": {"type": ["string", "null"]},
+                "unmatched_segment": {"type": ["string", "null"]},
+                "summary": {"type": "string"},
+            },
         },
     },
     "text_fingerprint": {
@@ -971,6 +1223,18 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "sha256": {"type": "string"},
+                "bytes_utf8": {"type": "integer"},
+                "codepoints": {"type": "integer"},
+                "graphemes": {"type": "integer"},
+                "newline_style": {"type": "string"},
+                "normalization": {"type": "object", "description": "Normalization state details"},
+                "summary": {"type": "string"},
+            },
+        },
     },
     "identifier_inspect": {
         "description": "Inspect identifiers for validity and collisions. Detects confusables, mixed scripts, normalization issues, and casefold collisions across a list of identifiers.",
@@ -986,6 +1250,19 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "check_confusables": {"type": "boolean", "default": True, "description": "Check for confusable characters"},
             },
             "required": ["identifiers"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "identifiers": {
+                    "type": "array",
+                    "description": "Per-identifier analysis with raw, normalized, valid, scripts, and issues",
+                },
+                "collisions": {
+                    "type": "array",
+                    "description": "Detected collisions between identifiers",
+                },
+            },
         },
     },
     "version_compare": {
@@ -1023,6 +1300,16 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid": {"type": "boolean"},
+                "top_level_keys": {"type": ["array", "null"], "items": {"type": "string"}},
+                "tables": {"type": ["array", "null"], "items": {"type": "string"}},
+                "truncated": {"type": "boolean"},
+                "summary": {"type": "string"},
+            },
         },
     },
     "list_dedupe": {

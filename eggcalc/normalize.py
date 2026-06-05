@@ -419,7 +419,7 @@ def _build_config() -> tuple[dict, dict]:
         "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in sorted(STRIPPED_PHRASES, key=len, reverse=True)])})"),
         "int": re.compile(r"^[-+]?[0-9]\d*$"),
         "float": re.compile(r"^[-+]?(?:[0-9]\d*(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?$"),
-        "int_number_combine": re.compile(r"^[-+*]?[0-9]\d*$"),
+        "int_number_combine": re.compile(r"^[-+]?[0-9]\d*$"),
         "valid_operations": re.compile(
             f"^({'|'.join([re.escape(s) for s in symbols] + [re.escape(f) for f in FUNCTION_MAPPINGS.values()] + [re.escape(c) for c in CONSTANT_WORDS.keys()])}){{1}}$"
         ),
@@ -1670,7 +1670,25 @@ def _preprocess_units(expression: str) -> str:
             result.append(char)
             i += 1
 
-    return "".join(result)
+    return _add_same_unit_division_parens("".join(result))
+
+
+def _add_same_unit_division_parens(expression: str) -> str:
+    """Wrap the denominator in parentheses for same-unit division.
+
+    Detects patterns like "5*m/3*m" or "10*km/5*km" where the same unit
+    appears on both sides of a division, and wraps the denominator to
+    preserve correct operator precedence: "5*m/(3*m)" -> dimensionless.
+    """
+    def _replace(match: re.Match) -> str:
+        left_unit = match.group(1)
+        denom = match.group(2)
+        right_unit = match.group(3)
+        if left_unit == right_unit:
+            return f"{left_unit}/({denom}*{right_unit})"
+        return match.group(0)
+
+    return re.sub(r'\b([a-zA-Z]+)/(\d+)\*([a-zA-Z]+)\b', _replace, expression)
 
 
 def _handle_unit_conversion_from_tokens(tokens: list) -> list:

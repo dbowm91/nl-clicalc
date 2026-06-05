@@ -166,8 +166,8 @@ def _cleanup_orphaned_processes() -> None:
     """Terminate any orphaned child processes that survived their handler's cleanup."""
     # Also check evaluator and regex tool orphan sets
     try:
-        from ..evaluator import _orphaned_eval_processes
-        with _orphaned_lock:
+        from ..evaluator import _orphaned_eval_processes, _orphaned_eval_lock
+        with _orphaned_eval_lock:
             _orphaned_processes.update(_orphaned_eval_processes)
             _orphaned_eval_processes.clear()
     except Exception:

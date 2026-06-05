@@ -131,6 +131,8 @@ class UnitValue:
     def __rsub__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
             return other.__sub__(self)
+        if self.unit is None:
+            return UnitValue(other - self.value, None)
         raise ValueError("Cannot subtract a unit value from a dimensionless number")
 
     def __mul__(self, other: Numeric) -> UnitValue:
@@ -432,13 +434,15 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "lbs": 0.45359237,
         "pound": 0.45359237,
         "pounds": 0.45359237,
-        "oz": 0.0283495231,
-        "ounce": 0.0283495231,
-        "ounces": 0.0283495231,
+        "oz": 0.028349523125,
+        "ounce": 0.028349523125,
+        "ounces": 0.028349523125,
         "ton": 907.18474,
         "tons": 907.18474,
         "tonne": 1000.0,
         "tonnes": 1000.0,
+        "long_ton": 1016.0469,
+        "imperial_ton": 1016.0469,
         "stone": 6.35029318,
         "stones": 6.35029318,
         "slug": 14.593903,
@@ -475,8 +479,8 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "pt": 0.473176473,
         "pint": 0.473176473,
         "pints": 0.473176473,
-        "cup": 0.23658823632,
-        "cups": 0.23658823632,
+        "cup": 0.2365882365,
+        "cups": 0.2365882365,
         "floz": 0.02957352954,
         "fl oz": 0.02957352954,
         "fluidounce": 0.02957352954,
@@ -563,8 +567,8 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "kWh": 3600000.0,
         "kilowatt-hour": 3600000.0,
         "kilowatt-hours": 3600000.0,
-        "BTU": 1055.06,
-        "btu": 1055.06,
+        "BTU": 1055.05585262,
+        "btu": 1055.05585262,
         "eV": 1.602176634e-19,
     },
     # Power (base: Watts)
@@ -584,8 +588,8 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "mW": 0.001,
         "milliwatt": 0.001,
         "milliwatts": 0.001,
-        "hp": 745.699872,
-        "horsepower": 745.699872,
+        "hp": 745.69987158227022,
+        "horsepower": 745.69987158227022,
     },
     "N": {
         "N": 1.0,
@@ -950,6 +954,9 @@ UNIT_ALIASES: dict[str, str] = {
     "tonnes": "tonne",
     "stone": "stone",
     "stones": "stone",
+    "st": "stone",
+    "long_ton": "long_ton",
+    "imperial_ton": "long_ton",
     "slug": "slug",
     "slugs": "slug",
     "ct": "ct",
@@ -1389,6 +1396,8 @@ UNIT_CATEGORIES: dict[str, str] = {
     "ton": "mass",
     "tonne": "mass",
     "stone": "mass",
+    "long_ton": "mass",
+    "imperial_ton": "mass",
     "slug": "mass",
     "ct": "mass",
     "gr": "mass",
