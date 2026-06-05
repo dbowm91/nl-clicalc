@@ -1356,9 +1356,10 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         replacement_fn = lambda m, uu1=u1, uu2=u2: f"({m.group(1)}*{uu1})/({uu2})"
         expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
 
-    # Convert percentages (e.g., 50% -> 0.5, but not 5 % 3 which is modulo)
-    # Only match % directly attached to a number (no space before %)
-    expression = re.sub(r"(\d+(?:\.\d+)?)%", lambda m: str(float(m.group(1)) / 100), expression)
+    # Convert percentages (e.g., 50% -> 0.5, but not 5%3 which is modulo)
+    # Only match % directly attached to a number, NOT followed by a digit
+    # (negative lookahead ensures "5%3" stays as modulo, not "0.05" + "3")
+    expression = re.sub(r"(\d+(?:\.\d+)?)%(?!\d)", lambda m: str(float(m.group(1)) / 100), expression)
 
     # Convert 'i' suffix to 'j' for complex numbers (e.g., 3+4i -> 3+4j)
     # Match: number followed by 'i' (not preceded by another letter)
@@ -1645,11 +1646,20 @@ def _preprocess_units(expression: str) -> str:
                     if not found_unit and remaining:
                         first_char = remaining[0]
                         if first_char.lower() in _LOWERCASE_TEMP_UNITS:
-                            result.append(num)
-                            result.append("*")
-                            result.append(_LOWERCASE_TEMP_UNITS[first_char.lower()])
-                            i += 1
-                            found_unit = True
+                            # Skip if this looks like a hex literal (0x...) —
+                            # the 'f'/'c'/'k' suffix is part of the hex digits,
+                            # not a temperature unit.
+                            is_hex = (
+                                len(result) >= 2
+                                and result[-1] in ("x", "X")
+                                and result[-2] == "0"
+                            )
+                            if not is_hex:
+                                result.append(num)
+                                result.append("*")
+                                result.append(_LOWERCASE_TEMP_UNITS[first_char.lower()])
+                                i += 1
+                                found_unit = True
                     if not found_unit:
                         result.append(num)
             else:

@@ -39,8 +39,8 @@ class UnitValue:
                 raise OverflowError("Result too large")
         elif isinstance(result, float) and not math.isfinite(result):
             raise OverflowError("Result too large")
-        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
-            raise OverflowError("Result too large")
+        # For int results, skip magnitude check — digit count is the correct
+        # limit for arbitrary-precision ints (enforced by _check_result_size).
 
     def __init__(self, value: float, unit: str | None = None) -> None:
         self.value = value
@@ -176,6 +176,68 @@ class UnitValue:
             unit = self.unit
         UnitValue._check_overflow(result)
         return UnitValue(result, unit)
+
+    def __floordiv__(self, other: Numeric) -> UnitValue:
+        if isinstance(other, UnitValue):
+            if other.value == 0:
+                raise ZeroDivisionError("Cannot divide UnitValue by zero")
+            if self.unit and other.unit:
+                if self.unit == other.unit:
+                    result = self.value // other.value
+                    unit = None
+                else:
+                    result = self.value // other.value
+                    unit = f"{self.unit}//{other.unit}"
+            else:
+                result = self.value // other.value
+                unit = self.unit
+        else:
+            if other == 0:
+                raise ZeroDivisionError("Cannot divide UnitValue by zero")
+            result = self.value // other
+            unit = self.unit
+        UnitValue._check_overflow(result)
+        return UnitValue(result, unit)
+
+    def __rfloordiv__(self, other: Numeric) -> UnitValue:
+        if self.unit:
+            if self.value == 0:
+                raise ZeroDivisionError("Cannot divide by zero UnitValue")
+            return UnitValue(other // self.value, f"1//{self.unit}")
+        if self.value == 0:
+            raise ZeroDivisionError("Cannot divide by zero UnitValue")
+        return UnitValue(other // self.value, None)
+
+    def __mod__(self, other: Numeric) -> UnitValue:
+        if isinstance(other, UnitValue):
+            if other.value == 0:
+                raise ZeroDivisionError("Cannot mod UnitValue by zero")
+            if self.unit and other.unit:
+                if self.unit == other.unit:
+                    result = self.value % other.value
+                    unit = None
+                else:
+                    result = self.value % other.value
+                    unit = f"{self.unit}%{other.unit}"
+            else:
+                result = self.value % other.value
+                unit = self.unit
+        else:
+            if other == 0:
+                raise ZeroDivisionError("Cannot mod UnitValue by zero")
+            result = self.value % other
+            unit = self.unit
+        UnitValue._check_overflow(result)
+        return UnitValue(result, unit)
+
+    def __rmod__(self, other: Numeric) -> UnitValue:
+        if self.unit:
+            if self.value == 0:
+                raise ZeroDivisionError("Cannot mod by zero UnitValue")
+            return UnitValue(other % self.value, None)
+        if self.value == 0:
+            raise ZeroDivisionError("Cannot mod by zero UnitValue")
+        return UnitValue(other % self.value, None)
 
     def __rtruediv__(self, other: Numeric) -> UnitValue:
         if self.unit:

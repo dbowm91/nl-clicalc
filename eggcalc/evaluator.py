@@ -469,7 +469,9 @@ def _safe_pow(base: float, exp: float) -> float:
     elif isinstance(result, float):
         if math.isnan(result) or math.isinf(result):
             raise EvaluationError("Result too large")
-    if abs(result) > MAX_RESULT_VALUE:
+    # For int results, skip the magnitude check — _check_result_size enforces
+    # MAX_RESULT_DIGITS which is the correct limit for arbitrary-precision ints.
+    if not isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
         raise EvaluationError("Result too large")
     return result
 
