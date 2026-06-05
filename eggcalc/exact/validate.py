@@ -432,7 +432,18 @@ def version_compare(a: str, b: str, scheme: str = "semver") -> VersionCompareRes
     Returns:
         Dictionary with comparison (-1, 0, 1), valid (bool), scheme,
         and summary.
+
+    Raises:
+        ValueError: If either input string exceeds MAX_INPUT_LENGTH.
     """
+    if len(a) > MAX_INPUT_LENGTH:
+        raise ValueError(
+            f"Input 'a' length {len(a)} exceeds maximum {MAX_INPUT_LENGTH}"
+        )
+    if len(b) > MAX_INPUT_LENGTH:
+        raise ValueError(
+            f"Input 'b' length {len(b)} exceeds maximum {MAX_INPUT_LENGTH}"
+        )
     if scheme == "semver":
         return _semver_compare(a, b)
     elif scheme == "pep440":
@@ -673,6 +684,7 @@ def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
         char = pattern[i]
 
         if char == '\\' and i + 1 < len(pattern):
+            prev_group_had_quantifier = False
             i += 2
             continue
 
@@ -701,19 +713,24 @@ def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
             else:
                 prev_group_had_quantifier = False
         elif char in ('+', '*', '?') and not in_char_class:
-            # Check if previous char was also a quantifier (e.g., ++)
-            if i > 0 and pattern[i - 1] in ('+', '*', '?'):
-                return False, f"Adjacent quantifiers detected at position {i}"
-            # Check if a group with inner quantifier was just closed
-            if prev_group_had_quantifier:
-                return False, (
-                    f"Nested quantifiers detected at position {i}: "
-                    "quantifier after group with internal quantifier"
-                )
-            # Mark current group as having a quantifier
-            if group_stack:
-                group_stack[-1] = True
-            prev_group_had_quantifier = False
+            # ? after ( is group syntax ((?: ), (?= ), (?! ), (?<= ), (?<! )),
+            # not a quantifier on a preceding element.
+            if char == '?' and i > 0 and pattern[i - 1] == '(':
+                prev_group_had_quantifier = False
+            else:
+                # Check if previous char was also a quantifier (e.g., ++)
+                if i > 0 and pattern[i - 1] in ('+', '*', '?'):
+                    return False, f"Adjacent quantifiers detected at position {i}"
+                # Check if a group with inner quantifier was just closed
+                if prev_group_had_quantifier:
+                    return False, (
+                        f"Nested quantifiers detected at position {i}: "
+                        "quantifier after group with internal quantifier"
+                    )
+                # Mark current group as having a quantifier
+                if group_stack:
+                    group_stack[-1] = True
+                prev_group_had_quantifier = False
         elif char == '{' and not in_char_class:
             # Check if this is a {n,m} quantifier
             j = i + 1
@@ -909,7 +926,15 @@ def regex_replace_preview(
 
     Returns:
         Dictionary with previews of replacements.
+
+    Raises:
+        ValueError: If samples list exceeds MAX_LIST_ITEMS or pattern
+            exceeds MAX_PATTERN_LENGTH.
     """
+    if len(samples) > MAX_LIST_ITEMS:
+        raise ValueError(
+            f"Samples count {len(samples)} exceeds maximum {MAX_LIST_ITEMS}"
+        )
     is_safe, error_msg = _check_pattern_complexity(pattern)
     if not is_safe:
         return {

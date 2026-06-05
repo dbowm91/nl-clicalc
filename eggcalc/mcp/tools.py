@@ -1053,6 +1053,8 @@ def validate_brackets(text: str, pairs: dict[str, str] | None = None) -> dict:
     try:
         result = _check_brackets(text, pairs)
         return _success_response(result, tool="validate_brackets")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="validate_brackets")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="validate_brackets")
 
@@ -1092,6 +1094,8 @@ def validate_json(text: str) -> dict:
             machine_code = "JSON_INVALID"
 
         return _success_response(result, tool="validate_json", findings=findings or None, machine_code=machine_code)
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="validate_json")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="validate_json")
 
@@ -1130,6 +1134,8 @@ def validate_toml(text: str, detail: str = "normal") -> dict:
             pass
 
         return _success_response(result, tool="validate_toml")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="validate_toml")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="validate_toml")
 
@@ -1204,6 +1210,8 @@ def json_compare(
             }
 
         return _success_response(result, tool="json_compare")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="json_compare")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="json_compare")
 
@@ -1446,6 +1454,8 @@ def json_extract(
             return _success_response(result, tool="json_extract")
         else:
             return _success_response(result, tool="json_extract")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="json_extract")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="json_extract")
 
@@ -1514,6 +1524,8 @@ def json_shape(text: str, max_depth: int = 4, max_keys: int = 100, max_array_ite
     try:
         result = _json_shape(text, max_depth, max_keys, max_array_items)
         return _success_response(result, tool="json_shape")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="json_shape")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="json_shape")
 
@@ -2797,6 +2809,8 @@ def json_query(text: str, pointer: str = "") -> dict:
             warnings=["json_query is deprecated; use json_extract instead"],
             recommended_next_tool="json_extract",
         )
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="json_query")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="json_query")
 
@@ -3132,6 +3146,8 @@ def toml_shape_mcp(
             summary_result = dict(result)
 
         return _success_response(summary_result, tool="toml_shape")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="toml_shape")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="toml_shape")
 
@@ -3173,6 +3189,8 @@ def list_dedupe_mcp(
             "deduped_count": len(result),
             "duplicates_removed": len(items) - len(result),
         }, tool="list_dedupe")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="list_dedupe")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="list_dedupe")
 
@@ -3215,6 +3233,8 @@ def list_sort_mcp(
             "original_count": len(items),
             "sorted_count": len(result),
         }, tool="list_sort")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="list_sort")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="list_sort")
 
@@ -3520,6 +3540,8 @@ def shell_quote_join(
     try:
         result = _shell_quote_join(argv, shell=shell)
         return _success_response(result, tool="shell_quote_join")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="shell_quote_join")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="shell_quote_join")
 
@@ -3601,6 +3623,8 @@ def shell_argv_compare(
             shell=shell,
         )
         return _success_response(result, tool="argv_compare")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="argv_compare")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="argv_compare")
 
