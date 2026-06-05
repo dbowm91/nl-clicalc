@@ -13,6 +13,7 @@ import unicodedata
 from typing import Any, TypedDict
 
 MAX_INPUT_LENGTH = 100_000
+MAX_LIST_ITEMS = 10_000
 MAX_PATTERN_LENGTH = 1000
 MAX_PATTERN_NESTING = 5
 MAX_SAMPLE_LENGTH = 10_000
@@ -578,7 +579,14 @@ def list_dedupe(
 
     Returns:
         List with duplicates removed.
+
+    Raises:
+        ValueError: If items list is too large.
     """
+    if len(items) > MAX_LIST_ITEMS:
+        raise ValueError(
+            f"Items count {len(items)} exceeds maximum {MAX_LIST_ITEMS}"
+        )
     seen: set[str] = set()
     result: list[str] = []
 
@@ -617,7 +625,14 @@ def list_sort(
 
     Returns:
         Sorted list.
+
+    Raises:
+        ValueError: If items list is too large.
     """
+    if len(items) > MAX_LIST_ITEMS:
+        raise ValueError(
+            f"Items count {len(items)} exceeds maximum {MAX_LIST_ITEMS}"
+        )
     def transform(s: str) -> str:
         if casefold:
             s = s.casefold()
@@ -678,7 +693,11 @@ def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
             if nesting_depth < 0:
                 return False, f"Unmatched closing '{char}' at position {i}"
             if group_stack:
-                prev_group_had_quantifier = group_stack.pop()
+                inner_had_quantifier = group_stack.pop()
+                # OR the inner group's state into the parent group
+                if group_stack:
+                    group_stack[-1] = group_stack[-1] or inner_had_quantifier
+                prev_group_had_quantifier = inner_had_quantifier
             else:
                 prev_group_had_quantifier = False
         elif char in ('+', '*', '?') and not in_char_class:
@@ -695,6 +714,42 @@ def _check_pattern_complexity(pattern: str) -> tuple[bool, str | None]:
             if group_stack:
                 group_stack[-1] = True
             prev_group_had_quantifier = False
+        elif char == '{' and not in_char_class:
+            # Check if this is a {n,m} quantifier
+            j = i + 1
+            if j < len(pattern) and pattern[j].isdigit():
+                # Scan for {digits,digits} or {digits} or {digits,}
+                k = j
+                while k < len(pattern) and pattern[k].isdigit():
+                    k += 1
+                if k < len(pattern) and pattern[k] == ',':
+                    k += 1
+                    while k < len(pattern) and pattern[k].isdigit():
+                        k += 1
+                    if k < len(pattern) and pattern[k] == '}':
+                        # This is a {n,m} quantifier -- check for nested quantifiers
+                        if prev_group_had_quantifier:
+                            return False, (
+                                f"Nested quantifiers detected at position {i}: "
+                                "{{n,m}} quantifier after group with internal quantifier"
+                            )
+                        if group_stack:
+                            group_stack[-1] = True
+                        prev_group_had_quantifier = False
+                        i = k  # skip past the closing }
+                elif k < len(pattern) and pattern[k] == '}':
+                    # {n} quantifier
+                    if prev_group_had_quantifier:
+                        return False, (
+                            f"Nested quantifiers detected at position {i}: "
+                            "{{n}} quantifier after group with internal quantifier"
+                        )
+                    if group_stack:
+                        group_stack[-1] = True
+                    prev_group_had_quantifier = False
+                    i = k  # skip past the closing }
+            else:
+                prev_group_had_quantifier = False
         else:
             prev_group_had_quantifier = False
 
@@ -1004,7 +1059,18 @@ def json_compare(
 
     Returns:
         Dictionary with comparison results including diffs and summary.
+
+    Raises:
+        ValueError: If either input string exceeds MAX_INPUT_LENGTH.
     """
+    if len(a) > MAX_INPUT_LENGTH:
+        raise ValueError(
+            f"Input 'a' length {len(a)} exceeds maximum {MAX_INPUT_LENGTH}"
+        )
+    if len(b) > MAX_INPUT_LENGTH:
+        raise ValueError(
+            f"Input 'b' length {len(b)} exceeds maximum {MAX_INPUT_LENGTH}"
+        )
     diffs: list[JsonCompareDiff] = []
     valid_json_a = True
     valid_json_b = True
@@ -1012,7 +1078,6 @@ def json_compare(
     parsed_b: Any = None
     equal = False
     type_match = True
-    _diff_count_total = 0
 
     try:
         parsed_a = json.loads(a)
@@ -1099,7 +1164,6 @@ def json_compare(
                         a_preview=_value_preview(a_val),
                         b_preview=_value_preview(b_val),
                     ))
-                    diff_count_total += 1
                     return
                 except (ValueError, TypeError):
                     pass

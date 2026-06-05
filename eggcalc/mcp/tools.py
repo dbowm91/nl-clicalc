@@ -184,6 +184,7 @@ MAX_TEXT_LENGTH = 100_000
 MAX_EXPRESSION_LENGTH = 10_000
 MAX_LIST_ITEMS = 10_000
 MAX_REGEX_SAMPLES = 100
+MAX_REGEX_SAMPLE_LENGTH = 10_000
 MAX_PATTERN_LENGTH_REGEX = 1000
 MAX_MATCHES_REGEX = 100
 MAX_TEXT_LENGTH_REGEX = 100_000
@@ -1274,6 +1275,15 @@ def validate_regex(
             "invalid_arguments",
             "All samples must be strings",
             [f"Non-string items at indices: {non_str_samples[:5]}"],
+            tool="validate_regex",
+        )
+
+    long_samples = [i for i, s in enumerate(samples) if len(s) > MAX_REGEX_SAMPLE_LENGTH]
+    if long_samples:
+        return _error_response(
+            "input_too_large",
+            f"Sample(s) at indices {long_samples[:5]} exceed MAX_REGEX_SAMPLE_LENGTH {MAX_REGEX_SAMPLE_LENGTH}",
+            [f"Maximum {MAX_REGEX_SAMPLE_LENGTH} characters per sample"],
             tool="validate_regex",
         )
 
@@ -3476,6 +3486,8 @@ def shell_split(
     try:
         result = _shell_split(command, shell=shell, detect_risky_features=detect_risky_features)
         return _success_response(result, tool="shell_split")
+    except ValueError as e:
+        return _error_response("invalid_arguments", str(e), tool="shell_split")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="shell_split")
 
@@ -4300,6 +4312,12 @@ def prompt_input_inspect_mcp(
 
     if phrase_patterns is not None:
         phrase_patterns = [str(p) for p in phrase_patterns]
+        if len(phrase_patterns) > MAX_LIST_ITEMS:
+            return _error_response(
+                "input_too_large",
+                f"phrase_patterns count {len(phrase_patterns)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
+                tool="prompt_input_inspect",
+            )
 
     valid_checks = {
         "unicode_hidden", "bidi", "html_comments", "markdown_links",

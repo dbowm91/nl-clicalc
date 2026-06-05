@@ -29,6 +29,7 @@ from .primitives import find_invisibles as _find_invisibles
 # ---------------------------------------------------------------------------
 
 MAX_TEXT_LENGTH = 100_000
+MAX_FINDINGS = 1_000
 
 ALL_CHECKS = frozenset({
     "unicode_hidden",
@@ -138,6 +139,7 @@ class PromptInspectionResult(TypedDict, total=False):
     recommended_next_tool: str | list[str] | None
     text_length: int
     checks_run: list[str]
+    findings_truncated: bool
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +484,11 @@ def prompt_input_inspect(
     if "long_minified_lines" in active_checks:
         findings.extend(_find_long_minified_lines(text))
 
+    findings_truncated = False
+    if len(findings) > MAX_FINDINGS:
+        findings = findings[:MAX_FINDINGS]
+        findings_truncated = True
+
     risk_score = _compute_risk_score(findings)
     summary = _build_summary(findings, risk_score)
     recommended = _recommend_next_tool(findings)
@@ -493,4 +500,5 @@ def prompt_input_inspect(
         recommended_next_tool=recommended,
         text_length=len(text),
         checks_run=sorted(active_checks),
+        findings_truncated=findings_truncated,
     )

@@ -2183,6 +2183,12 @@ class Evaluator(ast.NodeVisitor):
             if isinstance(result, UnitValue):
                 return _check_result_size(result)
             if isinstance(result, str):
+                # Allow string results from function calls (e.g. primefactors),
+                # but reject bare string literals as standalone expressions.
+                if isinstance(tree.body, ast.Constant) and isinstance(tree.body.value, str):
+                    raise EvaluationError(
+                        "String literals are not supported as standalone expressions"
+                    )
                 return result
             if result is None:
                 return None  # Functions like seed() and clearvars() return None

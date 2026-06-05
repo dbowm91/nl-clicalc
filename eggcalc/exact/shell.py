@@ -56,6 +56,9 @@ _CONTROL_OPERATORS = {";", "&", "&&", "||"}
 _VARIABLE_PATTERN = re.compile(r"\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*")
 _COMMAND_SUB_PATTERN = re.compile(r"\$\(|`")
 
+MAX_INPUT_LENGTH = 100_000
+MAX_LIST_ITEMS = 10_000
+
 
 def _detect_features(argv: list[str], raw: str) -> ShellFeatures:
     """Detect risky lexical features in parsed argv and raw string."""
@@ -106,7 +109,14 @@ def shell_split(
 
     Returns:
         ShellSplitResult with parsed argv, features, and findings.
+
+    Raises:
+        ValueError: If command exceeds MAX_INPUT_LENGTH.
     """
+    if len(command) > MAX_INPUT_LENGTH:
+        raise ValueError(
+            f"Command length {len(command)} exceeds maximum {MAX_INPUT_LENGTH}"
+        )
     findings: list[str] = []
 
     if shell != "posix":
@@ -191,7 +201,14 @@ def shell_quote_join(
 
     Returns:
         ShellQuoteJoinResult with the quoted command string and roundtrip status.
+
+    Raises:
+        ValueError: If argv list is too large.
     """
+    if len(argv) > MAX_LIST_ITEMS:
+        raise ValueError(
+            f"argv count {len(argv)} exceeds maximum {MAX_LIST_ITEMS}"
+        )
     findings: list[str] = []
 
     if shell != "posix":
@@ -248,8 +265,30 @@ def argv_compare(
 
     Returns:
         ArgvCompareResult with comparison results.
+
+    Raises:
+        ValueError: If command strings exceed MAX_INPUT_LENGTH or argv lists
+            exceed MAX_LIST_ITEMS.
     """
     findings: list[str] = []
+
+    # Validate input sizes
+    if left_command is not None and len(left_command) > MAX_INPUT_LENGTH:
+        raise ValueError(
+            f"left_command length {len(left_command)} exceeds maximum {MAX_INPUT_LENGTH}"
+        )
+    if right_command is not None and len(right_command) > MAX_INPUT_LENGTH:
+        raise ValueError(
+            f"right_command length {len(right_command)} exceeds maximum {MAX_INPUT_LENGTH}"
+        )
+    if left_argv is not None and len(left_argv) > MAX_LIST_ITEMS:
+        raise ValueError(
+            f"left_argv count {len(left_argv)} exceeds maximum {MAX_LIST_ITEMS}"
+        )
+    if right_argv is not None and len(right_argv) > MAX_LIST_ITEMS:
+        raise ValueError(
+            f"right_argv count {len(right_argv)} exceeds maximum {MAX_LIST_ITEMS}"
+        )
 
     # Resolve left argv
     resolved_left: list[str] | None = left_argv

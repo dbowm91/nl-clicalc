@@ -160,6 +160,7 @@ MAX_REQUEST_ID_LENGTH = 1024
 MAX_TOOL_TIMEOUT_SECONDS = 30
 MAX_CANCELLED_REQUESTS = 10_000
 _cancelled_requests: deque[Any] = deque(maxlen=MAX_CANCELLED_REQUESTS)
+_cancelled_lock = threading.Lock()
 
 # Bounded thread pool for tool invocations. Prevents unbounded thread
 # accumulation when tools time out. Tasks submitted to a full pool queue
@@ -591,29 +592,30 @@ def _handle_call_tool(request: dict) -> dict:
         }
 
     req_id = request.get("id")
-    if req_id is not None and req_id in _cancelled_requests:
-        # Remove from deque (rebuild without the matching element)
-        remaining = [r for r in _cancelled_requests if r != req_id]
-        _cancelled_requests.clear()
-        _cancelled_requests.extend(remaining)
-        return {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps({
-                            "ok": False,
-                            "error": f"Tool '{name}' request was cancelled",
-                            "error_type": "cancelled",
-                            "tool": name,
-                        }),
-                    }
-                ],
-                "isError": True,
-            },
-        }
+    with _cancelled_lock:
+        if req_id is not None and req_id in _cancelled_requests:
+            # Remove from deque (rebuild without the matching element)
+            remaining = [r for r in _cancelled_requests if r != req_id]
+            _cancelled_requests.clear()
+            _cancelled_requests.extend(remaining)
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps({
+                                "ok": False,
+                                "error": f"Tool '{name}' request was cancelled",
+                                "error_type": "cancelled",
+                                "tool": name,
+                            }),
+                        }
+                    ],
+                    "isError": True,
+                },
+            }
 
     timed_out = False
     result = None
@@ -850,7 +852,8 @@ def handle_request(request: Any) -> dict | None:
             and isinstance(cancelled_id, (str, int))
             and not isinstance(cancelled_id, bool)
         ):
-            _cancelled_requests.append(cancelled_id)
+            with _cancelled_lock:
+                _cancelled_requests.append(cancelled_id)
         return None
     elif method == "ping":
         return {
