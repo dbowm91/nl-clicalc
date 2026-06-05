@@ -194,6 +194,10 @@ MAX_CONCURRENT_SPAWNED = 4
 # Process() is created in validate_regex and math_eval (via evaluate_with_timeout).
 _SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(MAX_CONCURRENT_SPAWNED)
 
+# Set of child processes that survived terminate+kill in regex tools.
+# Checked by MCP server's _cleanup_orphaned_processes for defensive cleanup.
+_orphaned_regex_processes: set[multiprocessing.Process] = set()
+
 def _build_physical_constants() -> dict[str, dict[str, Any]]:
     """Build PHYSICAL_CONSTANTS from Evaluator.CONSTANTS to prevent drift.
 
@@ -532,6 +536,9 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
 
         from_cat = get_unit_category(from_unit)
         to_cat = get_unit_category(to_unit)
+        # Reject cross-category conversions (e.g., length -> mass) when
+        # both categories are known. If either is None, let
+        # get_conversion_factor attempt the conversion and fail naturally.
         if from_cat is not None and to_cat is not None and from_cat != to_cat:
             return _error_response(
                 "conversion_error",
@@ -1254,6 +1261,9 @@ def validate_regex(
                 if proc.is_alive():
                     proc.kill()
                     proc.join(timeout=1)
+                # If process survived terminate+kill, register for defensive cleanup
+                if proc.is_alive():
+                    _orphaned_regex_processes.add(proc)
                 try:
                     proc.close()
                 except Exception:
@@ -1523,6 +1533,9 @@ def regex_finditer(
                 if proc.is_alive():
                     proc.kill()
                     proc.join(timeout=1)
+                # If process survived terminate+kill, register for defensive cleanup
+                if proc.is_alive():
+                    _orphaned_regex_processes.add(proc)
                 try:
                     proc.close()
                 except Exception:
@@ -1814,8 +1827,6 @@ def list_compare(
             }
         else:
             from collections import Counter
-            a_transformed = a
-            b_transformed = b
             def transform(s: str) -> str:
                 result = s
                 if trim:

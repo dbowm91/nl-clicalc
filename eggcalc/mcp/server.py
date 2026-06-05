@@ -11,7 +11,9 @@ import atexit
 import concurrent.futures
 import inspect
 import json
+import multiprocessing
 import sys
+import threading
 import time
 from collections import deque
 from typing import Any
@@ -154,6 +156,54 @@ _SHARED_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_n
 atexit.register(_SHARED_EXECUTOR.shutdown, wait=False)
 _running_futures: set[concurrent.futures.Future[Any]] = set()
 _cancelled_requests: deque[Any] = deque(maxlen=MAX_CANCELLED_REQUESTS)
+
+# Track orphaned child processes for defensive cleanup. When a tool times out,
+# its handler may have spawned a child process (via evaluate_with_timeout or
+# validate_regex). The handler's finally block normally terminates these, but
+# if the thread is reclaimed before cleanup completes, the process becomes
+# orphaned. This set allows periodic cleanup and prevents FD/resource leaks.
+_orphaned_processes: set[multiprocessing.Process] = set()
+_orphaned_lock = threading.Lock()
+
+
+def _cleanup_orphaned_processes() -> None:
+    """Terminate any orphaned child processes that survived their handler's cleanup."""
+    import logging as _logging
+    # Also check evaluator and regex tool orphan sets
+    try:
+        from ..evaluator import _orphaned_eval_processes
+        with _orphaned_lock:
+            _orphaned_processes.update(_orphaned_eval_processes)
+            _orphaned_eval_processes.clear()
+    except Exception:
+        pass
+    try:
+        from .tools import _orphaned_regex_processes
+        with _orphaned_lock:
+            _orphaned_processes.update(_orphaned_regex_processes)
+            _orphaned_regex_processes.clear()
+    except Exception:
+        pass
+    with _orphaned_lock:
+        stale = [p for p in _orphaned_processes if p.is_alive()]
+        for proc in stale:
+            try:
+                proc.terminate()
+                proc.join(timeout=1)
+            except Exception:
+                pass
+            if proc.is_alive():
+                try:
+                    proc.kill()
+                    proc.join(timeout=1)
+                except Exception:
+                    pass
+            try:
+                proc.close()
+            except Exception:
+                pass
+            _orphaned_processes.discard(proc)
+            _logging.debug("Cleaned up orphaned MCP child process pid=%s", proc.pid)
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:
@@ -404,6 +454,9 @@ def _validate_arguments_schema(name: str, arguments: dict[str, Any]) -> str | No
 
 def _handle_call_tool(request: dict) -> dict:
     """Handle a tools/call MCP request."""
+    # Lazily clean up any orphaned processes from previous timed-out requests
+    _cleanup_orphaned_processes()
+
     params = request.get("params", {})
     if not isinstance(params, dict):
         return _invalid_request(request.get("id"), "Invalid params: expected object")

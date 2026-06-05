@@ -85,6 +85,10 @@ _UNREACHABLE_CONSTANT_ALIASES: frozenset[str] = frozenset(
 
 _COLLISION_WARNING_EMITTED = False  # legacy alias, see Evaluator._COLLISION_WARNING_EMITTED
 
+# Set of child processes that survived terminate+kill in MCP mode.
+# Checked by MCP server's _cleanup_orphaned_processes for defensive cleanup.
+_orphaned_eval_processes: set[multiprocessing.Process] = set()
+
 
 def _check_constant_unit_collisions() -> None:
     """Warn at import time if any CONSTANTS entry collides with a UNIT_ALIASES.
@@ -2143,6 +2147,10 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
             if proc.is_alive():
                 proc.kill()
                 proc.join(timeout=1)
+            # If the process survived terminate+kill, register it for
+            # defensive cleanup by the MCP server's orphan tracker.
+            if proc.is_alive() and _mcp_mode:
+                _orphaned_eval_processes.add(proc)
             try:
                 proc.close()
             except Exception:
