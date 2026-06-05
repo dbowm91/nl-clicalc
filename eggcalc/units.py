@@ -31,6 +31,17 @@ class UnitValue:
     when adding or subtracting values with compatible units.
     """
 
+    @staticmethod
+    def _check_overflow(result: Numeric) -> None:
+        """Raise OverflowError if result is not finite or exceeds limits."""
+        if isinstance(result, complex):
+            if not math.isfinite(result.real) or not math.isfinite(result.imag):
+                raise OverflowError("Result too large")
+        elif isinstance(result, float) and not math.isfinite(result):
+            raise OverflowError("Result too large")
+        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
+            raise OverflowError("Result too large")
+
     def __init__(self, value: float, unit: str | None = None) -> None:
         self.value = value
         self.unit = unit
@@ -86,10 +97,7 @@ class UnitValue:
                 out_unit = None
             else:
                 raise ValueError(f"Cannot add a dimensionless value to {self.unit}; use matching units or convert first")
-        if isinstance(result, float) and not math.isfinite(result):
-            raise OverflowError("Result too large")
-        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
-            raise OverflowError("Result too large")
+        UnitValue._check_overflow(result)
         return UnitValue(result, out_unit)
     def __radd__(self, other: Numeric) -> UnitValue:
         return self.__add__(other)
@@ -117,10 +125,7 @@ class UnitValue:
                 out_unit = None
             else:
                 raise ValueError(f"Cannot subtract a dimensionless value from {self.unit}; use matching units or convert first")
-        if isinstance(result, float) and not math.isfinite(result):
-            raise OverflowError("Result too large")
-        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
-            raise OverflowError("Result too large")
+        UnitValue._check_overflow(result)
         return UnitValue(result, out_unit)
 
     def __rsub__(self, other: Numeric) -> UnitValue:
@@ -139,10 +144,7 @@ class UnitValue:
         else:
             result = self.value * other
             unit = self.unit
-        if isinstance(result, float) and not math.isfinite(result):
-            raise OverflowError("Result too large")
-        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
-            raise OverflowError("Result too large")
+        UnitValue._check_overflow(result)
         return UnitValue(result, unit)
 
     def __rmul__(self, other: Numeric) -> UnitValue:
@@ -150,6 +152,8 @@ class UnitValue:
 
     def __truediv__(self, other: Numeric) -> UnitValue:
         if isinstance(other, UnitValue):
+            if other.value == 0:
+                raise ZeroDivisionError("Cannot divide UnitValue by zero")
             if self.unit and other.unit:
                 if self.unit == other.unit:
                     result = self.value / other.value
@@ -165,10 +169,7 @@ class UnitValue:
                 raise ZeroDivisionError("Cannot divide UnitValue by zero")
             result = self.value / other
             unit = self.unit
-        if isinstance(result, float) and not math.isfinite(result):
-            raise OverflowError("Result too large")
-        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
-            raise OverflowError("Result too large")
+        UnitValue._check_overflow(result)
         return UnitValue(result, unit)
 
     def __rtruediv__(self, other: Numeric) -> UnitValue:
@@ -200,10 +201,7 @@ class UnitValue:
         else:
             result = self.value**other
             unit = self.unit
-        if isinstance(result, float) and not math.isfinite(result):
-            raise OverflowError("Result too large")
-        if isinstance(result, int) and abs(result) > MAX_RESULT_VALUE:
-            raise OverflowError("Result too large")
+        UnitValue._check_overflow(result)
         return UnitValue(result, unit)
 
     def __neg__(self) -> UnitValue:
@@ -1301,11 +1299,6 @@ def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
     if key in TEMPERATURE_CONVERSIONS:
         multiplier, offset = TEMPERATURE_CONVERSIONS[key]
         return value * multiplier + offset
-
-    reverse_key = (to_unit, from_unit)
-    if reverse_key in TEMPERATURE_CONVERSIONS:
-        multiplier, offset = TEMPERATURE_CONVERSIONS[reverse_key]
-        return (value - offset) / multiplier
 
     raise ValueError(f"Cannot convert temperature from {from_unit} to {to_unit}")
 

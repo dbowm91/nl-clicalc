@@ -289,8 +289,14 @@ class TestToolRegistry:
     def test_line_range_compare_in_handlers(self):
         assert "line_range_compare" in TOOL_HANDLERS
 
+    def test_toml_shape_in_handlers(self):
+        assert "toml_shape" in TOOL_HANDLERS
+
+    def test_version_compare_in_handlers(self):
+        assert "version_compare" in TOOL_HANDLERS
+
     def test_all_handlers_callable(self):
-        for name in ["text_replace_check", "line_range_extract", "line_range_compare"]:
+        for name in ["text_replace_check", "line_range_extract", "line_range_compare", "toml_shape", "version_compare"]:
             assert callable(TOOL_HANDLERS[name])
 
 
@@ -411,3 +417,149 @@ class TestConstantLookupMCP:
             content = json.loads(response["result"]["content"][0]["text"])
             values.add(content["result"]["value"])
         assert len(values) == 1
+
+
+class TestTomlShapeMCP:
+    """Test toml_shape via MCP protocol."""
+
+    def test_basic_toml_shape(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "toml_shape",
+                "arguments": {"text": "[a]\nb = 1\n\n[c]\nd = 2"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert len(content["result"]["top_level_keys"]) == 2
+        assert len(content["result"]["tables"]) >= 2
+        assert content["result"]["truncated"] is False
+
+    def test_empty_toml(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "toml_shape",
+                "arguments": {"text": ""},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is True
+        assert content["result"]["top_level_keys"] == []
+        assert content["result"]["tables"] == []
+
+    def test_invalid_toml(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "toml_shape",
+                "arguments": {"text": "[invalid = [[["},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["valid"] is False
+
+    def test_summary_detail(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "toml_shape",
+                "arguments": {"text": "[a]\nb = 1", "detail": "summary"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "valid" in content["result"]
+        assert "summary" in content["result"]
+        assert "truncated" in content["result"]
+        assert "top_level_keys" not in content["result"]
+        assert "tables" not in content["result"]
+
+
+class TestVersionCompareMCP:
+    """Test version_compare via MCP protocol."""
+
+    def test_basic_equal(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "version_compare",
+                "arguments": {"a": "1.0.0", "b": "1.0.0"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["comparison"] == 0
+        assert content["result"]["valid"] is True
+        assert content["result"]["scheme"] == "semver"
+
+    def test_basic_less(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "version_compare",
+                "arguments": {"a": "1.0.0", "b": "2.0.0"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["comparison"] == -1
+        assert content["result"]["valid"] is True
+
+    def test_basic_greater(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "version_compare",
+                "arguments": {"a": "2.0.0", "b": "1.0.0"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["comparison"] == 1
+        assert content["result"]["valid"] is True
+
+    def test_invalid_scheme(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "version_compare",
+                "arguments": {"a": "1.0.0", "b": "1.0.0", "scheme": "invalid"},
+            },
+        })
+        assert "error" in response
+
+    def test_pep440_scheme(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "version_compare",
+                "arguments": {"a": "1.0.0", "b": "2.0.0", "scheme": "pep440"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["scheme"] == "pep440"
+        assert content["result"]["valid"] is False

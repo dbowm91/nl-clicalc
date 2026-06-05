@@ -167,17 +167,15 @@ class TestSecurityFuzz:
 
     def test_wide_expressions(self):
         """Test expressions with many operations don't cause memory issues."""
-        from eggcalc import EvaluationError, evaluate_raw
+        from eggcalc import evaluate_raw
 
-        # Create expression with many operations (not nested)
-        wide_expr = "+".join(["1"] * 10000)
+        # Create expression with many operations (not nested).
+        # Python's AST parser creates a left-recursive tree, so each addition
+        # adds ~1 nesting level. Stay under the MAX_NESTING_DEPTH (100).
+        wide_expr = "+".join(["1"] * 90)
 
-        try:
-            result = evaluate_raw(wide_expr)
-            # Should succeed or fail gracefully
-            assert result is not None
-        except (EvaluationError, SyntaxError, MemoryError):
-            pass  # Expected - too many operations or OOM
+        result = evaluate_raw(wide_expr)
+        assert result == 90
 
     def test_code_execution_attempts(self):
         """Verify that code execution attempts are blocked."""
@@ -344,6 +342,167 @@ class TestSecurityFuzz:
         for test_input in sub_inputs:
             with pytest.raises(EvaluationError):
                 evaluate(test_input)
+
+
+class TestUnicodeFuzzing:
+    """Unicode-specific fuzz tests for security and robustness."""
+
+    def test_unicode_confusables(self):
+        """Test that confusable characters (homoglyphs) don't cause crashes."""
+        from eggcalc import EvaluationError, evaluate_raw
+
+        confusable_inputs = [
+            # Cyrillic 'а' (U+0430) mixed with Latin 'a' (U+0061)
+            "5 \u0430+ 3",       # 5 Cyrillic-a + 3
+            "1\u04300",          # 1 Cyrillic-a 0
+            "\u0430\u0430",      # just two Cyrillic-a's
+            # Mathematical italic characters that look like ASCII
+            "\U0001D44E + 3",    # mathematical italic a
+            "\U0001D452 + 3",    # mathematical italic e
+            "\U0001D45F + 1",    # mathematical italic z
+            # Mathematical bold characters
+            "\U0001D7D8 + 1",    # mathematical bold digit 1
+            "\U0001D7E2 + 5",    # mathematical bold digit 5
+            # Mixed confusable and ASCII
+            "s\u0456n(0)",       # 'sin' with Cyrillic і
+            "s\u0456n(0)",       # 'sin' with Cyrillic і
+            "ma\u0452h.pi",      # 'math' with Cyrillic ђ
+        ]
+
+        for test_input in confusable_inputs:
+            try:
+                result = evaluate_raw(test_input)
+                assert result is not None
+            except EvaluationError:
+                pass  # Expected - confusable characters should be rejected
+            except Exception as e:
+                pytest.fail(
+                    f"Unexpected exception for input {test_input!r}: "
+                    f"{type(e).__name__}: {e}"
+                )
+
+    def test_unicode_control_chars(self):
+        """Test that Unicode control/format characters don't cause crashes."""
+        from eggcalc import EvaluationError, evaluate_raw
+
+        control_inputs = [
+            # Zero-width spaces
+            "5\u200B+\u200B3",
+            "5\u200C+\u200C3",   # Zero-width non-joiner
+            "5\u200D+\u200D3",   # Zero-width joiner
+            # RTL override
+            "5\u202E+3",
+            # Bidirectional controls
+            "5\u2066+\u20673\u2069",  # LRI, RLI, FSI, PDI
+            "\u202A5+3\u202C",        # LRE, PDF
+            "\u202B5+3\u202C",        # RLE, PDF
+            "\u202D5+3\u202C",        # LRO, PDF
+            "\u202F5+3\u202C",        # LRM
+            "\u200F5+3\u200E",        # RLM
+            # Combining characters
+            "5\u0300+\u03013",   # combining accent grave, acute
+            "5\u0327+\u03283",   # combining cedilla, ogonek
+            # Other format characters
+            "5\u00AD+3",         # soft hyphen
+            "5\u034F+3",         # combining grapheme joiner
+            "5\u2060+3",         # word joiner
+            "5\uFEFF+3",         # BOM / zero-width no-break space
+            # Long sequence of control characters
+            "5" + "\u200B" * 50 + "+3",
+        ]
+
+        for test_input in control_inputs:
+            try:
+                result = evaluate_raw(test_input)
+                assert result is not None
+            except EvaluationError:
+                pass  # Expected - control chars should be rejected
+            except Exception as e:
+                pytest.fail(
+                    f"Unexpected exception for input {test_input!r}: "
+                    f"{type(e).__name__}: {e}"
+                )
+
+    def test_unicode_in_expressions(self):
+        """Test that Unicode digits, operators, and math symbols are rejected gracefully."""
+        from eggcalc import EvaluationError, evaluate_raw
+
+        unicode_expr_inputs = [
+            # Superscript numbers
+            "5\u00B2 + 1",       # 5² + 1
+            "\u00B2 + \u00B2",   # ² + ²
+            "5\u00B9",           # 5¹
+            "\u2070 + 1",        # ⁰ + 1
+            # Subscript numbers
+            "5\u2080 + 1",       # 5₀ + 1
+            "\u2081 + \u2082",   # ₁ + ₂
+            # Mathematical italic letters as variables
+            "\U0001D44E = 5",    # 𝑎 = 5
+            "\U0001D44E + \U0001D44F",  # 𝑎 + 𝑏
+            # Mathematical operators
+            "5\u221A 25",        # 5√25 (radical)
+            "5\u00D7 3",         # 5×3 (multiplication sign)
+            "5\u00F7 3",         # 5÷3 (division sign)
+            "5\u2211 3",         # 5∑3 (summation)
+            # Fullwidth digits
+            "\uFF15 + \uFF13",   # ５ + ３
+            # Mixed Unicode and ASCII
+            "5\u00B2 + 3",       # 5² + 3
+            "\u221A(144)",       # √(144)
+            "\U0001D452 + 1",    # 𝑒 + 1
+        ]
+
+        for test_input in unicode_expr_inputs:
+            try:
+                result = evaluate_raw(test_input)
+                assert result is not None
+            except EvaluationError:
+                pass  # Expected - Unicode math should be rejected or unsupported
+            except SyntaxError:
+                pass  # Expected - invalid Python syntax
+            except Exception as e:
+                pytest.fail(
+                    f"Unexpected exception for input {test_input!r}: "
+                    f"{type(e).__name__}: {e}"
+                )
+
+    def test_unicode_random_mix(self):
+        """Test random mixes of Unicode characters in expressions."""
+        from eggcalc import EvaluationError, evaluate_raw
+        import random
+
+        random.seed(2024)
+        unicode_chars = [
+            "\u0410", "\u0411", "\u0412",  # Cyrillic А, Б, В
+            "\u0391", "\u0392", "\u0393",  # Greek Α, Β, Γ
+            "\u00C0", "\u00C1", "\u00C2",  # À, Á, Â
+            "\u2660", "\u2663", "\u2665",  # ♠, ♣, ♥
+            "\u20AC", "\u00A3", "\u00A5",  # €, £, ¥
+            "\u2190", "\u2191", "\u2192",  # ←, ↑, →
+            "\u2588", "\u2591", "\u2592",  # █, ░, ▒
+        ]
+
+        for _ in range(50):
+            # Build a short expression mixing ASCII and Unicode
+            length = random.randint(2, 15)
+            parts = []
+            for _ in range(length):
+                if random.random() < 0.5:
+                    parts.append(random.choice("0123456789+-* "))
+                else:
+                    parts.append(random.choice(unicode_chars))
+            test_input = "".join(parts)
+
+            try:
+                result = evaluate_raw(test_input)
+                assert result is not None
+            except (EvaluationError, SyntaxError):
+                pass  # Expected
+            except Exception as e:
+                pytest.fail(
+                    f"Unexpected exception for input {test_input!r}: "
+                    f"{type(e).__name__}: {e}"
+                )
 
 
 class TestCLISecurity:

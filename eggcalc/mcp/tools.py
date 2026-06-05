@@ -1943,7 +1943,16 @@ def text_transform(text: str, operations: list[str], detail: str = "normal") -> 
             tool="text_transform",
         )
 
-    unknown_ops = [op for op in operations if op.lower() not in _VALID_TRANSFORM_OPERATIONS]
+    unknown_ops = []
+    for op in operations:
+        if not isinstance(op, str):
+            return _error_response(
+                "invalid_arguments",
+                f"operations list items must be strings, got {type(op).__name__}",
+                tool="text_transform",
+            )
+        if op.lower() not in _VALID_TRANSFORM_OPERATIONS:
+            unknown_ops.append(op)
     if unknown_ops:
         return _error_response(
             "invalid_arguments",

@@ -391,6 +391,17 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "required": ["text", "operations"],
         },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "changed": {"type": "boolean"},
+                "text": {"type": "string"},
+                "operations_applied": {"type": "array", "items": {"type": "string"}},
+                "removed": {"type": "array"},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+                "summary": {"type": "string"},
+            },
+        },
     },
     "validate_brackets": {
         "description": "Check whether delimiters are structurally balanced and report unmatched delimiters with line/column positions.",
@@ -581,6 +592,19 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "valid": {"type": "boolean"},
+                "error": {"type": ["string", "null"]},
+                "line": {"type": ["integer", "null"]},
+                "column": {"type": ["integer", "null"]},
+                "position": {"type": ["integer", "null"]},
+                "type": {"type": ["string", "null"]},
+                "top_level_keys": {"type": ["array", "null"]},
+                "tables": {"type": ["array", "null"]},
+            },
         },
     },
     "json_extract": {

@@ -6453,3 +6453,103 @@ class TestProductionReview2026_06:
 
         # Each tool call should have spawned its own mcp-tool-* thread.
         assert len(seen_count) == 8, f"Expected 8 per-request threads, got {seen_count}"
+
+
+class TestHandleCallToolErrors:
+    """Test _handle_call_tool error paths: unknown tool, bad arguments, invalid id."""
+
+    def test_tool_not_found(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9500,
+            "method": "tools/call",
+            "params": {
+                "name": "nonexistent_tool_xyz",
+                "arguments": {},
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+        assert "nonexistent_tool_xyz" in response["error"]["message"]
+
+    def test_arguments_not_dict(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9501,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": "not a dict",
+            },
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32600
+        assert "expected object" in response["error"]["message"]
+
+    def test_jsonrpc_id_float_nan(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": float("nan"),
+            "method": "ping",
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32600
+
+    def test_jsonrpc_id_float_inf(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": float("inf"),
+            "method": "ping",
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32600
+
+
+class TestJSONRPCIdValidation:
+    """Test JSON-RPC id type validation in handle_request."""
+
+    def test_float_id_rejected(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1.5,
+            "method": "ping",
+        })
+        assert "error" in response
+        assert response["error"]["code"] == -32600
+        assert "id" in response["error"]["message"]
+
+    def test_integer_id_accepted(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "ping",
+        })
+        assert "result" in response
+        assert response["id"] == 1
+
+    def test_string_id_accepted(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": "test",
+            "method": "ping",
+        })
+        assert "result" in response
+        assert response["id"] == "test"
+
+    def test_null_id_accepted(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": None,
+            "method": "ping",
+        })
+        assert "result" in response
+        assert response["id"] is None
+
+    def test_none_id_no_response_field(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "method": "ping",
+        })
+        assert "result" in response
+        # Response should include id from request (None via .get("id"))
+        assert "id" in response

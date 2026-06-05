@@ -8,7 +8,9 @@ from eggcalc.normalize import NORMALIZE, PATTERNS
 
 @pytest.fixture
 def eval_result():
-    """Fixture that wraps evaluate result, extracting value from UnitValue if needed."""
+    """Optional helper: wraps evaluate result, extracting value from UnitValue if needed.
+    Not currently used by any tests — available for convenience if needed.
+    """
     def _eval_result(expr):
         result = evaluate(expr)
         if isinstance(result, UnitValue):
@@ -31,16 +33,22 @@ def normalize_config():
 
 
 @pytest.fixture
-def get_value():
-    """Helper to extract numeric value from result (handles UnitValue)."""
-    def _get_value(result):
+def extract_value():
+    """Extract the numeric value from a result, intentionally hiding the UnitValue wrapper.
+
+    Use this when you only care about the numeric value and want convenience
+    over verifying the UnitValue wrapper type.
+    """
+    def _extract_value(result):
         if isinstance(result, UnitValue):
             return result.value
         return result
-    return _get_value
+    return _extract_value
 
 
 @pytest.fixture
 def approx():
-    """pytest.approx wrapper for floating point comparisons."""
+    """Optional helper: pytest.approx wrapper for floating point comparisons.
+    Most tests use pytest.approx directly — available for convenience if needed.
+    """
     return lambda x, y, rel_tol=1e-10: abs(x - y) < rel_tol

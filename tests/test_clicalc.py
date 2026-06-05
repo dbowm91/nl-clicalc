@@ -48,18 +48,9 @@ class TestUnitConversions:
 
     def test_length_conversion(self):
         """Test length unit conversions."""
-        import sys
-        from io import StringIO
-
-        captured = StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            run("30m + 100ft", NORMALIZE, PATTERNS)
-        finally:
-            sys.stdout = old_stdout
-        output = captured.getvalue()
-        assert "m" in output
+        result, _ = run("30m + 100ft", NORMALIZE, PATTERNS)
+        value = result.value if isinstance(result, UnitValue) else result
+        assert abs(value - 60.48) < 1e-10
 
     def test_time_conversion(self):
         """Test time unit conversions via run()."""
@@ -76,33 +67,15 @@ class TestUnitConversions:
 
     def test_data_conversion(self):
         """Test data storage unit conversions."""
-        import sys
-        from io import StringIO
-
-        captured = StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            run("1GB + 500MB", NORMALIZE, PATTERNS)
-        finally:
-            sys.stdout = old_stdout
-        output = captured.getvalue()
-        assert "GB" in output
+        result, _ = run("1GB + 500MB", NORMALIZE, PATTERNS)
+        value = result.value if isinstance(result, UnitValue) else result
+        assert abs(value - 1524 / 1024) < 1e-10
 
     def test_mixed_conversion(self):
         """Test mixed unit operations."""
-        import sys
-        from io import StringIO
-
-        captured = StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = captured
-        try:
-            run("(30m+100ft)/2", NORMALIZE, PATTERNS)
-        finally:
-            sys.stdout = old_stdout
-        output = captured.getvalue()
-        assert "m" in output
+        result, _ = run("(30m+100ft)/2", NORMALIZE, PATTERNS)
+        value = result.value if isinstance(result, UnitValue) else result
+        assert abs(value - 30.24) < 1e-10
 
     def test_invalid_expression(self):
         """Test that invalid expressions raise errors."""
@@ -119,9 +92,8 @@ class TestUnitConversions:
     def test_negative_numbers(self):
         """Test negative numbers."""
         result = evaluate("-5 + 3")
-        # Note: -5 + 3 in Python evaluates to -2, but depending on order might be different
-        # Just verify it's a valid number
-        assert isinstance(result, (int, float, UnitValue))
+        value = result.value if isinstance(result, UnitValue) else result
+        assert value == -2
 
     def test_unit_conversion_precision_inches_to_mm(self):
         """1 inch = 25.4 mm exactly"""
@@ -175,8 +147,8 @@ class TestNormalize:
 
     def test_natural_language_numbers(self):
         """Test natural language number conversion."""
-        run("five plus three", NORMALIZE, PATTERNS)
-        # Just check it doesn't error
+        result, _ = run("five plus three", NORMALIZE, PATTERNS)
+        assert result == 8 or (isinstance(result, UnitValue) and result.value == 8)
 
 
 class TestCLI:
@@ -472,11 +444,12 @@ class TestTimeout:
         assert self._get_value(result) == 8
 
     def test_timeout_error_raised(self):
-        """Test that TimeoutError can be raised."""
-        from eggcalc import TimeoutError
+        """Test that evaluate_with_timeout raises TimeoutError on slow expression."""
+        from eggcalc import TimeoutError, evaluate_with_timeout
 
-        # Just test that the exception class exists and is importable
-        assert issubclass(TimeoutError, Exception)
+        # A deeply nested exponentiation will take longer than 0.001s
+        with pytest.raises(TimeoutError):
+            evaluate_with_timeout("2**2**2**2**2**2**2", timeout=0.001)
 
 
 class TestComplexNumbers:
@@ -1507,8 +1480,8 @@ class TestEvaluatorEdgeCases:
             run("30m + 100gal", NORMALIZE, PATTERNS)
         finally:
             sys.stderr = old_stderr
-        # Error should appear in stderr or as exception
-        # The run() function prints errors to stderr, so just verify it doesn't crash
+        stderr_output = captured.getvalue()
+        assert stderr_output != "", "Expected an error on stderr for incompatible units"
 
     def test_temp_wrong_args_error(self):
         """temp(0) should produce EvaluationError, not raw TypeError."""

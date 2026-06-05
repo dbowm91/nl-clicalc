@@ -748,10 +748,10 @@ def handle_request(request: Any) -> dict | None:
 
     request_id = request.get("id")
     if request_id is not None:
-        if not isinstance(request_id, (str, int, float)):
+        if not isinstance(request_id, (str, int)):
             return _invalid_request(
                 None,
-                "Invalid Request: 'id' must be a string, number, or null",
+                "Invalid Request: 'id' must be a string, integer, or null",
             )
         id_str = str(request_id)
         if len(id_str) > MAX_REQUEST_ID_LENGTH:
