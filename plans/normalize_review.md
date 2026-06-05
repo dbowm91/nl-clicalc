@@ -39,7 +39,6 @@
 | PATTERNS["stripped_chars"] for phrases to remove | VERIFIED | normalize.py:378 |
 | PATTERNS["int"] for integer pattern | VERIFIED | normalize.py:379 |
 | PATTERNS["float"] for float pattern | VERIFIED | normalize.py:380 |
-| PATTERNS["int_number_combine"] for number combining | VERIFIED | normalize.py:381 |
 | Words sorted by length descending in config | VERIFIED | normalize.py:334-336, 354 |
 | Security: No eval() usage - uses AST parsing | VERIFIED | normalize.py uses evaluate() which uses AST |
 | Security: Input length limits enforced | VERIFIED | normalize.py:1148-1149 |

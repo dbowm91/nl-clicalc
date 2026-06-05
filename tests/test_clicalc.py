@@ -150,6 +150,18 @@ class TestNormalize:
         result, _ = run("five plus three", NORMALIZE, PATTERNS)
         assert result == 8 or (isinstance(result, UnitValue) and result.value == 8)
 
+    def test_empty_input_returns_error(self):
+        """Empty string input should return error exit code."""
+        from eggcalc.normalize import normalize_expression
+        _, exit_code = normalize_expression("", NORMALIZE, PATTERNS)
+        assert exit_code != 0
+
+    def test_whitespace_input_returns_error(self):
+        """Whitespace-only input should return error exit code."""
+        from eggcalc.normalize import normalize_expression
+        _, exit_code = normalize_expression("   ", NORMALIZE, PATTERNS)
+        assert exit_code != 0
+
 
 class TestCLI:
     """Tests for CLI functionality."""
@@ -159,6 +171,36 @@ class TestCLI:
         from eggcalc.normalize import print_help
         # Just verify it doesn't error
         print_help()
+
+    def test_help_text_constants(self):
+        """Help text should list pi/e/tau but not inf/nan."""
+        import io
+        import sys
+        from eggcalc.normalize import print_help
+        buf = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = buf
+        try:
+            print_help()
+        finally:
+            sys.stdout = old_stdout
+        output = buf.getvalue()
+        assert "pi" in output
+        assert "tau" in output
+        # inf and nan should NOT appear as listed constants
+        # (they may appear in other context like "infinity" unit names)
+        lines = output.split("\n")
+        constants_section = False
+        for line in lines:
+            if line.strip().startswith("Constants:"):
+                constants_section = True
+            elif constants_section and line.strip() and not line.startswith("  "):
+                constants_section = False
+            elif constants_section:
+                assert "inf" not in line.lower().split(",")[0:2], \
+                    f"inf should not be listed as a constant: {line}"
+                assert "nan" not in line.lower().split(",")[0:2], \
+                    f"nan should not be listed as a constant: {line}"
 
     def test_empty_expression(self):
         """Test empty expression shows help."""
@@ -1507,6 +1549,22 @@ class TestEvaluatorEdgeCases:
         """(-2)**(1+1j) should produce EvaluationError."""
         with pytest.raises(EvaluationError):
             evaluate("(-2)**(1+1j)")
+
+    def test_nan_constant_rejected(self):
+        """Bare 'nan' should raise EvaluationError (not accessible as constant)."""
+        with pytest.raises(EvaluationError, match="Unknown name"):
+            evaluate("nan")
+
+    def test_inf_constant_rejected(self):
+        """Bare 'inf' should raise EvaluationError (not accessible as constant)."""
+        with pytest.raises(EvaluationError, match="Unknown name"):
+            evaluate("inf")
+
+    def test_pi_still_works(self):
+        """'pi' should still resolve as a constant."""
+        import math
+        result = evaluate("pi")
+        assert abs(result - math.pi) < 1e-10
 
 
 class TestUnitValueScalarArithmetic:

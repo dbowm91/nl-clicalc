@@ -191,8 +191,8 @@ def _cleanup_orphaned_processes() -> None:
     except Exception:
         pass
     try:
-        from .tools import _orphaned_regex_processes
-        with _orphaned_lock:
+        from .tools import _orphaned_regex_processes, _orphaned_regex_lock
+        with _orphaned_regex_lock:
             _orphaned_processes.update(_orphaned_regex_processes)
             _orphaned_regex_processes.clear()
     except Exception:
@@ -216,7 +216,7 @@ def _cleanup_orphaned_processes() -> None:
             except Exception:
                 pass
             _orphaned_processes.discard(proc)
-            _logging.debug("Cleaned up orphaned MCP child process pid=%s", proc.pid)
+            logging.debug("Cleaned up orphaned MCP child process pid=%s", proc.pid)
 
 
 def _invalid_request(request_id: Any, message: str) -> dict:

@@ -213,7 +213,6 @@ Output: 327
 | `stripped_chars` | Phrases to remove |
 | `int` | Integer pattern |
 | `float` | Float pattern |
-| `int_number_combine` | Number combining |
 | `valid_operations` | Valid operation/constant names |
 
 ## Configuration Building

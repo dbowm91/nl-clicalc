@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import re
+import threading
 from typing import Any
 
 from .. import EvaluationError, evaluate_raw
@@ -201,6 +202,7 @@ _SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(MAX_CONCURRENT_SPAWNED)
 MAX_ORPHANED_REGEX_PROCESSES = 256
 _orphaned_regex_processes: set[multiprocessing.Process] = set()
 _orphaned_regex_order: list[multiprocessing.Process] = []
+_orphaned_regex_lock: threading.Lock = threading.Lock()
 
 def _build_physical_constants() -> dict[str, dict[str, Any]]:
     """Build PHYSICAL_CONSTANTS from Evaluator.CONSTANTS to prevent drift.
@@ -1267,11 +1269,12 @@ def validate_regex(
                     proc.join(timeout=1)
                 # If process survived terminate+kill, register for defensive cleanup
                 if proc.is_alive():
-                    _orphaned_regex_processes.add(proc)
-                    _orphaned_regex_order.append(proc)
-                    while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
-                        oldest = _orphaned_regex_order.pop(0)
-                        _orphaned_regex_processes.discard(oldest)
+                    with _orphaned_regex_lock:
+                        _orphaned_regex_processes.add(proc)
+                        _orphaned_regex_order.append(proc)
+                        while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
+                            oldest = _orphaned_regex_order.pop(0)
+                            _orphaned_regex_processes.discard(oldest)
                 try:
                     proc.close()
                 except Exception:
@@ -1543,11 +1546,12 @@ def regex_finditer(
                     proc.join(timeout=1)
                 # If process survived terminate+kill, register for defensive cleanup
                 if proc.is_alive():
-                    _orphaned_regex_processes.add(proc)
-                    _orphaned_regex_order.append(proc)
-                    while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
-                        oldest = _orphaned_regex_order.pop(0)
-                        _orphaned_regex_processes.discard(oldest)
+                    with _orphaned_regex_lock:
+                        _orphaned_regex_processes.add(proc)
+                        _orphaned_regex_order.append(proc)
+                        while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
+                            oldest = _orphaned_regex_order.pop(0)
+                            _orphaned_regex_processes.discard(oldest)
                 try:
                     proc.close()
                 except Exception:

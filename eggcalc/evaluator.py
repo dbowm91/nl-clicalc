@@ -1412,9 +1412,9 @@ class Evaluator(ast.NodeVisitor):
     _COLLISION_WARNING_EMITTED: bool = False
 
     # Safe mathematical constants
-    # Note: inf and nan are intentionally excluded — they can be accessed
-    # via math.inf and math.nan attribute access, but not as bare names,
-    # to prevent accidental NaN/inf propagation from user expressions.
+    # Note: inf and nan are intentionally excluded — they cannot be accessed
+    # as bare names (visit_Name rejects them as unknown names), preventing
+    # accidental NaN/inf propagation from user expressions.
     CONSTANTS: dict[str, Any] = {
         "pi": math.pi,
         "e": math.e,
