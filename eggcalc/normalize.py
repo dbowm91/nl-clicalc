@@ -1226,6 +1226,14 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         raise ValueError("Empty expression")
     if len(expression) > MAX_INPUT_LENGTH:
         raise ValueError(f"Input too long (max {MAX_INPUT_LENGTH} characters)")
+
+    # Replace unicode math operators with ASCII equivalents before any
+    # tokenization or whitespace processing. Must happen early because
+    # the whitespace-removal loop treats these as alpha characters.
+    expression = expression.replace("\u00d7", "*")  # × → *
+    expression = expression.replace("\u00f7", "/")  # ÷ → /
+    expression = expression.replace("\u2212", "-")  # − → -
+
     # Replace multi-word function names before whitespace removal collapses them
     # e.g., "square root" -> "sqrt", "cube root" -> "cbrt"
     for phrase, replacement in sorted(_MULTI_WORD_FUNCTIONS.items(), key=lambda x: len(x[0]), reverse=True):
@@ -1331,6 +1339,17 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     _SINGLE_UNITS_FOR_CONVERSION = ["mph", "kph", "knot", "ft/s", "ft/min"]
     for from_unit in _COMPOUND_UNITS:
         for to_unit in _COMPOUND_UNITS + _SINGLE_UNITS_FOR_CONVERSION:
+            if from_unit != to_unit:
+                pattern = rf"(\d+(?:\.\d+)?)\s*\*?\s*{re.escape(from_unit)}\s*(?:in|to|IN|TO)\s*{re.escape(to_unit)}"
+                replacement_fn = lambda m, fu=from_unit, tu=to_unit: f"convert({m.group(1)}*{fu},{tu})"
+                expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
+
+    # Handle single-unit sources converting to compound targets
+    # e.g., "100 mph to km/h" -> "convert(100*mph,km/h)"
+    # The / in the target would be split by split_at_operators, so we must
+    # handle this before tokenization.
+    for from_unit in _SINGLE_UNITS_FOR_CONVERSION:
+        for to_unit in _COMPOUND_UNITS:
             if from_unit != to_unit:
                 pattern = rf"(\d+(?:\.\d+)?)\s*\*?\s*{re.escape(from_unit)}\s*(?:in|to|IN|TO)\s*{re.escape(to_unit)}"
                 replacement_fn = lambda m, fu=from_unit, tu=to_unit: f"convert({m.group(1)}*{fu},{tu})"
