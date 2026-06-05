@@ -41,7 +41,7 @@ class ErrorEnvelope(TypedDict):
 
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "math_eval": {
-        "description": "Deterministically evaluate arithmetic, unit conversions, constants, and simple scientific expressions. Use for math and unit tasks instead of asking the model to calculate.",
+        "description": "Evaluate arithmetic, unit conversions, constants, and scientific expressions deterministically. State-mutating functions (setvar, store, etc.) and non-deterministic functions (random, randint, gauss, etc.) are disabled. Use for math and unit tasks instead of asking the model to calculate.",
         "tier": 0,
         "tags": ["math", "evaluation", "arithmetic", "units", "constants"],
         "inputSchema": {
@@ -50,6 +50,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "expression": {
                     "type": "string",
                     "description": "Math expression to evaluate (e.g., '5 + 3', '30m + 100ft', 'five plus three')",
+                    "maxLength": 10000,
                 },
             },
             "required": ["expression"],
@@ -224,6 +225,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "max_diffs": {
                     "type": "integer",
                     "default": 20,
+                    "minimum": 0,
+                    "maximum": 10000,
                     "description": "Maximum diff spans to return",
                 },
                 "include_codepoints": {
@@ -360,6 +363,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "integer",
                     "description": "Maximum number of grapheme clusters to return",
                     "minimum": 0,
+                    "maximum": 1000000,
                 },
             },
             "required": ["text", "max_graphemes"],
@@ -658,7 +662,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "numeric_string_equivalence": {"type": "boolean", "default": False},
                 "casefold_keys": {"type": "boolean", "default": False},
                 "treat_missing_null_as_equal": {"type": "boolean", "default": False},
-                "max_diffs": {"type": "integer", "default":    50},
+                "max_diffs": {"type": "integer", "default": 50, "minimum": 0, "maximum": 10000},
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["a", "b"],
@@ -685,13 +689,13 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "text": {"type": "string"},
-                "byte_offset": {"type": "integer"},
-                "codepoint_index": {"type": "integer"},
-                "line": {"type": "integer"},
-                "column": {"type": "integer"},
-                "utf16_offset": {"type": "integer"},
-                "line_base": {"type": "integer", "default": 1},
-                "column_base": {"type": "integer", "default": 1},
+                "byte_offset": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+                "codepoint_index": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+                "line": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+                "column": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+                "utf16_offset": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+                "line_base": {"type": "integer", "default": 1, "minimum": 0, "maximum": 1},
+                "column_base": {"type": "integer", "default": 1, "minimum": 0, "maximum": 1},
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["text"],
@@ -729,6 +733,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "items": {"type": "string"},
                     "description": "Hash algorithms (sha256, sha1, md5, crc32)",
                     "default": ["sha256"],
+                    "maxItems": 10,
                 },
                 "encoding": {"type": "string", "default": "utf-8"},
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
@@ -847,7 +852,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "maxLength": 1000,
                 },
                 "text": {"type": "string", "description": "Input string to search"},
-                "flags": {"type": "array", "items": {"type": "string"}, "description": "Flag names (IGNORECASE, MULTILINE, DOTALL, etc.)"},
+                "flags": {"type": "array", "items": {"type": "string"}, "description": "Flag names (IGNORECASE, MULTILINE, DOTALL, etc.)", "maxItems": 10},
                 "max_matches": {"type": "integer", "default": 100, "description": "Maximum matches to return", "maximum": 1000},
                 "include_line_column": {"type": "boolean", "default": True, "description": "Include line and column info"},
                 "include_groups": {"type": "boolean", "default": True, "description": "Include capture groups"},
@@ -1296,7 +1301,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "text": {"type": "string", "description": "TOML document string"},
-                "max_tables": {"type": "integer", "default": 100, "description": "Maximum tables to return"},
+                "max_tables": {"type": "integer", "default": 100, "minimum": 1, "maximum": 100000, "description": "Maximum tables to return"},
                 "detail": {"type": "string", "enum": ["summary", "normal", "full"], "default": "normal"},
             },
             "required": ["text"],
@@ -1429,12 +1434,14 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "text": {"type": "string", "description": "Input text"},
-                "start_line": {"type": "integer", "description": "First line to extract"},
-                "end_line": {"type": "integer", "description": "Last line to extract (inclusive)"},
+                "start_line": {"type": "integer", "description": "First line to extract", "minimum": 0, "maximum": 100000000},
+                "end_line": {"type": "integer", "description": "Last line to extract (inclusive)", "minimum": 0, "maximum": 100000000},
                 "line_base": {
                     "type": "integer",
                     "default": 1,
                     "description": "Base for line numbers (1 for 1-based, 0 for 0-based)",
+                    "minimum": 0,
+                    "maximum": 1,
                 },
                 "include_line_numbers": {
                     "type": "boolean",
@@ -1478,12 +1485,14 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "properties": {
                 "left_text": {"type": "string", "description": "First text input"},
                 "right_text": {"type": "string", "description": "Second text input"},
-                "start_line": {"type": "integer", "description": "First line to compare"},
-                "end_line": {"type": "integer", "description": "Last line to compare (inclusive)"},
+                "start_line": {"type": "integer", "description": "First line to compare", "minimum": 0, "maximum": 100000000},
+                "end_line": {"type": "integer", "description": "Last line to compare (inclusive)", "minimum": 0, "maximum": 100000000},
                 "line_base": {
                     "type": "integer",
                     "default": 1,
                     "description": "Base for line numbers",
+                    "minimum": 0,
+                    "maximum": 1,
                 },
                 "comparison_mode": {
                     "type": "string",

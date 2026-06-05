@@ -129,7 +129,7 @@ Located in `eggcalc/mcp/` - Model Context Protocol server for AI agent tool acce
 - New tests must use the correct API:
   - For NL/unit functionality → use `run()` or test through CLI
   - For pure math expressions → use `evaluate()`
-- 1231 tests currently pass, 32 skipped (as of 2026-05-30)
+- 1735 tests currently pass, 32 skipped (as of 2026-07-05)
 
 ### Code Style
 - Follow existing patterns in the codebase

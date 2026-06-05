@@ -21,6 +21,13 @@ from typing import Any
 from .. import __version__
 from .. import evaluator as _evaluator
 from .schemas import TOOL_SCHEMAS
+
+# Flag set the first time handle_request() runs to ensure MCP-safe defaults
+# are configured (allow_random=False, allow_side_effects=False). We do this
+# at first use, not at module import, so importing the MCP module for any
+# reason (e.g. tests of unrelated CLI code that transitively imports the
+# schema) does not globally disable random/setvar.
+_mcp_defaults_configured: bool = False
 from .tools import (
     _sanitize_error,
     canonicalize_text_mcp,
@@ -348,13 +355,33 @@ def _validate_value_against_schema(
 
     Returns None if valid, or an error message string if invalid.
     Supports recursive validation for nested objects and arrays.
+
+    Supported keywords (subset of JSON Schema):
+      type, enum, const, default (ignored — Python kwargs handle defaults),
+      minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf,
+      minLength, maxLength, pattern, format (ignored — see TODO),
+      minItems, maxItems, uniqueItems, items, properties, required,
+      additionalProperties.
+
+    Unsupported (silently ignored): oneOf, anyOf, allOf, not, $ref,
+    patternProperties, dependencies.
     """
     if max_depth <= 0:
         return f"Schema nesting too deep at '{path}'"
 
+    # Reject boolean schemas (true/false) — we don't honor them.
+    if not isinstance(prop, dict):
+        return f"Schema for '{path}' must be an object"
+
     expected_type = prop.get("type")
     if expected_type is None:
         return None
+
+    # JSON Schema allows type as a list (e.g. ["string", "null"]). We do
+    # not support that form (it would silently no-op the type check), so
+    # reject it explicitly.
+    if not isinstance(expected_type, str):
+        return f"Argument '{path}' has unsupported 'type' (must be a string, got {type(expected_type).__name__})"
 
     type_map = {
         "string": str,
@@ -363,6 +390,7 @@ def _validate_value_against_schema(
         "boolean": bool,
         "array": list,
         "object": dict,
+        "null": type(None),
     }
     python_type = type_map.get(expected_type)
     if python_type is not None and not isinstance(value, python_type):
@@ -372,11 +400,15 @@ def _validate_value_against_schema(
     if expected_type in ("integer", "number") and isinstance(value, bool):
         return f"Argument '{path}' must be {expected_type}, got bool"
 
+    const_value = prop.get("const")
+    if const_value is not None and value != const_value:
+        return f"Argument '{path}' must equal {const_value!r}, got {value!r}"
+
     enum_values = prop.get("enum")
     if enum_values is not None and value not in enum_values:
         return f"Argument '{path}' must be one of: {', '.join(str(v) for v in enum_values)}"
 
-    # String length constraints
+    # String length constraints + pattern
     if expected_type == "string" and isinstance(value, str):
         min_length = prop.get("minLength")
         if min_length is not None and len(value) < min_length:
@@ -384,6 +416,14 @@ def _validate_value_against_schema(
         max_length = prop.get("maxLength")
         if max_length is not None and len(value) > max_length:
             return f"Argument '{path}' length {len(value)} exceeds maxLength {max_length}"
+        pattern = prop.get("pattern")
+        if pattern is not None:
+            try:
+                import re as _re
+                if _re.search(pattern, value) is None:
+                    return f"Argument '{path}' does not match pattern {pattern!r}"
+            except _re.error as e:
+                return f"Argument '{path}' has invalid pattern: {e}"
 
     # Numeric range constraints
     if expected_type in ("number", "integer") and isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -398,6 +438,16 @@ def _validate_value_against_schema(
         maximum = prop.get("maximum")
         if maximum is not None and value > maximum:
             return f"Argument '{path}' value {value} exceeds maximum {maximum}"
+        excl_min = prop.get("exclusiveMinimum")
+        if excl_min is not None and value <= excl_min:
+            return f"Argument '{path}' value {value} must be > exclusiveMinimum {excl_min}"
+        excl_max = prop.get("exclusiveMaximum")
+        if excl_max is not None and value >= excl_max:
+            return f"Argument '{path}' value {value} must be < exclusiveMaximum {excl_max}"
+        multiple = prop.get("multipleOf")
+        if multiple is not None and multiple > 0 and not isinstance(value, bool):
+            if value % multiple != 0:
+                return f"Argument '{path}' value {value} is not a multiple of {multiple}"
 
     # Recursive validation for nested objects (only when sub-schema defines properties)
     if expected_type == "object" and isinstance(value, dict):
@@ -433,6 +483,14 @@ def _validate_value_against_schema(
         max_items = prop.get("maxItems")
         if max_items is not None and len(value) > max_items:
             return f"Argument '{path}' has {len(value)} items, exceeds maxItems {max_items}"
+
+        if prop.get("uniqueItems") is True:
+            try:
+                if len(set(value)) != len(value):
+                    return f"Argument '{path}' has duplicate items but uniqueItems is True"
+            except TypeError:
+                # Unhashable items — fall through, we can't enforce uniqueItems.
+                pass
 
         items_schema = prop.get("items")
         if items_schema:
@@ -727,6 +785,21 @@ def _handle_initialize(request: dict) -> dict:
 
 def handle_request(request: Any) -> dict | None:
     """Route MCP request to appropriate handler."""
+    # Ensure MCP-safe defaults are in effect. Idempotent: a one-time
+    # check is enough to set _mcp_mode and configure the default
+    # evaluator. We do this on first call (not at import time) so that
+    # importing this module for any reason does not globally disable
+    # random/setvar in the default evaluator — only code that actually
+    # uses the MCP server gets the MCP-safe defaults.
+    global _mcp_defaults_configured
+    if not _mcp_defaults_configured:
+        _evaluator._mcp_mode = True
+        _evaluator.configure_default_evaluator(
+            allow_random=False,
+            allow_side_effects=False,
+        )
+        _mcp_defaults_configured = True
+
     if not isinstance(request, dict):
         return _invalid_request(None, "Invalid Request: expected JSON object")
 
@@ -805,7 +878,9 @@ def main() -> int:
     """
     import os
     os.environ["EGGCALC_NO_CONFIG"] = "1"
-    _evaluator._mcp_mode = True
+    # MCP-safe defaults are configured by handle_request() on first call,
+    # so the very first request also sets them. We do not need to
+    # configure them here.
     request_times: deque[float] = deque()
     window = 1.0  # sliding window in seconds
 

@@ -1281,7 +1281,11 @@ def normalize_unit(unit: str) -> str:
 
 TEMPERATURE_CONVERSIONS: dict[tuple[str, str], tuple[float, float]] = {
     # (from, to) -> (multiplier, offset)
-    # Note: Offsets are derived values; floating-point precision may cause minor rounding differences
+    # Note: Offsets are derived from the canonical relationships:
+    #   C = K - 273.15,  F = C * 9/5 + 32,  R = F + 459.67
+    # We use the most-precise Python representation (e.g. 273.15 * 1.8
+    # exactly, not the rounded 491.67) so that direct and indirect conversion
+    # paths agree bit-for-bit.
     ("K", "C"): (1.0, -273.15),
     ("C", "K"): (1.0, 273.15),
     ("K", "F"): (1.8, -459.67),
@@ -1290,7 +1294,7 @@ TEMPERATURE_CONVERSIONS: dict[tuple[str, str], tuple[float, float]] = {
     ("F", "C"): (1.0 / 1.8, -32.0 / 1.8),
     ("K", "R"): (1.8, 0.0),
     ("R", "K"): (1.0 / 1.8, 0.0),
-    ("C", "R"): (1.8, 491.67),
+    ("C", "R"): (1.8, 273.15 * 1.8),
     ("R", "C"): (1.0 / 1.8, -273.15),
     ("F", "R"): (1.0, 459.67),
     ("R", "F"): (1.0, -459.67),
@@ -1303,7 +1307,12 @@ def convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
     to_unit = normalize_unit(to_unit)
 
     if from_unit == to_unit:
+        if not math.isfinite(value):
+            raise ValueError(f"Temperature value must be finite, got {value}")
         return value
+
+    if not math.isfinite(value):
+        raise ValueError(f"Temperature value must be finite, got {value}")
 
     key = (from_unit, to_unit)
     if key in TEMPERATURE_CONVERSIONS:

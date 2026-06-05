@@ -405,6 +405,48 @@ def _require_str(value: Any, name: str, tool: str) -> dict | None:
     return None
 
 
+def _validate_str_list(
+    items: Any,
+    arg_name: str,
+    tool: str,
+    max_items: int = MAX_LIST_ITEMS,
+    max_item_length: int = MAX_TEXT_LENGTH,
+) -> dict | None:
+    """Validate that ``items`` is a list of strings with bounded size/length.
+
+    Returns a standard error envelope on failure, or None if valid.
+    """
+    if not isinstance(items, list):
+        return _error_response(
+            "invalid_arguments",
+            f"{arg_name} must be a list, got {type(items).__name__}",
+            tool=tool,
+        )
+    if len(items) > max_items:
+        return _error_response(
+            "input_too_large",
+            f"{arg_name} length {len(items)} exceeds {max_items}",
+            tool=tool,
+        )
+    non_str = [i for i, item in enumerate(items) if not isinstance(item, str)]
+    if non_str:
+        return _error_response(
+            "invalid_arguments",
+            f"All {arg_name} elements must be strings",
+            [f"Non-string items at indices: {non_str[:5]}"],
+            tool=tool,
+        )
+    oversized = [i for i, item in enumerate(items) if len(item) > max_item_length]
+    if oversized:
+        return _error_response(
+            "input_too_large",
+            f"{arg_name} items exceed max length {max_item_length}",
+            [f"Oversized items at indices: {oversized[:5]}"],
+            tool=tool,
+        )
+    return None
+
+
 def _error_response(
     error_type: str,
     error: str,
@@ -507,7 +549,14 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
             f"value must be a finite number, got {type(value).__name__}",
             tool="unit_convert",
         )
-    value = float(value)
+    try:
+        value = float(value)
+    except (OverflowError, ValueError) as e:
+        return _error_response(
+            "invalid_arguments",
+            f"value cannot be converted to a finite float: {e}",
+            tool="unit_convert",
+        )
     if not math.isfinite(value):
         return _error_response(
             "invalid_arguments",
@@ -783,6 +832,8 @@ def text_diff_explain(
         return _success_response(result, tool="text_diff_explain")
     except ValueError as e:
         return _error_response("invalid_arguments", str(e), tool="text_diff_explain")
+    except Exception as e:
+        return _error_response("internal_error", str(e), tool="text_diff_explain")
 
 
 def text_inspect(
@@ -970,12 +1021,33 @@ def validate_brackets(text: str, pairs: dict[str, str] | None = None) -> dict:
     if (err := _require_str(text, "text", "validate_brackets")) is not None:
         return err
 
-    if pairs is not None and not isinstance(pairs, dict):
-        return _error_response(
-            "invalid_arguments",
-            f"pairs must be a dict or None, got {type(pairs).__name__}",
-            tool="validate_brackets",
-        )
+    if pairs is not None:
+        if not isinstance(pairs, dict):
+            return _error_response(
+                "invalid_arguments",
+                f"pairs must be a dict or None, got {type(pairs).__name__}",
+                tool="validate_brackets",
+            )
+        if len(pairs) > 64:
+            return _error_response(
+                "input_too_large",
+                f"pairs dict length {len(pairs)} exceeds maximum of 64",
+                tool="validate_brackets",
+            )
+        for k, v in pairs.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                return _error_response(
+                    "invalid_arguments",
+                    f"pairs keys and values must be strings, got "
+                    f"{type(k).__name__} -> {type(v).__name__}",
+                    tool="validate_brackets",
+                )
+            if len(k) > 16 or len(v) > 16:
+                return _error_response(
+                    "invalid_arguments",
+                    f"pairs key/value length must be <= 16, got {len(k)}/{len(v)}",
+                    tool="validate_brackets",
+                )
 
     try:
         result = _check_brackets(text, pairs)
@@ -1310,6 +1382,19 @@ def json_extract(
     if (err := _require_str(text, "text", "json_extract")) is not None:
         return err
 
+    if not isinstance(pointer, str):
+        return _error_response(
+            "invalid_arguments",
+            f"pointer must be a string, got {type(pointer).__name__}",
+            tool="json_extract",
+        )
+    if len(pointer) > 4096:
+        return _error_response(
+            "input_too_large",
+            f"pointer length {len(pointer)} exceeds 4096",
+            tool="json_extract",
+        )
+
     if not isinstance(max_output_chars, int) or isinstance(max_output_chars, bool):
         return _error_response(
             "invalid_arguments",
@@ -1640,6 +1725,35 @@ def validate_schema_light(text: str, schema: dict, detail: str = "normal") -> di
         return _error_response(
             "input_too_large",
             f"schema length {schema_size} exceeds {MAX_SCHEMA_LENGTH}",
+            tool="validate_schema_light",
+        )
+
+    # Cap schema structural depth to prevent slow recursion inside
+    # _validate_schema_light. We walk the dict/list structure with a
+    # bounded DFS.
+    MAX_SCHEMA_DEPTH = 32
+    try:
+        def _depth(o: Any, d: int) -> int:
+            if d > MAX_SCHEMA_DEPTH:
+                raise ValueError("schema too deeply nested")
+            if isinstance(o, dict):
+                return (
+                    d
+                    if not o
+                    else max(_depth(v, d + 1) for v in o.values())
+                )
+            if isinstance(o, list):
+                return (
+                    d
+                    if not o
+                    else max(_depth(v, d + 1) for v in o)
+                )
+            return d
+        _depth(schema, 0)
+    except ValueError as e:
+        return _error_response(
+            "input_too_large",
+            f"schema nesting too deep (max {MAX_SCHEMA_DEPTH}): {e}",
             tool="validate_schema_light",
         )
 
@@ -2221,6 +2335,21 @@ def text_hash(
     if algorithms is None:
         algorithms = ["sha256"]
 
+    if len(algorithms) > 10:
+        return _error_response(
+            "input_too_large",
+            f"algorithms list length {len(algorithms)} exceeds 10",
+            tool="text_hash",
+        )
+    bad_idx = [i for i, a in enumerate(algorithms) if not isinstance(a, str)]
+    if bad_idx:
+        return _error_response(
+            "invalid_arguments",
+            "All algorithms must be strings",
+            [f"Non-string items at indices: {bad_idx[:5]}"],
+            tool="text_hash",
+        )
+
     try:
         result = _text_hash(text, algorithms, encoding)
     except (LookupError, UnicodeDecodeError):
@@ -2546,6 +2675,27 @@ def text_window(
             tool="text_window",
         )
 
+    # Bounds-check inner integer fields. Schemas validate them but handlers
+    # are defense-in-depth. A negative or absurdly large value would be slow
+    # in downstream _text_position / _text_window math.
+    _MAX_POS = MAX_TEXT_LENGTH * 16
+    for key in ("value", "byte_offset", "codepoint_index", "grapheme_index",
+                "line", "column", "utf16_offset"):
+        if key in position:
+            v = position[key]
+            if not isinstance(v, int) or isinstance(v, bool):
+                return _error_response(
+                    "invalid_arguments",
+                    f"position.{key} must be an integer, got {type(v).__name__}",
+                    tool="text_window",
+                )
+            if v < 0 or v > _MAX_POS:
+                return _error_response(
+                    "invalid_arguments",
+                    f"position.{key}={v} out of range [0, {_MAX_POS}]",
+                    tool="text_window",
+                )
+
     try:
         result = _text_window(text, position, context_lines, include_visible_repr)
         return _success_response(result, tool="text_window")
@@ -2615,6 +2765,19 @@ def json_query(text: str, pointer: str = "") -> dict:
     """
     if (err := _require_str(text, "text", "json_query")) is not None:
         return err
+
+    if not isinstance(pointer, str):
+        return _error_response(
+            "invalid_arguments",
+            f"pointer must be a string, got {type(pointer).__name__}",
+            tool="json_query",
+        )
+    if len(pointer) > 4096:
+        return _error_response(
+            "input_too_large",
+            f"pointer length {len(pointer)} exceeds 4096",
+            tool="json_query",
+        )
 
     try:
         result = _json_query(text, pointer)
@@ -2924,6 +3087,19 @@ def toml_shape_mcp(
     if (err := _require_str(text, "text", "toml_shape")) is not None:
         return err
 
+    if not isinstance(max_tables, int) or isinstance(max_tables, bool):
+        return _error_response(
+            "invalid_arguments",
+            f"max_tables must be an integer, got {type(max_tables).__name__}",
+            tool="toml_shape",
+        )
+    if max_tables < 1 or max_tables > 100_000:
+        return _error_response(
+            "invalid_arguments",
+            f"max_tables must be between 1 and 100000, got {max_tables}",
+            tool="toml_shape",
+        )
+
     valid_details = {"summary", "normal", "full"}
     if detail not in valid_details:
         return _error_response(
@@ -2967,30 +3143,8 @@ def list_dedupe_mcp(
     Returns:
         Success envelope with deduped list, or error envelope.
     """
-    if not isinstance(items, list):
-        return _error_response(
-            "invalid_arguments",
-            f"items must be a list, got {type(items).__name__}",
-            tool="list_dedupe",
-        )
-
-    if len(items) > MAX_LIST_ITEMS:
-        return _error_response(
-            "input_too_large",
-            f"List length {len(items)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
-            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
-            tool="list_dedupe",
-        )
-
-    # Validate all elements are strings
-    non_str = [i for i, item in enumerate(items) if not isinstance(item, str)]
-    if non_str:
-        return _error_response(
-            "invalid_arguments",
-            "All list elements must be strings",
-            [f"Non-string items at indices: {non_str[:5]}"],
-            tool="list_dedupe",
-        )
+    if (err := _validate_str_list(items, "items", "list_dedupe")) is not None:
+        return err
 
     valid_normalizations = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
     if normalization not in valid_normalizations:
@@ -3032,30 +3186,8 @@ def list_sort_mcp(
     Returns:
         Success envelope with sorted list, or error envelope.
     """
-    if not isinstance(items, list):
-        return _error_response(
-            "invalid_arguments",
-            f"items must be a list, got {type(items).__name__}",
-            tool="list_sort",
-        )
-
-    if len(items) > MAX_LIST_ITEMS:
-        return _error_response(
-            "input_too_large",
-            f"List length {len(items)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
-            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
-            tool="list_sort",
-        )
-
-    # Validate all elements are strings
-    non_str = [i for i, item in enumerate(items) if not isinstance(item, str)]
-    if non_str:
-        return _error_response(
-            "invalid_arguments",
-            "All list elements must be strings",
-            [f"Non-string items at indices: {non_str[:5]}"],
-            tool="list_sort",
-        )
+    if (err := _validate_str_list(items, "items", "list_sort")) is not None:
+        return err
 
     valid_normalizations = {"raw", "NFC", "NFD", "NFKC", "NFKD"}
     if normalization not in valid_normalizations:
@@ -3361,20 +3493,8 @@ def shell_quote_join(
     Returns:
         Success envelope with quoted command and roundtrip status, or error envelope.
     """
-    if not isinstance(argv, list):
-        return _error_response(
-            "invalid_arguments",
-            f"argv must be a list, got {type(argv).__name__}",
-            tool="shell_quote_join",
-        )
-
-    if len(argv) > MAX_LIST_ITEMS:
-        return _error_response(
-            "input_too_large",
-            f"argv length {len(argv)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
-            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
-            tool="shell_quote_join",
-        )
+    if (err := _validate_str_list(argv, "argv", "shell_quote_join")) is not None:
+        return err
 
     valid_shells = {"posix"}
     if shell not in valid_shells:
@@ -3435,18 +3555,14 @@ def shell_argv_compare(
             tool="argv_compare",
         )
 
-    if left_argv is not None and not isinstance(left_argv, list):
-        return _error_response(
-            "invalid_arguments",
-            f"left_argv must be a list, got {type(left_argv).__name__}",
-            tool="argv_compare",
-        )
-    if right_argv is not None and not isinstance(right_argv, list):
-        return _error_response(
-            "invalid_arguments",
-            f"right_argv must be a list, got {type(right_argv).__name__}",
-            tool="argv_compare",
-        )
+    if left_argv is not None and (
+        err := _validate_str_list(left_argv, "left_argv", "argv_compare")
+    ) is not None:
+        return err
+    if right_argv is not None and (
+        err := _validate_str_list(right_argv, "right_argv", "argv_compare")
+    ) is not None:
+        return err
 
     if left_command is not None and len(left_command) > MAX_TEXT_LENGTH:
         return _error_response(
@@ -3464,22 +3580,6 @@ def shell_argv_compare(
             tool="argv_compare",
         )
 
-    if left_argv is not None and len(left_argv) > MAX_LIST_ITEMS:
-        return _error_response(
-            "input_too_large",
-            f"left_argv length {len(left_argv)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
-            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
-            tool="argv_compare",
-        )
-
-    if right_argv is not None and len(right_argv) > MAX_LIST_ITEMS:
-        return _error_response(
-            "input_too_large",
-            f"right_argv length {len(right_argv)} exceeds MAX_LIST_ITEMS {MAX_LIST_ITEMS}",
-            [f"Maximum {MAX_LIST_ITEMS} items allowed"],
-            tool="argv_compare",
-        )
-
     try:
         result = _argv_compare(
             left_command=left_command,
@@ -3491,6 +3591,29 @@ def shell_argv_compare(
         return _success_response(result, tool="argv_compare")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="argv_compare")
+
+
+def _dotenv_validate_worker(
+    text: str,
+    allow_export: bool,
+    key_pattern: str,
+    duplicate_policy: str,
+    result_queue: multiprocessing.Queue,
+) -> None:
+    """Run dotenv validation in a child process for ReDoS isolation.
+
+    Must be a top-level function for spawn pickling.
+    """
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+    except (ImportError, ValueError, OSError):
+        pass
+    try:
+        result = _dotenv_validate(text, allow_export, key_pattern, duplicate_policy)
+        result_queue.put(("ok", result))
+    except Exception as exc:
+        result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
 
 
 def dotenv_validate_mcp(
@@ -3572,18 +3695,72 @@ def dotenv_validate_mcp(
             tool="dotenv_validate",
         )
 
+    # Run validation in a subprocess with timeout to prevent ReDoS from
+    # hanging the server. The heuristic _regex_safety_check above filters
+    # most dangerous patterns, but a missed pattern could still hang the
+    # main process without this isolation.
+    ctx = multiprocessing.get_context("spawn")
+    queue: multiprocessing.Queue = ctx.Queue()
+    proc: multiprocessing.Process | None = None
+    released = False
     try:
-        result = _dotenv_validate(text, allow_export, key_pattern, duplicate_policy)
-        return _success_response(result, tool="dotenv_validate")
-    except re.error:
-        return _error_response(
-            "invalid_arguments",
-            f"Invalid key_pattern regex: {key_pattern}",
-            ["Provide a valid regular expression for key_pattern"],
-            tool="dotenv_validate",
-        )
+        _SPAWN_SEMAPHORE.acquire()
+        try:
+            proc = ctx.Process(
+                target=_dotenv_validate_worker,
+                args=(text, allow_export, key_pattern, duplicate_policy, queue),
+            )
+            proc.start()
+        except BaseException:
+            released = True
+            _SPAWN_SEMAPHORE.release()
+            raise
+
+        try:
+            status, value = queue.get(timeout=REGEX_TIMEOUT_SECONDS)
+        except Exception:
+            return _error_response(
+                "timeout",
+                f"dotenv validation timed out after {REGEX_TIMEOUT_SECONDS} seconds",
+                ["Try a simpler key_pattern or shorter text"],
+                tool="dotenv_validate",
+            )
+        finally:
+            try:
+                queue.close()
+            except Exception:
+                pass
+            try:
+                queue.join_thread()
+            except Exception:
+                pass
+            if proc is not None:
+                if proc.is_alive():
+                    proc.terminate()
+                    proc.join(timeout=2)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=1)
+                if proc.is_alive():
+                    with _orphaned_regex_lock:
+                        _orphaned_regex_processes.add(proc)
+                        _orphaned_regex_order.append(proc)
+                        while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
+                            oldest = _orphaned_regex_order.pop(0)
+                            _orphaned_regex_processes.discard(oldest)
+                try:
+                    proc.close()
+                except Exception:
+                    pass
+
+        if status == "error":
+            return _error_response("internal_error", value, tool="dotenv_validate")
+        return _success_response(value, tool="dotenv_validate")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="dotenv_validate")
+    finally:
+        if not released:
+            _SPAWN_SEMAPHORE.release()
 
 
 def ini_validate_mcp(
@@ -3854,6 +4031,22 @@ def identifier_table_inspect_mcp(
             bad_entries.append(f"[{i}] 'name' must be a string, got {type(entry['name']).__name__}")
         elif len(entry["name"]) > MAX_TEXT_LENGTH:
             bad_entries.append(f"[{i}] 'name' length {len(entry['name'])} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}")
+        else:
+            # Optional fields have bounded types.
+            kind = entry.get("kind")
+            if kind is not None and not isinstance(kind, str):
+                bad_entries.append(f"[{i}] 'kind' must be a string, got {type(kind).__name__}")
+            file_ = entry.get("file")
+            if file_ is not None and not isinstance(file_, str):
+                bad_entries.append(f"[{i}] 'file' must be a string, got {type(file_).__name__}")
+            line = entry.get("line")
+            if line is not None and (
+                not isinstance(line, int) or isinstance(line, bool) or line < 0
+            ):
+                bad_entries.append(f"[{i}] 'line' must be a non-negative integer, got {type(line).__name__}")
+            language = entry.get("language")
+            if language is not None and not isinstance(language, str):
+                bad_entries.append(f"[{i}] 'language' must be a string, got {type(language).__name__}")
     if bad_entries:
         return _error_response(
             "invalid_arguments",

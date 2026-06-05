@@ -72,9 +72,38 @@ MAX_NESTING_DEPTH = 100
 MAX_RESULT_VALUE = 1e308
 MAX_RESULT_DIGITS = 10000
 MAX_SHIFT_COUNT = 50000
+MAX_INPUT_LENGTH = 10_000  # max characters in expression string
+MAX_USER_VARIABLES = 1000  # cap on setvar entries per evaluator
 DEFAULT_CACHE_SIZE = 1024
 MAX_CACHE_BYTES = 64 * 1024 * 1024  # 64 MB soft cap for _cache
 _SORTED_UNIT_ALIASES: list[str] = sorted(UNIT_ALIASES.keys(), key=len, reverse=True)
+
+# Functions whose output is non-deterministic (depend on global random state).
+# These are opt-in: Evaluator(allow_random=False) rejects calls to them. The
+# default CLI evaluator leaves them enabled; the MCP-mode default evaluator
+# disables them so that "Deterministically evaluate" is true by default for
+# agents consuming the math_eval tool.
+_RANDOM_FUNCTIONS: frozenset[str] = frozenset({
+    "random", "randint", "randrange", "uniform", "randn", "gauss", "seed",
+})
+
+# Functions that mutate Evaluator state across calls (memory registers,
+# user variables). In MCP mode these are disabled to prevent cross-request
+# state pollution and uncontrolled memory growth.
+_SIDE_EFFECT_FUNCTIONS: frozenset[str] = frozenset({
+    "store", "recall", "M", "Mplus", "Mminus", "MC", "MR",
+    "setvar", "getvar", "delvar", "listvars", "clearvars",
+})
+
+# Functions that require a dimensionless argument. Calling these with a
+# UnitValue previously silently stripped the unit (e.g. ``fact(5m) -> 120``,
+# ``ceil(3.7m) -> 4``), which is misleading because the unit looks like it
+# participates in the computation. We now reject UnitValue with a unit and
+# raise a clear EvaluationError.
+_DIMENSIONLESS_REQUIRED_FUNCTIONS: frozenset[str] = frozenset({
+    "abs", "floor", "ceil", "trunc", "round", "sign",
+    "factorial", "fact", "gcd", "lcm", "perm", "comb", "nPr", "nCr",
+})
 
 # Historical note: some one-letter constant names (e.g., 'c', 'k', 'r') are
 # effectively shadowed by UNIT_ALIASES in visit_Name's lookup order, but
@@ -301,6 +330,16 @@ def _evict_until_under_cap() -> None:
 def _cached_normalize_and_evaluate(expression: str) -> Any:
     """Cache for normalized and evaluated expressions."""
     global _cache_bytes
+    # Bypass the cache for non-deterministic expressions so that repeated
+    # calls (e.g. random(), randint) don't return stale results. Match the
+    # function name only when followed by '(' so we don't false-positive
+    # on the word "random" inside a larger identifier or comment.
+    lowered = expression.lower()
+    if any(
+        f"{name}(" in lowered
+        for name in _RANDOM_FUNCTIONS
+    ):
+        return _normalize_and_evaluate_uncached(expression)
     with _cache_lock:
         if expression in _cache:
             _cache.move_to_end(expression)
@@ -326,6 +365,17 @@ def _cached_normalize_and_evaluate(expression: str) -> Any:
         _evict_until_under_cap()
 
     return result
+
+
+def _normalize_and_evaluate_uncached(expression: str) -> Any:
+    """Run the normalize-then-evaluate pipeline without consulting the cache."""
+    _ensure_config_loaded()
+    from .normalize import NORMALIZE, PATTERNS, normalize_expression
+
+    normalized, exit_code = normalize_expression(expression, NORMALIZE, PATTERNS)
+    if exit_code != 0:
+        raise EvaluationError(f"Invalid expression: {expression}")
+    return _default_evaluator.evaluate(normalized)
 
 
 def evaluate_cached(expression: str) -> Any:
@@ -419,6 +469,34 @@ def _safe_pow(base: float, exp: float) -> float:
     return result
 
 
+def _require_int(value: Any, name: str) -> int:
+    """Coerce a value to int, rejecting UnitValue, bool, complex, and non-integer float.
+
+    Used by functions that semantically require an integer (factorial, gcd,
+    comb, perm, etc.) to prevent silent coercion of, e.g., ``gcd(12.0, 8.0)``
+    or ``fact(5m)``.
+    """
+    if isinstance(value, UnitValue):
+        raise EvaluationError(
+            f"{name}() requires a dimensionless argument, got value with unit '{value.unit}'"
+        )
+    if isinstance(value, bool):
+        raise EvaluationError(f"{name}() requires an integer argument, got bool")
+    if isinstance(value, complex):
+        raise EvaluationError(f"{name}() requires an integer argument, got complex")
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise EvaluationError(
+                f"{name}() requires an integer argument, got non-integer float {value}"
+            )
+        return int(value)
+    if isinstance(value, int):
+        return value
+    raise EvaluationError(
+        f"{name}() requires an integer argument, got {type(value).__name__}"
+    )
+
+
 def _int_digit_count(n: int) -> int:
     """Count digits of an integer, safely handling Python 3.11+ str() limits."""
     try:
@@ -432,12 +510,7 @@ def _int_digit_count(n: int) -> int:
 
 def _safe_factorial(n: int) -> int:
     """Safe factorial with input bounds checking to prevent DoS."""
-    if isinstance(n, float):
-        if not n.is_integer():
-            raise EvaluationError("factorial requires integer input")
-        if abs(n) > MAX_FACTORIAL:
-            raise EvaluationError(f"factorial input too large (max {MAX_FACTORIAL})")
-    n = int(n)
+    n = _require_int(n, "factorial")
     if n < 0:
         raise EvaluationError("factorial requires non-negative input")
     if n > MAX_FACTORIAL:
@@ -710,12 +783,21 @@ def _bitnot(a: int) -> int:
 
 def _bitlshift_safe(a: int, b: int) -> int:
     """Left shift with bounds checks."""
+    a = int(a)
     b = int(b)
     if b < 0:
         raise EvaluationError("Shift count must be non-negative")
     if b > MAX_SHIFT_COUNT:
         raise EvaluationError(f"Shift count too large (max {MAX_SHIFT_COUNT}, got {b})")
-    return int(a) << b
+    # Pre-check: a << b would have ~a.bit_length() + b bits, which
+    # corresponds to roughly (a.bit_length() + b) * log10(2) digits. Bail
+    # before computing so we don't allocate huge ints in the worker.
+    if a.bit_length() + b > MAX_RESULT_DIGITS * 3:
+        raise EvaluationError(
+            f"Left shift would produce an integer with more than "
+            f"{MAX_RESULT_DIGITS} digits"
+        )
+    return a << b
 
 
 def _bitrshift_safe(a: int, b: int) -> int:
@@ -731,7 +813,7 @@ def _bitrshift_safe(a: int, b: int) -> int:
 
 def _perm(n: int, r: int | None = None) -> int:
     """Calculate permutations P(n,r) = n!/(n-r)!."""
-    n = int(n)
+    n = _require_int(n, "perm")
     if n < 0:
         raise EvaluationError("perm requires non-negative input")
     if n > 10000:
@@ -741,7 +823,7 @@ def _perm(n: int, r: int | None = None) -> int:
         if _int_digit_count(result) > MAX_RESULT_DIGITS:
             raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
         return result
-    r = int(r)
+    r = _require_int(r, "perm")
     if r < 0:
         raise EvaluationError("perm requires non-negative arguments")
     if r > n:
@@ -756,7 +838,8 @@ def _perm(n: int, r: int | None = None) -> int:
 
 def _comb(n: int, r: int) -> int:
     """Calculate combinations C(n,r) = n!/(r!(n-r)!)."""
-    n, r = int(n), int(r)
+    n = _require_int(n, "comb")
+    r = _require_int(r, "comb")
     if n < 0 or r < 0:
         raise EvaluationError("comb requires non-negative arguments")
     if n > 10000:
@@ -775,13 +858,13 @@ def _lcm(*args: int) -> int:
     """Calculate least common multiple."""
     if not args:
         raise EvaluationError("lcm requires at least one argument")
-    result = int(abs(args[0]))
-    for arg in args[1:]:
-        b = int(arg)
-        g = math.gcd(result, b)
+    validated = [_require_int(a, "lcm") for a in args]
+    result = abs(validated[0])
+    for arg in validated[1:]:
+        g = math.gcd(result, arg)
         if g == 0:
             return 0
-        result = abs(result * b) // g
+        result = abs(result * arg) // g
     return result
 
 
@@ -1143,7 +1226,19 @@ def _fn_clear(register: str | None = None) -> None:
 
 def _fn_setvar(name: str, value: Any) -> Any:
     ev = _get_current_evaluator()
+    if not isinstance(name, str) or not name:
+        raise EvaluationError("setvar: name must be a non-empty string")
+    if not name.isidentifier():
+        raise EvaluationError(
+            f"setvar: name must be a valid identifier, got {name!r}"
+        )
     with ev._var_lock:
+        # Cap _user_variables size to prevent unbounded memory growth from
+        # repeated setvar calls with unique names. Oldest entries (in
+        # insertion order) are evicted.
+        if name not in ev._user_variables and len(ev._user_variables) >= MAX_USER_VARIABLES:
+            oldest_key = next(iter(ev._user_variables))
+            del ev._user_variables[oldest_key]
         ev._user_variables[name] = value
     return value
 
@@ -1507,7 +1602,9 @@ class Evaluator(ast.NodeVisitor):
         # Power and root (complex-aware)
         "sqrt": _sqrt,
         "pow": _safe_pow,
-        # Rounding and absolute
+        # Rounding and absolute — visit_Call rejects UnitValue-with-unit
+        # for these via _DIMENSIONLESS_REQUIRED_FUNCTIONS, so the functions
+        # themselves can stay as plain builtins.
         "abs": abs,
         "floor": math.floor,
         "ceil": math.ceil,
@@ -1648,13 +1745,26 @@ class Evaluator(ast.NodeVisitor):
         ast.Invert: (lambda x: ~int(x)),
     }
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        allow_random: bool = True,
+        allow_side_effects: bool = True,
+    ) -> None:
         """Initialize evaluator with instance-level state.
 
         Each Evaluator instance has its own copy of constants, functions,
         user variables, and memory registers. This enables true instance
         isolation in PyCalcApp: variables set on one instance are not
         visible to other instances or the module-level default evaluator.
+
+        Args:
+            allow_random: If False, calls to random functions (random,
+                randint, randrange, uniform, randn, gauss, seed) raise
+                EvaluationError. Use to guarantee deterministic output.
+            allow_side_effects: If False, calls to state-mutating functions
+                (store/recall/M/Mplus/.../setvar/getvar/clearvars/...) raise
+                EvaluationError. Use to prevent cross-request state pollution
+                in long-running servers.
         """
         self.CONSTANTS = self.__class__.CONSTANTS.copy()
         self.FUNCTIONS = self.__class__.FUNCTIONS.copy()
@@ -1662,6 +1772,8 @@ class Evaluator(ast.NodeVisitor):
         self._user_variables: dict[str, Any] = {}
         self._var_lock = threading.Lock()
         self._depth = 0
+        self._allow_random = allow_random
+        self._allow_side_effects = allow_side_effects
 
     def visit(self, node: ast.AST) -> Any:
         """Visit a node with depth tracking to prevent deep recursion."""
@@ -1932,6 +2044,17 @@ class Evaluator(ast.NodeVisitor):
         if func_name is None or func_name not in self.FUNCTIONS:
             raise EvaluationError(f"Function '{func_name}' is not allowed")
 
+        if not self._allow_random and func_name in _RANDOM_FUNCTIONS:
+            raise EvaluationError(
+                f"Function '{func_name}' is non-deterministic and is disabled "
+                f"in this Evaluator (allow_random=False)"
+            )
+        if not self._allow_side_effects and func_name in _SIDE_EFFECT_FUNCTIONS:
+            raise EvaluationError(
+                f"Function '{func_name}' mutates evaluator state and is "
+                f"disabled in this Evaluator (allow_side_effects=False)"
+            )
+
         # Special handling for temp function to preserve unit names
         if func_name == "temp":
             args = []
@@ -1964,6 +2087,19 @@ class Evaluator(ast.NodeVisitor):
         args = []
         for arg in node.args:
             result = self.visit(arg)
+            # Reject UnitValue-with-unit for functions that semantically
+            # require a dimensionless argument. The previous behavior was
+            # to silently strip the unit and return a misleading
+            # dimensionless result (e.g. fact(5m) -> 120).
+            if (
+                func_name in _DIMENSIONLESS_REQUIRED_FUNCTIONS
+                and isinstance(result, UnitValue)
+                and result.unit is not None
+            ):
+                raise EvaluationError(
+                    f"Function '{func_name}()' requires a dimensionless "
+                    f"argument, got value with unit '{result.unit}'"
+                )
             if isinstance(result, UnitValue):
                 args.append(result.value)
             else:
@@ -2013,10 +2149,29 @@ class Evaluator(ast.NodeVisitor):
         """Evaluate an expression and return the result."""
         token = _current_evaluator.set(self)
         try:
+            if not isinstance(expression, str):
+                raise EvaluationError(
+                    f"Expression must be a string, got {type(expression).__name__}"
+                )
+            if len(expression) > MAX_INPUT_LENGTH:
+                raise EvaluationError(
+                    f"Expression too long (max {MAX_INPUT_LENGTH} characters, got {len(expression)})"
+                )
             try:
                 tree = ast.parse(expression, mode="eval")
             except SyntaxError as e:
                 raise EvaluationError(f"Invalid syntax: '{expression}'") from e
+
+            # Cap total AST node count to bound the cost of validation/visit.
+            # A long expression can contain many small nodes (e.g. 1+1+1+1+...)
+            # that would each trigger _validate_node, so an explicit count cap
+            # prevents CPU DoS by attackers crafting adversarial shapes.
+            _MAX_AST_NODES = 10_000
+            node_count = sum(1 for _ in ast.walk(tree))
+            if node_count > _MAX_AST_NODES:
+                raise EvaluationError(
+                    f"Expression has too many AST nodes (max {_MAX_AST_NODES}, got {node_count})"
+                )
 
             # Validate all nodes
             for node in ast.walk(tree):
@@ -2083,11 +2238,21 @@ class TimeoutError(Exception):
     pass
 
 
-def _evaluate_with_timeout_worker(expr: str, result_queue: multiprocessing.Queue) -> None:
+def _evaluate_with_timeout_worker(
+    expr: str,
+    result_queue: multiprocessing.Queue,
+    allow_random: bool = True,
+    allow_side_effects: bool = True,
+) -> None:
     """Run evaluation in a child process and put result in queue.
 
     Must be a module-level function (not nested) so it can be pickled
     by the 'spawn' multiprocessing start method.
+
+    The ``allow_random`` and ``allow_side_effects`` flags configure the
+    child process's default evaluator to match the parent's policy. In
+    MCP mode the parent passes ``False`` for both, so children inherit
+    the same restrictions without sharing any module-level state.
 
     Note: ``resource.setrlimit(RLIMIT_AS, ...)`` is a Linux/POSIX feature.
     On macOS, the kernel silently ignores ``RLIMIT_AS`` and the
@@ -2105,13 +2270,22 @@ def _evaluate_with_timeout_worker(expr: str, result_queue: multiprocessing.Queue
         pass
     try:
         _ensure_config_loaded()
+        configure_default_evaluator(
+            allow_random=allow_random,
+            allow_side_effects=allow_side_effects,
+        )
         result = evaluate_raw(expr)
         result_queue.put(("ok", result))
     except Exception as exc:
         result_queue.put(("error", f"{type(exc).__name__}: {exc}"))
 
 
-def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
+def evaluate_with_timeout(
+    expression: str,
+    timeout: float = 5.0,
+    allow_random: bool | None = None,
+    allow_side_effects: bool | None = None,
+) -> Any:
     """Evaluate an expression with a timeout for untrusted input.
 
     This is the recommended function for evaluating expressions from
@@ -2139,16 +2313,35 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
         Expressions that exceed MAX_EXPONENT (10000) or MAX_FACTORIAL (1000)
         will fail with EvaluationError before the timeout is reached.
 
+    Args:
+        expression: A raw expression string (with spaces, natural language, etc.)
+        timeout: Maximum time in seconds (default: 5.0)
+        allow_random: If provided, configures the child process's default
+            evaluator to permit or deny random functions (random, randint,
+            ...). When ``None`` (the default), the parent process's current
+            setting is forwarded.
+        allow_side_effects: If provided, configures the child process's
+            default evaluator to permit or deny state-mutating functions
+            (setvar, store, ...). When ``None``, the parent process's
+            current setting is forwarded.
+
     Example:
         >>> result = evaluate_with_timeout("sum([i**2 for i in range(100)])", timeout=1.0)
         # May raise TimeoutError for slow expressions
     """
+    if allow_random is None:
+        allow_random = _default_evaluator._allow_random
+    if allow_side_effects is None:
+        allow_side_effects = _default_evaluator._allow_side_effects
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
     proc: multiprocessing.Process | None = None
     _EVAL_SPAWN_SEMAPHORE.acquire()
     try:
-        proc = ctx.Process(target=_evaluate_with_timeout_worker, args=(expression, queue))
+        proc = ctx.Process(
+            target=_evaluate_with_timeout_worker,
+            args=(expression, queue, allow_random, allow_side_effects),
+        )
         proc.start()
     except Exception:
         _EVAL_SPAWN_SEMAPHORE.release()
@@ -2201,10 +2394,34 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
     return value
 
 
-_default_evaluator = Evaluator()
+_default_evaluator = Evaluator(
+    allow_random=not _mcp_mode,
+    allow_side_effects=not _mcp_mode,
+)
 
 
 _check_constant_unit_collisions()
+
+
+def configure_default_evaluator(
+    allow_random: bool | None = None,
+    allow_side_effects: bool | None = None,
+) -> None:
+    """Update the default evaluator's allow-flags at runtime.
+
+    This is intended to be called by transport layers (e.g. the MCP server's
+    ``main()``) after setting ``_mcp_mode``. Pass only the flags you want
+    to change; ``None`` leaves the current setting intact.
+
+    Args:
+        allow_random: New value for ``Evaluator._allow_random`` (or None to keep).
+        allow_side_effects: New value for ``Evaluator._allow_side_effects``
+            (or None to keep).
+    """
+    if allow_random is not None:
+        _default_evaluator._allow_random = allow_random
+    if allow_side_effects is not None:
+        _default_evaluator._allow_side_effects = allow_side_effects
 
 
 def get_default_evaluator() -> Evaluator:

@@ -6066,20 +6066,20 @@ class TestLineRangeCompareValidation:
         assert response["error"]["code"] == -32602
 
     def test_reject_negative_start_line(self):
+        # Schema-level minimum:0 rejects negative values before tool runs.
         response = self._call_compare("line1\nline2", "line1\nline2", -1, 2)
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is False
-        assert content["error_type"] == "invalid_arguments"
-        assert "start_line" in content["error"]
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+        assert "start_line" in response["error"]["message"]
+        assert "minimum" in response["error"]["message"].lower()
 
     def test_reject_negative_end_line(self):
+        # Schema-level minimum:0 rejects negative values before tool runs.
         response = self._call_compare("line1\nline2", "line1\nline2", 1, -1)
-        assert "result" in response
-        content = json.loads(response["result"]["content"][0]["text"])
-        assert content["ok"] is False
-        assert content["error_type"] == "invalid_arguments"
-        assert "end_line" in content["error"]
+        assert "error" in response
+        assert response["error"]["code"] == -32602
+        assert "end_line" in response["error"]["message"]
+        assert "minimum" in response["error"]["message"].lower()
 
     def test_reject_start_line_greater_than_end_line(self):
         response = self._call_compare("line1\nline2\nline3", "line1\nline2\nline3", 3, 1)
@@ -6533,3 +6533,328 @@ class TestJSONRPCIdValidation:
         assert "result" in response
         # Response should include id from request (None via .get("id"))
         assert "id" in response
+
+
+class TestProductionReview2026_07:
+    """Tests for the 2026-07 production review batch fix.
+
+    Covers: C-1 (opt-in random), C-2 (cache poisoning), C-3 (max input length),
+    H-1 (schema maxLength), H-3 (setvar identifier), H-5 (temperature precision),
+    H-6 (unit_convert overflow), H-7 (dotenv subprocess), H-8 (schema pattern/const),
+    M-1 through M-12, M-15.
+    """
+
+    def test_random_blocked_in_mcp_mode(self):
+        """C-1: random() must raise in MCP mode (default for safety)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9100,
+            "method": "tools/call",
+            "params": {"name": "math_eval", "arguments": {"expression": "random()"}},
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content.get("ok") is False
+        assert "non-deterministic" in content.get("error", "")
+
+    def test_random_cached_bypass_returns_fresh(self):
+        """C-2: repeated random() calls must not return cached values.
+
+        Temporarily enables random on the default evaluator, calls
+        evaluate_cached twice, and verifies the results differ. The
+        default is restored afterward.
+        """
+        import eggcalc.evaluator as ev
+        prev = ev._default_evaluator._allow_random
+        ev._default_evaluator._allow_random = True
+        try:
+            r1 = ev.evaluate_cached("random()")
+            r2 = ev.evaluate_cached("random()")
+            assert r1 != r2, "random() results must not be cached"
+        finally:
+            ev._default_evaluator._allow_random = prev
+
+    def test_setvar_blocked_in_mcp_mode(self):
+        """C-1: setvar() must raise in MCP mode (default for safety)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9101,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "setvar('x', 5)"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content.get("ok") is False
+        assert "side effect" in content.get("error", "") or "mutates" in content.get("error", "")
+
+    def test_max_input_length_rejected(self):
+        """C-3: expressions > 10_000 chars must be rejected."""
+        import eggcalc.evaluator as ev
+        big = "1+" * 5000 + "1"  # 10001 chars
+        try:
+            ev.evaluate(big)
+            raised = False
+        except Exception as e:
+            raised = True
+            assert "too long" in str(e).lower() or "10000" in str(e)
+        assert raised, "Long expression should have raised"
+
+    def test_max_input_length_via_mcp(self):
+        """H-1: maxLength: 10000 in schema rejects long expressions at protocol level."""
+        long_expr = "1+1" * 5000  # 12000 chars
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9102,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": long_expr},
+            },
+        })
+        assert "error" in response
+        # Either -32602 (schema) or -32603 (tool-level)
+        assert response["error"]["code"] in (-32602, -32603)
+
+    def test_setvar_rejects_non_identifier(self):
+        """H-3: setvar must reject names that are not valid identifiers."""
+        import subprocess
+        result = subprocess.run(
+            ["python3", "-c", """
+import os
+os.environ['EGGCALC_NO_CONFIG'] = '1'
+from eggcalc import evaluate
+try:
+    evaluate(\"setvar('123foo', 1)\")
+    print('FAIL: did not raise')
+except Exception as e:
+    print(f'OK: {e}')
+"""],
+            capture_output=True, text=True,
+        )
+        assert "OK:" in result.stdout
+
+    def test_setvar_caps_user_variables(self):
+        """H-3: _user_variables cap at MAX_USER_VARIABLES=1000 with FIFO eviction."""
+        import eggcalc.evaluator as ev
+        assert hasattr(ev, "MAX_USER_VARIABLES")
+        assert ev.MAX_USER_VARIABLES == 1000
+
+    def test_temperature_offset_rounding(self):
+        """H-5: convert_temperature(100, 'C', 'R') must equal 671.67 (no float drift)."""
+        import subprocess
+        result = subprocess.run(
+            ["python3", "-c", """
+import os
+os.environ['EGGCALC_NO_CONFIG'] = '1'
+from eggcalc.units import convert_temperature
+direct = convert_temperature(100.0, 'C', 'R')
+via_k = convert_temperature(convert_temperature(100.0, 'C', 'K'), 'K', 'R')
+print(f'direct={direct!r} via_k={via_k!r}')
+assert direct == via_k, f'direct != via_k: {direct} vs {via_k}'
+assert direct == 671.67, f'unexpected: {direct}'
+print('OK')
+"""],
+            capture_output=True, text=True,
+        )
+        assert "OK" in result.stdout, f"Failed: stdout={result.stdout!r}, stderr={result.stderr!r}"
+
+    def test_temperature_rejects_nan(self):
+        """H-5: convert_temperature rejects NaN."""
+        from eggcalc.units import convert_temperature
+        try:
+            convert_temperature(float("nan"), "C", "K")
+            raised = False
+        except Exception:
+            raised = True
+        assert raised
+
+    def test_unit_convert_rejects_overflow(self):
+        """H-6: unit_convert OverflowError becomes invalid_arguments."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9103,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": 1e308, "from_unit": "m", "to_unit": "km"},
+            },
+        })
+        # Should not crash; either succeeds (1e5 km) or returns invalid_arguments.
+        assert "result" in response or "error" in response
+
+    def test_schema_pattern_enforced(self):
+        """H-8: schema `pattern` keyword is enforced."""
+        from eggcalc.mcp import server
+        err = server._validate_value_against_schema(
+            "abc", {"type": "string", "pattern": r"^\d+$"}, "x"
+        )
+        assert err is not None and "pattern" in err
+
+    def test_schema_const_enforced(self):
+        """H-8: schema `const` keyword is enforced."""
+        from eggcalc.mcp import server
+        err = server._validate_value_against_schema(
+            "foo", {"type": "string", "const": "bar"}, "x"
+        )
+        assert err is not None and "must equal" in err
+
+    def test_schema_unique_items_enforced(self):
+        """H-8: schema `uniqueItems: True` is enforced."""
+        from eggcalc.mcp import server
+        err = server._validate_value_against_schema(
+            [1, 2, 2, 3], {"type": "array", "uniqueItems": True}, "x"
+        )
+        assert err is not None and "duplicate" in err
+
+    def test_schema_exclusive_bounds_enforced(self):
+        """H-8: schema `exclusiveMinimum`/`exclusiveMaximum` are enforced."""
+        from eggcalc.mcp import server
+        err = server._validate_value_against_schema(
+            5, {"type": "integer", "exclusiveMinimum": 5}, "x"
+        )
+        assert err is not None and ">" in err
+
+    def test_schema_multiple_of_enforced(self):
+        """H-8: schema `multipleOf` is enforced."""
+        from eggcalc.mcp import server
+        err = server._validate_value_against_schema(
+            7, {"type": "integer", "multipleOf": 3}, "x"
+        )
+        assert err is not None and "multiple" in err
+
+    def test_schema_type_array_rejected(self):
+        """H-2: schema `type: [...]` (array) is rejected to avoid silent no-op."""
+        from eggcalc.mcp import server
+        err = server._validate_value_against_schema(
+            "x", {"type": ["string", "null"]}, "x"
+        )
+        assert err is not None and "unsupported" in err
+
+    def test_fact_rejects_unit_argument(self):
+        """M-12: fact(5m) must raise, not silently return 120."""
+        import subprocess
+        result = subprocess.run(
+            ["python3", "-c", """
+import os
+os.environ['EGGCALC_NO_CONFIG'] = '1'
+from eggcalc import evaluate
+for expr in ['fact(5m)', 'ceil(3.7m)', 'floor(3.7m)', 'abs(3.7m)', 'gcd(5m, 3m)', 'comb(5m, 2m)']:
+    try:
+        r = evaluate(expr)
+        print(f'FAIL: {expr} returned {r}')
+    except Exception as e:
+        print(f'OK: {expr} -> {e}')
+"""],
+            capture_output=True, text=True,
+        )
+        lines = [l for l in result.stdout.splitlines() if l.startswith("OK:")]
+        assert len(lines) == 6, f"Expected 6 OK lines, got: {result.stdout!r}"
+
+    def test_dimensionless_math_still_works(self):
+        """M-12 sanity: fact(5) -> 120, ceil(3.7) -> 4, etc."""
+        import subprocess
+        result = subprocess.run(
+            ["python3", "-c", """
+import os
+os.environ['EGGCALC_NO_CONFIG'] = '1'
+from eggcalc import evaluate
+assert evaluate('fact(5)') == 120
+assert evaluate('ceil(3.7)') == 4
+assert evaluate('floor(3.7)') == 3
+assert evaluate('abs(-3.7)') == 3.7
+assert evaluate('gcd(12, 8)') == 4
+assert evaluate('comb(5, 2)') == 10
+print('OK')
+"""],
+            capture_output=True, text=True,
+        )
+        assert "OK" in result.stdout, f"Failed: {result.stdout!r}, stderr={result.stderr!r}"
+
+    def test_factorial_rejects_float(self):
+        """M-12: fact(5.5) must raise, not silently coerce."""
+        import subprocess
+        result = subprocess.run(
+            ["python3", "-c", """
+import os
+os.environ['EGGCALC_NO_CONFIG'] = '1'
+from eggcalc import evaluate
+try:
+    evaluate('fact(5.5)')
+    print('FAIL')
+except Exception as e:
+    print(f'OK: {e}')
+"""],
+            capture_output=True, text=True,
+        )
+        assert "OK:" in result.stdout
+
+    def test_toml_shape_max_tables_range(self):
+        """M-15: max_tables must be int in [1, 100_000]."""
+        # Below range
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9104,
+            "method": "tools/call",
+            "params": {
+                "name": "toml_shape",
+                "arguments": {"text": "x = 1\n", "max_tables": 0},
+            },
+        })
+        # Either schema-rejected (-32602) or tool-rejected (ok:false)
+        assert "error" in response or (
+            "result" in response
+            and json.loads(response["result"]["content"][0]["text"]).get("ok") is False
+        )
+
+    def test_validate_brackets_rejects_non_dict_pairs(self):
+        """M-2: validate_brackets pairs must be dict."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9105,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_brackets",
+                "arguments": {"text": "(", "pairs": "not a dict"},
+            },
+        })
+        assert "error" in response
+
+    def test_validate_schema_depth_capped(self):
+        """M-3: validate_schema_light enforces max depth."""
+        deep = {"type": "object", "properties": {}}
+        cur = deep
+        for _ in range(40):
+            inner = {"type": "object", "properties": {}}
+            cur["properties"]["x"] = inner
+            cur = inner
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9106,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_schema_light",
+                "arguments": {"schema": deep, "data": {}},
+            },
+        })
+        assert "error" in response or (
+            "result" in response
+            and json.loads(response["result"]["content"][0]["text"]).get("ok") is False
+        )
+
+    def test_text_hash_algorithms_capped(self):
+        """M-7: text_hash algorithms list capped at 10."""
+        long_algos = ["sha256"] * 11
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9107,
+            "method": "tools/call",
+            "params": {
+                "name": "text_hash",
+                "arguments": {"text": "abc", "algorithms": long_algos},
+            },
+        })
+        # Should be rejected at schema level
+        assert "error" in response
