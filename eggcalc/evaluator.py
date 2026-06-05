@@ -65,6 +65,7 @@ _config_loaded = False
 _mcp_mode = False
 _MAX_CONCURRENT_EVAL_SPAWNS = 4
 _EVAL_SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(_MAX_CONCURRENT_EVAL_SPAWNS)
+_EVAL_SPAWN_ACQUIRE_TIMEOUT = 10  # seconds to wait for a spawn slot before failing
 
 MAX_EXPONENT = 10000
 MAX_FACTORIAL = 1000
@@ -168,6 +169,8 @@ def _check_result_size(result: Any) -> Any:
             if math.isnan(result.value.real) or math.isnan(result.value.imag) or \
                math.isinf(result.value.real) or math.isinf(result.value.imag):
                 raise EvaluationError("Result too large")
+            if abs(result.value) > MAX_RESULT_VALUE:
+                raise EvaluationError("Result too large")
         else:
             try:
                 if not math.isfinite(result.value):
@@ -179,6 +182,8 @@ def _check_result_size(result: Any) -> Any:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
     if isinstance(result, complex):
         if math.isnan(result.real) or math.isnan(result.imag) or math.isinf(result.real) or math.isinf(result.imag):
+            raise EvaluationError("Result too large")
+        if abs(result) > MAX_RESULT_VALUE:
             raise EvaluationError("Result too large")
     elif isinstance(result, float):
         if math.isnan(result) or math.isinf(result):
@@ -865,6 +870,8 @@ def _lcm(*args: int) -> int:
         if g == 0:
             return 0
         result = abs(result * arg) // g
+    if isinstance(result, int) and _int_digit_count(result) > MAX_RESULT_DIGITS:
+        raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
     return result
 
 
@@ -1944,13 +1951,16 @@ class Evaluator(ast.NodeVisitor):
             raise EvaluationError(
                 f"Cannot apply {op_class.__name__} to {type(left_val).__name__} and {type(right_val).__name__}"
             )
+        except ZeroDivisionError:
+            raise EvaluationError("Cannot divide by zero")
 
         # Check for NaN/inf in float results (int results cannot be NaN/inf)
         if isinstance(result, float) and (math.isnan(result) or math.isinf(result)):
             raise EvaluationError("Result too large")
 
-        if op_class in (ast.LShift, ast.RShift):
-            if isinstance(result, int) and _int_digit_count(result) > MAX_RESULT_DIGITS:
+        # Check digit count for large int results from Add/Sub/Mult/Shift
+        if isinstance(result, int) and op_class in (ast.Add, ast.Sub, ast.Mult, ast.LShift, ast.RShift):
+            if _int_digit_count(result) > MAX_RESULT_DIGITS:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
 
         # Power operator: handle unit exponentiation (e.g., 5m ** 2 -> 25 m**2)
@@ -2342,7 +2352,11 @@ def evaluate_with_timeout(
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
     proc: multiprocessing.Process | None = None
-    _EVAL_SPAWN_SEMAPHORE.acquire()
+    if not _EVAL_SPAWN_SEMAPHORE.acquire(timeout=_EVAL_SPAWN_ACQUIRE_TIMEOUT):
+        raise EvaluationError(
+            f"Could not acquire spawn slot after {_EVAL_SPAWN_ACQUIRE_TIMEOUT}s "
+            f"(all {_MAX_CONCURRENT_EVAL_SPAWNS} slots busy)"
+        )
     try:
         proc = ctx.Process(
             target=_evaluate_with_timeout_worker,

@@ -543,6 +543,18 @@ def check_if_number(token: str) -> dict:
                 except ValueError:
                     pass
 
+    # Check lowercase temperature units (e.g., "5f", "5c", "5k") that are not
+    # in UNIT_ALIASES but are handled by _preprocess_units via _LOWERCASE_TEMP_UNITS.
+    for temp_unit in _LOWERCASE_TEMP_UNITS:
+        if cleaned.endswith(temp_unit) and len(cleaned) > len(temp_unit):
+            num_part = cleaned[: -len(temp_unit)]
+            if num_part:
+                try:
+                    val = float(num_part)
+                    return {"bool": True, "converted": val, "type": type(token)}
+                except ValueError:
+                    pass
+
     return {"bool": False, "converted": token, "type": type(token)}
 
 
@@ -747,7 +759,7 @@ def apply_math_functions(
                     next_idx < len(tokens)
                     and tokens[next_idx] not in operators["functions"]
                     and tokens[next_idx] != ")"
-                    and not patterns["operators"].match(tokens[next_idx])
+                    and (tokens[next_idx] == "(" or not patterns["operators"].match(tokens[next_idx]))
                 )
                 if not has_trailing_value and output_tokens:
                     if output_tokens[-1] == "*":
@@ -1290,6 +1302,15 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Handle "point" as decimal separator: only when preceded by a digit or ')'
     # This avoids ".5" at expression start while still allowing "5 point 3" -> "5.3"
     expression = re.sub(r"(?<=[\d)])\s*point\s*", ".", expression, flags=re.IGNORECASE)
+
+    # Merge digits following a decimal point: "3.1 4" -> "3.14"
+    # After "point" replacement, space-separated digit words after the decimal
+    # become separate tokens (e.g., "three point one four" -> "3 point 1 4" ->
+    # "3.1 4"). Iteratively concatenate them into a single decimal number.
+    prev_expr = None
+    while prev_expr != expression:
+        prev_expr = expression
+        expression = re.sub(r"(\d+\.\d*)\s+(\d)", lambda m: m.group(1) + m.group(2), expression)
 
     # Handle "N percent" -> "N/100" AFTER word_to_all substitutions
     # This allows NL words like "fifty" to be converted to digits first

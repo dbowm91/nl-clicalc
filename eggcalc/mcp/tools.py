@@ -196,6 +196,7 @@ MAX_CONCURRENT_SPAWNED = 4
 # concurrent spawns can exhaust file descriptors and CPU. Acquire before any
 # Process() is created in validate_regex and math_eval (via evaluate_with_timeout).
 _SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(MAX_CONCURRENT_SPAWNED)
+_SPAWN_ACQUIRE_TIMEOUT = 10  # seconds to wait for a spawn slot before failing
 
 # Set of child processes that survived terminate+kill in regex tools.
 # Checked by MCP server's _cleanup_orphaned_processes for defensive cleanup.
@@ -1320,7 +1321,12 @@ def validate_regex(
     proc: multiprocessing.Process | None = None
     released = False
     try:
-        _SPAWN_SEMAPHORE.acquire()
+        if not _SPAWN_SEMAPHORE.acquire(timeout=_SPAWN_ACQUIRE_TIMEOUT):
+            return _error_response(
+                "timeout",
+                f"Could not acquire spawn slot after {_SPAWN_ACQUIRE_TIMEOUT}s (all {MAX_CONCURRENT_SPAWNED} slots busy)",
+                tool="validate_regex",
+            )
         try:
             proc = ctx.Process(
                 target=_regex_test_worker,
@@ -1614,7 +1620,12 @@ def regex_finditer(
     proc: multiprocessing.Process | None = None
     released = False
     try:
-        _SPAWN_SEMAPHORE.acquire()
+        if not _SPAWN_SEMAPHORE.acquire(timeout=_SPAWN_ACQUIRE_TIMEOUT):
+            return _error_response(
+                "timeout",
+                f"Could not acquire spawn slot after {_SPAWN_ACQUIRE_TIMEOUT}s (all {MAX_CONCURRENT_SPAWNED} slots busy)",
+                tool="regex_finditer",
+            )
         try:
             proc = ctx.Process(
                 target=_regex_finditer_worker,
@@ -3740,7 +3751,12 @@ def dotenv_validate_mcp(
     proc: multiprocessing.Process | None = None
     released = False
     try:
-        _SPAWN_SEMAPHORE.acquire()
+        if not _SPAWN_SEMAPHORE.acquire(timeout=_SPAWN_ACQUIRE_TIMEOUT):
+            return _error_response(
+                "timeout",
+                f"Could not acquire spawn slot after {_SPAWN_ACQUIRE_TIMEOUT}s (all {MAX_CONCURRENT_SPAWNED} slots busy)",
+                tool="dotenv_validate",
+            )
         try:
             proc = ctx.Process(
                 target=_dotenv_validate_worker,

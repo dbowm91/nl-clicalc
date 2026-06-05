@@ -167,16 +167,19 @@ _cancelled_lock = threading.Lock()
 # until a worker becomes available, providing natural back-pressure.
 _MAX_TOOL_WORKERS = 16
 _tool_executor: ThreadPoolExecutor | None = None
+_tool_executor_lock = threading.Lock()
 
 
 def _get_tool_executor() -> ThreadPoolExecutor:
     """Lazily initialize the bounded thread pool for tool invocations."""
     global _tool_executor
     if _tool_executor is None:
-        _tool_executor = ThreadPoolExecutor(
-            max_workers=_MAX_TOOL_WORKERS,
-            thread_name_prefix="mcp-tool",
-        )
+        with _tool_executor_lock:
+            if _tool_executor is None:
+                _tool_executor = ThreadPoolExecutor(
+                    max_workers=_MAX_TOOL_WORKERS,
+                    thread_name_prefix="mcp-tool",
+                )
     return _tool_executor
 
 # Track orphaned child processes for defensive cleanup. When a tool times out,
