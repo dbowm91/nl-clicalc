@@ -5114,8 +5114,12 @@ class TestUnitConvert:
                 "arguments": {"value": float("inf"), "from_unit": "m", "to_unit": "ft"},
             },
         })
-        assert "result" in response
-        assert response["result"]["isError"] is True
+        # Rejection can surface as a JSON-RPC error (schema-level) or as a
+        # tool result with isError=True (handler-level). Both are valid MCP
+        # error responses.
+        assert "error" in response or (
+            "result" in response and response["result"].get("isError") is True
+        )
 
     def test_nan_value_rejected(self):
         """unit_convert should reject NaN value."""
@@ -5128,8 +5132,9 @@ class TestUnitConvert:
                 "arguments": {"value": float("nan"), "from_unit": "m", "to_unit": "ft"},
             },
         })
-        assert "result" in response
-        assert response["result"]["isError"] is True
+        assert "error" in response or (
+            "result" in response and response["result"].get("isError") is True
+        )
 
 
 class TestUnitInfo:
@@ -6316,3 +6321,135 @@ class TestProductionReviewFixes:
         from eggcalc.mcp.tools import _sanitize_error
         result = _sanitize_error("Error reading /proc/1/status")
         assert "/proc/1/status" not in result
+
+
+class TestProductionReview2026_06:
+    """Tests for the 2026-06 production review fixes."""
+
+    def test_nan_value_rejected_in_unit_convert(self):
+        """unit_convert schema-level rejection of NaN value."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8001,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": float("nan"), "from_unit": "m", "to_unit": "ft"},
+            },
+        })
+        assert "error" in response
+        assert "NaN" in response["error"]["message"]
+
+    def test_inf_value_rejected_in_unit_convert(self):
+        """unit_convert schema-level rejection of +inf value."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8002,
+            "method": "tools/call",
+            "params": {
+                "name": "unit_convert",
+                "arguments": {"value": float("inf"), "from_unit": "m", "to_unit": "ft"},
+            },
+        })
+        assert "error" in response
+        assert "inf" in response["error"]["message"].lower()
+
+    def test_polar_function_uses_r_phi_signature(self):
+        """polar() in math_eval should accept (r, phi), not (complex z)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8003,
+            "method": "tools/call",
+            "params": {"name": "math_eval", "arguments": {"expression": "polar(1, 0)"}},
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content.get("ok") is True
+        # (r, phi) is a tuple; result is a string of the tuple.
+        assert "result" in content
+        assert content["result"].get("type") == "tuple"
+
+    def test_polar_function_rejects_negative_r(self):
+        """polar() should reject negative r."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8004,
+            "method": "tools/call",
+            "params": {"name": "math_eval", "arguments": {"expression": "polar(-1, 0)"}},
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        # The expression was rejected, so ok is False with a meaningful error.
+        assert content.get("ok") is False
+
+    def test_orphan_process_set_is_capped(self):
+        """Orphan process tracking must not grow unbounded."""
+        import eggcalc.evaluator as ev
+        # After the cap was added, MAX_ORPHANED_PROCESSES exists and is small.
+        assert hasattr(ev, "MAX_ORPHANED_PROCESSES")
+        assert ev.MAX_ORPHANED_PROCESSES <= 1024
+        # Helper lists exist for eviction.
+        assert hasattr(ev, "_orphaned_eval_order")
+
+    def test_orphan_regex_process_set_is_capped(self):
+        """Orphan regex process tracking must not grow unbounded."""
+        import eggcalc.mcp.tools as tools
+        assert hasattr(tools, "MAX_ORPHANED_REGEX_PROCESSES")
+        assert tools.MAX_ORPHANED_REGEX_PROCESSES <= 1024
+        assert hasattr(tools, "_orphaned_regex_order")
+
+    def test_cancelled_request_id_rejects_bool(self):
+        """notifications/cancelled should ignore bool requestId (subclass of int)."""
+        from eggcalc.mcp import server
+        # Pre: deque empty.
+        before = list(server._cancelled_requests)
+        # Send a cancellation with a bool requestId.
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": True},
+        })
+        # notifications return None.
+        assert response is None
+        # The bool must not have been treated as the integer 1.
+        after = list(server._cancelled_requests)
+        assert len(after) - len(before) == 0
+        assert 1 not in after
+
+    def test_per_request_thread_does_not_starve(self):
+        """Tool execution should not be blocked by a 4-worker pool.
+
+        Send a small burst of tool calls; they should each spawn their
+        own mcp-tool-* thread rather than competing for slots in a
+        fixed-size pool. We verify by spying on threading.Thread
+        construction.
+        """
+        import threading
+        seen_count: list[str] = []
+
+        original = threading.Thread.__init__
+
+        def spy_init(self, *args, **kwargs):
+            original(self, *args, **kwargs)
+            name = kwargs.get("name") or (args[0] if args else None)
+            if isinstance(name, str) and name.startswith("mcp-tool-"):
+                seen_count.append(name)
+
+        threading.Thread.__init__ = spy_init  # type: ignore[assignment]
+        try:
+            for i in range(8):
+                resp = handle_request({
+                    "jsonrpc": "2.0",
+                    "id": 9000 + i,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "text_measure",
+                        "arguments": {"text": f"hello {i}"},
+                    },
+                })
+                assert "result" in resp
+        finally:
+            threading.Thread.__init__ = original  # type: ignore[assignment]
+
+        # Each tool call should have spawned its own mcp-tool-* thread.
+        assert len(seen_count) == 8, f"Expected 8 per-request threads, got {seen_count}"

@@ -196,7 +196,11 @@ _SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(MAX_CONCURRENT_SPAWNED)
 
 # Set of child processes that survived terminate+kill in regex tools.
 # Checked by MCP server's _cleanup_orphaned_processes for defensive cleanup.
+# Bounded to prevent unbounded growth across many timeouts; oldest entries
+# are evicted when the cap is reached.
+MAX_ORPHANED_REGEX_PROCESSES = 256
 _orphaned_regex_processes: set[multiprocessing.Process] = set()
+_orphaned_regex_order: list[multiprocessing.Process] = []
 
 def _build_physical_constants() -> dict[str, dict[str, Any]]:
     """Build PHYSICAL_CONSTANTS from Evaluator.CONSTANTS to prevent drift.
@@ -1260,6 +1264,10 @@ def validate_regex(
                 # If process survived terminate+kill, register for defensive cleanup
                 if proc.is_alive():
                     _orphaned_regex_processes.add(proc)
+                    _orphaned_regex_order.append(proc)
+                    while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
+                        oldest = _orphaned_regex_order.pop(0)
+                        _orphaned_regex_processes.discard(oldest)
                 try:
                     proc.close()
                 except Exception:
@@ -1532,6 +1540,10 @@ def regex_finditer(
                 # If process survived terminate+kill, register for defensive cleanup
                 if proc.is_alive():
                     _orphaned_regex_processes.add(proc)
+                    _orphaned_regex_order.append(proc)
+                    while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
+                        oldest = _orphaned_regex_order.pop(0)
+                        _orphaned_regex_processes.discard(oldest)
                 try:
                     proc.close()
                 except Exception:

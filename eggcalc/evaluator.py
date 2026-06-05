@@ -17,6 +17,7 @@ import multiprocessing
 import os
 import queue
 import random
+from queue import Empty as _QueueEmpty
 import threading
 from collections import OrderedDict
 from typing import Any
@@ -87,7 +88,11 @@ _COLLISION_WARNING_EMITTED = False  # legacy alias, see Evaluator._COLLISION_WAR
 
 # Set of child processes that survived terminate+kill in MCP mode.
 # Checked by MCP server's _cleanup_orphaned_processes for defensive cleanup.
+# Bounded to prevent unbounded growth across many timeouts; oldest entries
+# are evicted when the cap is reached.
+MAX_ORPHANED_PROCESSES = 256
 _orphaned_eval_processes: set[multiprocessing.Process] = set()
+_orphaned_eval_order: list[multiprocessing.Process] = []
 
 
 def _check_constant_unit_collisions() -> None:
@@ -610,6 +615,19 @@ def _phase(z: complex) -> float:
 def _polar(z: complex) -> tuple[float, float]:
     """Return polar coordinates (r, phi) of a complex number."""
     return cmath.polar(z)
+
+
+def _polar_from_coords(r: float, phi: float) -> tuple[float, float]:
+    """Return polar coordinates (r, phi) from scalar inputs.
+
+    Accepts the (r, phi) signature users typically expect, and returns
+    a (r, phi) tuple so the public name reads naturally.
+    """
+    r_f = float(r)
+    phi_f = float(phi)
+    if r_f < 0:
+        raise EvaluationError("polar(): r must be non-negative")
+    return (r_f, phi_f)
 
 
 def _rect(r: float, phi: float) -> complex:
@@ -1526,7 +1544,7 @@ class Evaluator(ast.NodeVisitor):
         "conj": _conj,
         "conjugate": _conj,
         "phase": _phase,
-        "polar": _polar,
+        "polar": _polar_from_coords,
         "rect": _rect,
         # Base conversion
         "bin": _to_bin,
@@ -2061,6 +2079,13 @@ def _evaluate_with_timeout_worker(expr: str, result_queue: multiprocessing.Queue
 
     Must be a module-level function (not nested) so it can be pickled
     by the 'spawn' multiprocessing start method.
+
+    Note: ``resource.setrlimit(RLIMIT_AS, ...)`` is a Linux/POSIX feature.
+    On macOS, the kernel silently ignores ``RLIMIT_AS`` and the
+    ``setrlimit`` call may return ``EINVAL`` for some process types, so
+    the bound below is best-effort. Production deployments that need a
+    hard memory cap on a hostile expression should run this on Linux
+    or pair it with a cgroup/jail container-level limit.
     """
     try:
         import resource
@@ -2122,7 +2147,7 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
 
     try:
         status, value = queue.get(timeout=timeout)
-    except queue.Empty:
+    except _QueueEmpty:
         raise TimeoutError(f"Evaluation timed out after {timeout} seconds")
     except Exception as exc:
         logging.warning(
@@ -2151,6 +2176,10 @@ def evaluate_with_timeout(expression: str, timeout: float = 5.0) -> Any:
             # defensive cleanup by the MCP server's orphan tracker.
             if proc.is_alive() and _mcp_mode:
                 _orphaned_eval_processes.add(proc)
+                _orphaned_eval_order.append(proc)
+                while len(_orphaned_eval_order) > MAX_ORPHANED_PROCESSES:
+                    oldest = _orphaned_eval_order.pop(0)
+                    _orphaned_eval_processes.discard(oldest)
             try:
                 proc.close()
             except Exception:

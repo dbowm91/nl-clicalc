@@ -423,9 +423,51 @@ class TestShouldSplitNumberSequence:
         assert _should_split_number_sequence("1 2 3") is True
 
     def test_returns_false_for_non_numeric(self):
-        """Function should return False when parts contain non-numeric."""
+        """Function should return False when parts are not numeric."""
         from eggcalc.normalize import _should_split_number_sequence
         assert _should_split_number_sequence("1 abc 3") is False
+
+
+class TestNumberWordSubstringBoundary:
+    """Regression tests for the substring-vs-word-boundary bug in
+    ``convert_from_human_handler``. Words like "one" must not be replaced
+    when they appear as a substring of another word ("None", "Phone",
+    "stone", "done"), but bare number words must still convert normally.
+    """
+
+    def test_none_does_not_become_one(self):
+        from eggcalc.normalize import NORMALIZE, PATTERNS, normalize_expression
+        normalized, code = normalize_expression("None", NORMALIZE, PATTERNS)
+        # "None" is not a recognized number word; it should not become "1".
+        assert normalized != "1"
+        assert code != 0
+
+    def test_phone_does_not_become_one(self):
+        from eggcalc.normalize import NORMALIZE, PATTERNS, normalize_expression
+        normalized, code = normalize_expression("Phone", NORMALIZE, PATTERNS)
+        assert normalized != "1"
+        assert code != 0
+
+    def test_stone_does_not_become_one(self):
+        from eggcalc.normalize import NORMALIZE, PATTERNS, normalize_expression
+        normalized, _code = normalize_expression("stone", NORMALIZE, PATTERNS)
+        # The substring "one" inside "stone" must not be replaced.
+        assert normalized != "1"
+        assert "1" not in normalized
+
+    def test_bare_one_still_converts(self):
+        from eggcalc.normalize import NORMALIZE, PATTERNS, normalize_expression
+        normalized, code = normalize_expression("one", NORMALIZE, PATTERNS)
+        assert normalized == "1"
+        assert code == 0
+
+    def test_compound_number_word_still_converts(self):
+        from eggcalc.normalize import NORMALIZE, PATTERNS, normalize_expression
+        normalized, code = normalize_expression("twenty one", NORMALIZE, PATTERNS)
+        # "twenty one" composes to 20+1; the important point is that both
+        # number words are still recognized and converted.
+        assert normalized == "20+1"
+        assert code == 0
 
 
 if __name__ == "__main__":

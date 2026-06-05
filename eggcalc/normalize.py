@@ -850,7 +850,11 @@ def convert_from_human_handler(
             replaced = tokens[i]
             word_to_number = operators.get("word_to_number", {})
             for word, num_val in word_to_number.items():
-                replaced = replaced.replace(word, f"@{num_val}")
+                # Word-boundary replacement so substrings inside other words
+                # (e.g. "one" inside "None", "Phone", "stone") are not mutated.
+                replaced = re.sub(
+                    rf"\b{re.escape(word)}\b", f"@{num_val}", replaced
+                )
             tokens[i] = {0: replaced, 1: is_number}
         else:
             tokens[i] = {0: tokens[i], 1: is_number}

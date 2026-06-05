@@ -7,10 +7,9 @@ and measurement tools to agents.
 
 from __future__ import annotations
 
-import atexit
-import concurrent.futures
 import inspect
 import json
+import logging
 import multiprocessing
 import sys
 import threading
@@ -152,9 +151,6 @@ MAX_REQUESTS_PER_SECOND = 10
 MAX_REQUEST_ID_LENGTH = 1024
 MAX_TOOL_TIMEOUT_SECONDS = 30
 MAX_CANCELLED_REQUESTS = 10_000
-_SHARED_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="mcp-tool")
-atexit.register(_SHARED_EXECUTOR.shutdown, wait=False)
-_running_futures: set[concurrent.futures.Future[Any]] = set()
 _cancelled_requests: deque[Any] = deque(maxlen=MAX_CANCELLED_REQUESTS)
 
 # Track orphaned child processes for defensive cleanup. When a tool times out,
@@ -168,7 +164,6 @@ _orphaned_lock = threading.Lock()
 
 def _cleanup_orphaned_processes() -> None:
     """Terminate any orphaned child processes that survived their handler's cleanup."""
-    import logging as _logging
     # Also check evaluator and regex tool orphan sets
     try:
         from ..evaluator import _orphaned_eval_processes
@@ -323,6 +318,21 @@ def _validate_arguments(handler: Any, arguments: dict[str, Any]) -> str | None:
     return None
 
 
+def _run_handler_in_thread(
+    handler: Any, arguments: dict[str, Any], result_box: dict[str, Any]
+) -> None:
+    """Run a tool handler on the calling thread, capturing result or error.
+
+    Runs as the target of a dedicated daemon thread. Stores either the
+    return value under ``result_box['result']`` or the raised exception
+    under ``result_box['error']`` so the joiner can pick it up.
+    """
+    try:
+        result_box["result"] = handler(**arguments)
+    except BaseException as exc:  # noqa: BLE001 - we re-raise in joiner
+        result_box["error"] = exc
+
+
 def _validate_value_against_schema(
     value: Any, prop: dict, path: str, max_depth: int = 10
 ) -> str | None:
@@ -369,6 +379,11 @@ def _validate_value_against_schema(
 
     # Numeric range constraints
     if expected_type in ("number", "integer") and isinstance(value, (int, float)) and not isinstance(value, bool):
+        import math as _math
+        if _math.isnan(value):
+            return f"Argument '{path}' must be a finite number, got NaN"
+        if _math.isinf(value):
+            return f"Argument '{path}' must be a finite number, got {'+inf' if value > 0 else '-inf'}"
         minimum = prop.get("minimum")
         if minimum is not None and value < minimum:
             return f"Argument '{path}' value {value} is less than minimum {minimum}"
@@ -536,38 +551,35 @@ def _handle_call_tool(request: dict) -> dict:
 
     timed_out = False
     result = None
-    future: concurrent.futures.Future | None = None
+    worker_thread: threading.Thread | None = None
+    result_box: dict[str, Any] = {}
     try:
-        future = _SHARED_EXECUTOR.submit(handler, **arguments)
-        _running_futures.add(future)
-        try:
-            result = future.result(timeout=MAX_TOOL_TIMEOUT_SECONDS)
-        except concurrent.futures.TimeoutError:
+        # Run each tool invocation on a dedicated thread so that a slow
+        # tool (or a tool that spawned a child process) cannot starve a
+        # small fixed-size pool of workers. The thread is joined with a
+        # wall-clock timeout; if it has not returned, we treat the call
+        # as timed out and stop waiting, letting the thread continue in
+        # the background to drain child processes naturally.
+        worker_thread = threading.Thread(
+            target=_run_handler_in_thread,
+            name=f"mcp-tool-{name}",
+            args=(handler, arguments, result_box),
+            daemon=True,
+        )
+        worker_thread.start()
+        worker_thread.join(timeout=MAX_TOOL_TIMEOUT_SECONDS)
+        if worker_thread.is_alive():
             timed_out = True
-            import logging as _logging
-            _logging.warning(
-                "MCP tool '%s' timed out after %ds "
-                "(cancel() is a no-op for already-running tasks; "
-                "handler continues in thread pool worker until completion)",
+            logging.warning(
+                "MCP tool '%s' timed out after %ds; thread continues in background",
                 name, MAX_TOOL_TIMEOUT_SECONDS,
             )
-            # Track the orphaned future so it doesn't block the pool indefinitely.
-            # future.cancel() is a no-op for already-running tasks — the
-            # handler keeps executing in its thread-pool worker.
-            _running_futures.discard(future)
-            # Wrap completion logging in a callback
-            def _log_orphan_completion(f: concurrent.futures.Future) -> None:
-                try:
-                    f.result(timeout=0)
-                except Exception:
-                    pass
-                _logging.debug("Orphaned MCP tool '%s' handler completed", name)
-            future.add_done_callback(_log_orphan_completion)
-            future = None
+        else:
+            result = result_box.get("result")
+            if result_box.get("error") is not None:
+                raise result_box["error"]
     except Exception as e:
         if not timed_out:
-            if future is not None:
-                _running_futures.discard(future)
             message = _sanitize_error(str(e))[:2000]
             return {
                 "jsonrpc": "2.0",
@@ -577,9 +589,6 @@ def _handle_call_tool(request: dict) -> dict:
                     "message": f"Tool execution error: {message}",
                 },
             }
-
-    if future is not None:
-        _running_futures.discard(future)
 
     if timed_out:
         return {
@@ -768,7 +777,11 @@ def handle_request(request: Any) -> dict | None:
         return None
     elif method == "notifications/cancelled":
         cancelled_id = request.get("params", {}).get("requestId")
-        if cancelled_id is not None and isinstance(cancelled_id, (str, int)):
+        if (
+            cancelled_id is not None
+            and isinstance(cancelled_id, (str, int))
+            and not isinstance(cancelled_id, bool)
+        ):
             _cancelled_requests.append(cancelled_id)
         return None
     elif method == "ping":
