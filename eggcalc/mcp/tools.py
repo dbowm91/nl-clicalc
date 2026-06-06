@@ -4093,9 +4093,9 @@ def identifier_table_inspect_mcp(
                 not isinstance(line, int) or isinstance(line, bool) or line < 0
             ):
                 bad_entries.append(f"[{i}] 'line' must be a non-negative integer, got {type(line).__name__}")
-            language = entry.get("language")
-            if language is not None and not isinstance(language, str):
-                bad_entries.append(f"[{i}] 'language' must be a string, got {type(language).__name__}")
+            entry_lang = entry.get("language")
+            if entry_lang is not None and not isinstance(entry_lang, str):
+                bad_entries.append(f"[{i}] 'language' must be a string, got {type(entry_lang).__name__}")
     if bad_entries:
         return _error_response(
             "invalid_arguments",

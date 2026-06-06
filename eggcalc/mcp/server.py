@@ -821,7 +821,8 @@ def handle_request(request: Any) -> dict | None:
 
     request_id = request.get("id")
     if request_id is not None:
-        if not isinstance(request_id, (str, int)):
+        # bool is a subclass of int in Python, so exclude it explicitly
+        if not isinstance(request_id, (str, int)) or isinstance(request_id, bool):
             return _invalid_request(
                 None,
                 "Invalid Request: 'id' must be a string, integer, or null",

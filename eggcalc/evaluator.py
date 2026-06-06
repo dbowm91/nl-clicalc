@@ -1233,8 +1233,14 @@ def _fn_clear(register: str | None = None) -> None:
     return None
 
 
-def _fn_setvar(name: str, value: Any) -> Any:
-    ev = _get_current_evaluator()
+def _set_user_variable(ev: "Evaluator", name: Any, value: Any) -> Any:
+    """Validate and store a user variable on the given evaluator.
+
+    Used by both the expression-level ``setvar()`` (``_fn_setvar``) and
+    the public Python API (``setvar()``) so the cap and identifier
+    rules apply uniformly. See plans/production_review_2026_07_b.md
+    (B4).
+    """
     if not isinstance(name, str) or not name:
         raise EvaluationError("setvar: name must be a non-empty string")
     if not name.isidentifier():
@@ -1250,6 +1256,11 @@ def _fn_setvar(name: str, value: Any) -> Any:
             del ev._user_variables[oldest_key]
         ev._user_variables[name] = value
     return value
+
+
+def _fn_setvar(name: str, value: Any) -> Any:
+    ev = _get_current_evaluator()
+    return _set_user_variable(ev, name, value)
 
 
 def _fn_getvar(name: str, default: Any = 0) -> Any:
@@ -1380,16 +1391,18 @@ def setvar(name: str, value: Any) -> Any:
     """Set a user variable on the default evaluator.
 
     Args:
-        name: Variable name
-        value: Variable value
+        name: Variable name (must be a valid Python identifier).
+        value: Variable value.
 
     Returns:
-        The value that was set
+        The value that was set.
+
+    Raises:
+        EvaluationError: If ``name`` is not a non-empty string, is not a
+            valid Python identifier, or if the variable store is at
+            capacity (the oldest entry is evicted before insertion).
     """
-    ev = _default_evaluator
-    with ev._var_lock:
-        ev._user_variables[name] = value
-    return value
+    return _set_user_variable(_default_evaluator, name, value)
 
 
 def getvar(name: str) -> Any:

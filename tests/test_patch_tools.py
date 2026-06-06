@@ -353,6 +353,12 @@ class TestPatchSummaryMCP:
         assert content["result"]["deletions"] == 2
 
     def test_rename_detection(self):
+        # A standard unified diff with different `a/X` / `b/Y` headers
+        # is a modification, NOT a rename. Renames require explicit
+        # `rename from X` / `rename to Y` directives (extended diff
+        # format, e.g. `git diff -M`). The current parser does not
+        # surface that metadata, so renames_detected stays empty for
+        # this input. See plans/production_review_2026_07_b.md (B3).
         response = handle_request({
             "jsonrpc": "2.0",
             "id": 1,
@@ -366,9 +372,7 @@ class TestPatchSummaryMCP:
         })
         content = json.loads(response["result"]["content"][0]["text"])
         assert content["ok"] is True
-        assert len(content["result"]["renames_detected"]) == 1
-        assert content["result"]["renames_detected"][0]["from"] == "a/old_name.py"
-        assert content["result"]["renames_detected"][0]["to"] == "b/new_name.py"
+        assert content["result"]["renames_detected"] == []
 
     def test_binary_patch_detection(self):
         response = handle_request({

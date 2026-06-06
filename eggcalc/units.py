@@ -16,6 +16,7 @@ Provides comprehensive unit conversion support including:
 from __future__ import annotations
 
 import math
+import re
 import threading
 
 Numeric = float | int | complex
@@ -166,7 +167,12 @@ class UnitValue:
                 else:
                     result = self.value / other.value
                     unit = f"{self.unit}/{other.unit}"
+            elif other.unit:
+                # self is dimensionless, other has a unit -> reciprocal unit
+                result = self.value / other.value
+                unit = f"1/{other.unit}"
             else:
+                # other is dimensionless; self.unit may be None or a unit
                 result = self.value / other.value
                 unit = self.unit
         else:
@@ -188,6 +194,9 @@ class UnitValue:
                 else:
                     result = self.value // other.value
                     unit = f"{self.unit}//{other.unit}"
+            elif other.unit:
+                result = self.value // other.value
+                unit = f"1//{other.unit}"
             else:
                 result = self.value // other.value
                 unit = self.unit
@@ -219,6 +228,9 @@ class UnitValue:
                 else:
                     result = self.value % other.value
                     unit = f"{self.unit}%{other.unit}"
+            elif other.unit:
+                result = self.value % other.value
+                unit = f"1%{other.unit}"
             else:
                 result = self.value % other.value
                 unit = self.unit
@@ -234,7 +246,7 @@ class UnitValue:
         if self.unit:
             if self.value == 0:
                 raise ZeroDivisionError("Cannot mod by zero UnitValue")
-            return UnitValue(other % self.value, None)
+            return UnitValue(other % self.value, f"1%{self.unit}")
         if self.value == 0:
             raise ZeroDivisionError("Cannot mod by zero UnitValue")
         return UnitValue(other % self.value, None)
@@ -814,7 +826,84 @@ def _build_unit_conversions() -> dict[tuple[str, str], float]:
                     key = (from_unit, to_unit)
                     conversions[key] = from_factor / to_factor
 
+    # Compound unit conversions: build factors for derived units (e.g.
+    # m**2 <-> cm**2) by composing base unit factors. We do this only
+    # for unit signatures we have a category for, which keeps the
+    # table focused on well-defined categories. See
+    # plans/production_review_2026_07_b.md (B6).
+    _add_compound_conversions(conversions, base_snapshot)
+
     return conversions
+
+
+def _add_compound_conversions(
+    conversions: dict[tuple[str, str], float],
+    base_snapshot: dict[str, dict[str, float]],
+) -> None:
+    """Populate conversions for compound unit signatures.
+
+    For each known derived category, build the conversion factor between
+    any two unit expressions that share the same signature. We only
+    enumerate the literal units registered in ``_DERIVED_CATEGORIES`` —
+    expanding the cartesian product over every variant in
+    ``base_snapshot`` would generate tens of millions of entries
+    (e.g. 60 length units x 60 length units x 40 time units squared
+    for speed/acceleration categories). Limiting to the registered
+    expressions keeps the table focused on categories with explicit
+    user-visible unit names.
+    """
+    # Build a per-base lookup that maps a literal unit to its SI factor
+    # (e.g. "m" -> 1.0, "km" -> 1000.0, "cm" -> 0.01). This is the
+    # INVERSE of base_snapshot which maps base -> {literal: factor}.
+    # We also need the canonical SI base for each axis.
+    # Build a flat literal->SI_factor mapping from base_snapshot.
+    # Multiple bases can register overlapping literals (the SI base
+    # is the one with factor 1.0). Last write wins, which is fine
+    # because the SI base is always registered with factor 1.0 and
+    # appears in base_snapshot along with the prefixed variants.
+    literal_factor: dict[str, float] = {}
+    for units in base_snapshot.values():
+        for lit, fac in units.items():
+            literal_factor[lit] = fac
+
+    # For each derived expression, compute its SI factor and group
+    # by category, then add pairwise conversion factors.
+    grouped: dict[str, list[tuple[str, float]]] = {}
+    for unit_name, category in _DERIVED_CATEGORIES.items():
+        atoms = _parse_compound_atoms(unit_name)
+        if atoms is None:
+            continue
+        factor = 1.0
+        ok = True
+        for literal, exp in atoms:
+            f = literal_factor.get(literal)
+            if f is None:
+                ok = False
+                break
+            factor *= f ** exp
+        if not ok:
+            continue
+        grouped.setdefault(category, []).append((unit_name, factor))
+
+    # Pairwise factors within each category
+    for category, entries in grouped.items():
+        for i, (from_expr, from_factor) in enumerate(entries):
+            for j, (to_expr, to_factor) in enumerate(entries):
+                if i != j:
+                    conversions[(from_expr, to_expr)] = from_factor / to_factor
+
+
+def _parse_compound_atoms(unit: str) -> list[tuple[str, int]] | None:
+    """Parse a unit string into a list of (literal, signed_exponent) atoms.
+
+    Returns None on unparseable input. The list may be empty (e.g. for
+    the dimensionless case).
+    """
+    sig = _parse_compound_signature(unit)
+    if sig is None:
+        return None
+    num, den = sig
+    return [(b, e) for b, e in num] + [(b, -e) for b, e in den]
 
 
 # Pre-computed conversion factors: (from_unit, to_unit) -> factor
@@ -833,7 +922,9 @@ def _rebuild_conversions() -> None:
         UNIT_CONVERSIONS = new_table
 
 
-_rebuild_conversions()
+# Note: the initial _rebuild_conversions() call is deferred to the end
+# of this module (after UNIT_ALIASES, UNIT_CATEGORIES, and
+# _DERIVED_CATEGORIES are defined).
 
 
 # Map all unit aliases to canonical forms.
@@ -1564,7 +1655,269 @@ UNIT_CATEGORIES: dict[str, str] = {
 def get_unit_category(unit: str) -> str | None:
     """Get the category for a unit (e.g., 'm' -> 'length', 'gal' -> 'volume')."""
     normalized = normalize_unit(unit)
-    return UNIT_CATEGORIES.get(normalized)
+    direct = UNIT_CATEGORIES.get(normalized)
+    if direct is not None:
+        return direct
+    # Fall back to the derived category for compound unit expressions
+    # produced by __pow__/__truediv__/__mul__ (e.g. "m**2", "m/s**2",
+    # "m*s"). The op separator is irrelevant for categorization — we
+    # canonicalize to "/" so that "m//s" and "m/s" both reduce to the
+    # same signature.
+    return _derived_category(normalized)
+
+
+def _parse_compound_signature(unit: str) -> tuple[tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]] | None:
+    """Parse a compound unit string into (numerator, denominator) signatures.
+
+    Each signature is a tuple of ``(base_unit, exponent)`` pairs, sorted
+    alphabetically with exponents combined for repeated bases. Returns
+    ``None`` if the input cannot be parsed as a supported compound
+    form.
+
+    Recognized forms:
+      - ``"X**N"``     -> ``((X, N),)``, ``()``
+      - ``"X**-N"``    -> ``()``,      ``((X, N),)``
+      - ``"A*B"``      -> ``((A,1),(B,1))``, ``()``
+      - ``"A/B"``      -> ``((A,1),)``, ``((B,1),)``
+      - ``"A//B"``     -> same as ``A/B``
+      - ``"A%B"``      -> same as ``A/B``
+
+    Mixed forms like ``"m**2*s"`` and ``"m/s**2"`` are also handled.
+    """
+    if not unit or not isinstance(unit, str):
+        return None
+
+    # Strip a leading "1/" or "1//" or "1%" reciprocal marker (the
+    # convention used by __rfloordiv__ / __rmod__). These are
+    # semantically identical to having the unit on the other side.
+    if unit.startswith("1//"):
+        inner = _parse_compound_signature(unit[3:])
+        if inner is None:
+            return None
+        num, den = inner
+        return den, num
+    if unit.startswith("1/"):
+        inner = _parse_compound_signature(unit[2:])
+        if inner is None:
+            return None
+        num, den = inner
+        return den, num
+    if unit.startswith("1%"):
+        inner = _parse_compound_signature(unit[2:])
+        if inner is None:
+            return None
+        num, den = inner
+        return den, num
+
+    # Split on /, //, or % (any one marks the start of the denominator).
+    # Prefer // before / and % before // for unambiguous splitting.
+    split_idx = -1
+    split_len = 0
+    for sep in ("//", "%", "/"):
+        i = unit.find(sep)
+        if i != -1 and (split_idx == -1 or i < split_idx):
+            split_idx = i
+            split_len = len(sep)
+    if split_idx != -1:
+        num_part = unit[:split_idx]
+        den_part = unit[split_idx + split_len:]
+        num = _parse_atom_signature(num_part)
+        den = _parse_atom_signature(den_part)
+        if num is None or den is None:
+            return None
+        merged = _merge_signatures(num, den)
+        # Split merged back into num/den (positive and negative exps)
+        num_only = tuple((b, e) for b, e in merged if e > 0)
+        den_only = tuple((b, -e) for b, e in merged if e < 0)
+        return num_only, den_only
+
+    # No separator: must be a single atom like "X" or "X**N".
+    atom = _parse_atom_signature(unit)
+    if atom is None:
+        return None
+    return atom, ()
+
+
+def _parse_atom_signature(atom: str) -> tuple[tuple[str, int], ...] | None:
+    """Parse a single unit atom like "m", "m**2", "m**-1".
+
+    A compound like "m**2*s" is split into its factors and combined.
+    Returns None if the atom contains an unrecognized form.
+    """
+    if not atom:
+        return None
+    # Match each factor: base (alphanumeric/_+) optionally followed
+    # by **<signed integer>. The regex skips over the bare '*' in '**'
+    # by matching the base and exponent atomically.
+    matches = re.findall(r"([A-Za-z_]+)(?:\*\*(-?\d+))?", atom)
+    if not matches:
+        return None
+    # Verify the entire string is consumed by the match pattern
+    reconstructed = ""
+    for base, exp_str in matches:
+        if not base:
+            return None
+        reconstructed += base + ("**" + exp_str if exp_str else "")
+    if reconstructed != atom:
+        return None
+    parts: list[tuple[str, int]] = []
+    for base, exp_str in matches:
+        if exp_str:
+            try:
+                exp = int(exp_str)
+            except ValueError:
+                return None
+        else:
+            exp = 1
+        parts.append((base, exp))
+    return _merge_signatures(parts, ())
+
+
+def _merge_signatures(
+    num: tuple[tuple[str, int], ...], den: tuple[tuple[str, int], ...]
+) -> tuple[tuple[str, int], ...]:
+    """Combine numerator and denominator signatures into a canonical form.
+
+    Exponents from the denominator are subtracted; the result is sorted
+    alphabetically by base unit for stable comparison.
+    """
+    counts: dict[str, int] = {}
+    for base, exp in num:
+        counts[base] = counts.get(base, 0) + exp
+    for base, exp in den:
+        counts[base] = counts.get(base, 0) - exp
+    # Drop zero exponents (cancelled units)
+    counts = {b: e for b, e in counts.items() if e != 0}
+    return tuple(sorted(counts.items()))
+
+
+# Maps a canonical signature (serialized as a string) to a category.
+# Signatures are stored as a string like "m**2" or "m/s**2" for easy
+# reading and unambiguous comparison. The parser
+# (``_parse_compound_signature``) returns the same form, so we can use
+# a simple dict lookup.
+_DERIVED_CATEGORIES: dict[str, str] = {
+    # Area
+    "m**2": "area",
+    "ft**2": "area",
+    "inch**2": "area",
+    "yd**2": "area",
+    "mi**2": "area",
+    "cm**2": "area",
+    "mm**2": "area",
+    "km**2": "area",
+    # Volume
+    "m**3": "volume",
+    "ft**3": "volume",
+    "inch**3": "volume",
+    "cm**3": "volume",
+    "mm**3": "volume",
+    "km**3": "volume",
+    "L/m**3": "volume",
+    # Speed / velocity
+    "m/s": "speed",
+    "km/h": "speed",
+    "mi/h": "speed",
+    "ft/s": "speed",
+    "m/min": "speed",
+    # Acceleration
+    "m/s**2": "acceleration",
+    "ft/s**2": "acceleration",
+    # Energy / work
+    "J": "energy",
+    "kJ": "energy",
+    # Power
+    "W": "power",
+    "kW": "power",
+    "MW": "power",
+    # Pressure
+    "Pa": "pressure",
+    "bar": "pressure",
+    "psi": "pressure",
+    "atm": "pressure",
+    # Frequency
+    "Hz": "frequency",
+    "kHz": "frequency",
+    "MHz": "frequency",
+    "GHz": "frequency",
+    # Time (single base)
+    "s": "time",
+    "min": "time",
+    "h": "time",
+    "day": "time",
+    "week": "time",
+    "year": "time",
+    # Mass
+    "kg": "mass",
+    "g": "mass",
+    "mg": "mass",
+    "lb": "mass",
+    "oz": "mass",
+    # Data
+    "B": "data",
+    "KB": "data",
+    "MB": "data",
+    "GB": "data",
+    "TB": "data",
+    "PB": "data",
+    # Data rate (B/s etc.)
+    "B/s": "data_rate",
+    "KB/s": "data_rate",
+    "MB/s": "data_rate",
+    "GB/s": "data_rate",
+    "bit/s": "data_rate",
+}
+
+
+def _signature_to_canonical_string(
+    sig: tuple[tuple[tuple[str, int], ...], tuple[tuple[str, int], ...]],
+) -> str | None:
+    """Build a canonical unit-string from a (num, den) signature.
+
+    e.g. ``(((("m", 2),), ()))`` -> ``"m**2"``,
+    ``((("m",), (("s",),)))`` -> ``"m/s"``.
+    Returns None if the signature cannot be represented (empty
+    numerator and denominator, or an exponent that cannot be rendered).
+    """
+    num, den = sig
+    if not num and not den:
+        return None
+    num_parts: list[str] = []
+    for base, exp in num:
+        if exp == 1:
+            num_parts.append(base)
+        elif exp > 0:
+            num_parts.append(f"{base}**{exp}")
+        else:
+            return None  # negative exponents belong in the denominator
+    den_parts: list[str] = []
+    for base, exp in den:
+        if exp == 1:
+            den_parts.append(base)
+        elif exp > 0:
+            den_parts.append(f"{base}**{exp}")
+        else:
+            return None
+    num_str = "*".join(num_parts) if num_parts else ""
+    den_str = "*".join(den_parts) if den_parts else ""
+    if num_str and den_str:
+        return f"{num_str}/{den_str}"
+    if num_str:
+        return num_str
+    if den_str:
+        return f"1/{den_str}"
+    return None
+
+
+def _derived_category(unit: str) -> str | None:
+    """Return the category for a compound unit expression, or None."""
+    sig = _parse_compound_signature(unit)
+    if sig is None:
+        return None
+    canonical = _signature_to_canonical_string(sig)
+    if canonical is None:
+        return None
+    return _DERIVED_CATEGORIES.get(canonical)
 
 
 def are_units_compatible(unit1: str | None, unit2: str | None) -> bool:
@@ -1594,3 +1947,10 @@ def are_units_compatible(unit1: str | None, unit2: str | None) -> bool:
 def get_all_units() -> list[str]:
     """Get list of all supported units."""
     return sorted(UNIT_ALIASES.keys())
+
+
+# Initial build of UNIT_CONVERSIONS, now that all the unit data
+# structures (UNIT_ALIASES, UNIT_CATEGORIES, _DERIVED_CATEGORIES) and
+# helper functions are defined. See plans/production_review_2026_07_b.md
+# (B6) for the compound-unit support this enables.
+_rebuild_conversions()

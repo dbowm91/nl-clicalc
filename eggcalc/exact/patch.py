@@ -552,8 +552,15 @@ def patch_summary(patch_text: str) -> PatchSummaryResult:
         old_file = file_entry["old_file"]
         new_file = file_entry["new_file"]
 
-        if old_file and new_file and old_file != new_file:
-            renames_detected.append({"from": old_file, "to": new_file})
+        # Renames are NOT inferred from `--- a/X` / `+++ b/Y` headers:
+        # in a standard unified diff those are the source/destination
+        # paths of a modification, which are normally different
+        # (e.g. a/foo.txt vs b/foo.txt). True renames require an
+        # explicit `rename from X` / `rename to Y` directive in an
+        # extended diff format (e.g. `git diff -M`). The current
+        # parser does not yet surface that metadata, so this list
+        # stays empty until explicit rename support is added.
+        # See plans/production_review_2026_07_b.md (B3).
 
         file_key = new_file or old_file
         file_ranges: list[dict[str, int]] = []
