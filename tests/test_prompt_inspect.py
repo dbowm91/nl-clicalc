@@ -296,9 +296,9 @@ class TestRiskScore:
         assert result["risk_score"] > 0
 
     def test_multiple_findings_increase_score(self):
-        text = "\u200b\u200c\u200d"  # three warn = 9
+        text = "\u200b\u200c\u200d"  # three error = 15 (zero-width chars are "error" severity)
         result = prompt_input_inspect(text)
-        assert result["risk_score"] == 9
+        assert result["risk_score"] == 15
 
 
 class TestRecommendedNextTool:

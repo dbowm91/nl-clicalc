@@ -18,6 +18,7 @@ MAX_PATTERN_LENGTH = 1000
 MAX_PATTERN_NESTING = 5
 MAX_SAMPLE_LENGTH = 10_000
 MAX_SCHEMA_DEPTH = 50
+MAX_SCHEMA_ELEMENTS = 100_000
 
 
 class BracketError(TypedDict):
@@ -123,6 +124,45 @@ DEFAULT_BRACKET_PAIRS: dict[str, str] = {
 }
 
 
+def _build_newline_index(s: str) -> list[int]:
+    """Build a sorted list of newline positions for O(log N) line/column lookup.
+
+    Args:
+        s: Input string.
+
+    Returns:
+        List of character indices where newlines occur.
+    """
+    return [i for i, ch in enumerate(s) if ch == "\n"]
+
+
+def _get_line_column_from_index(newlines: list[int], index: int) -> tuple[int, int]:
+    """Get 1-based line and column using a precomputed newline index.
+
+    Args:
+        newlines: Sorted list of newline positions (from _build_newline_index).
+        index: Character index.
+
+    Returns:
+        Tuple of (line, column), both 1-based.
+    """
+    import bisect
+    line = bisect.bisect_right(newlines, index) + 1
+    if line == 1:
+        column = index + 1
+    else:
+        # Column is offset from the previous newline
+        prev_newline = newlines[line - 2]
+        column = index - prev_newline
+        # If index points to a newline character itself, it belongs to the
+        # end of the previous line (column = line length), but since we
+        # cannot know the line length here without the text, return the
+        # column as 1 (start of next line) which is the standard convention.
+        if column == 0:
+            column = 1
+    return line, column
+
+
 def _get_line_column(s: str, index: int) -> tuple[int, int]:
     """Get 1-based line and column for a string index.
 
@@ -173,6 +213,12 @@ def check_brackets(
     closers = set(pairs.values())
     opener_to_closer = pairs.copy()
 
+    # Precompute newline index for O(log N) line/column lookup
+    newline_index = _build_newline_index(s)
+
+    def _lc(idx: int) -> tuple[int, int]:
+        return _get_line_column_from_index(newline_index, idx)
+
     stack: list[tuple[str, int]] = []  # (char, index)
     unmatched_openers: list[BracketError] = []
     unmatched_closers: list[BracketError] = []
@@ -185,34 +231,38 @@ def check_brackets(
                 opener, opener_index = stack.pop()
                 if opener_to_closer.get(opener) != char:
                     # Mismatch - treat as both unmatched
+                    line, column = _lc(opener_index)
                     unmatched_openers.append(BracketError(
                         char=opener,
                         index=opener_index,
-                        line=_get_line_column(s, opener_index)[0],
-                        column=_get_line_column(s, opener_index)[1],
+                        line=line,
+                        column=column,
                     ))
+                    line, column = _lc(index)
                     unmatched_closers.append(BracketError(
                         char=char,
                         index=index,
-                        line=_get_line_column(s, index)[0],
-                        column=_get_line_column(s, index)[1],
+                        line=line,
+                        column=column,
                     ))
             else:
                 # No matching opener
+                line, column = _lc(index)
                 unmatched_closers.append(BracketError(
                     char=char,
                     index=index,
-                    line=_get_line_column(s, index)[0],
-                    column=_get_line_column(s, index)[1],
+                    line=line,
+                    column=column,
                 ))
 
     # Remaining openers are unmatched
     for opener, opener_index in stack:
+        line, column = _lc(opener_index)
         unmatched_openers.append(BracketError(
             char=opener,
             index=opener_index,
-            line=_get_line_column(s, opener_index)[0],
-            column=_get_line_column(s, opener_index)[1],
+            line=line,
+            column=column,
         ))
 
     return CheckBracketsResult(
@@ -333,7 +383,9 @@ def validate_toml_text(text: str) -> ValidateTomlResult:
             tables=tables,
         )
 
-    except Exception as e:
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        # TOML decode errors are typically ValueError or its subclasses.
+        # KeyError/TypeError/AttributeError can occur from malformed structure.
         err_str = str(e)
         line = getattr(e, 'lineno', None)
         col = getattr(e, 'colno', None)
@@ -934,6 +986,11 @@ def regex_replace_preview(
     if len(samples) > MAX_LIST_ITEMS:
         raise ValueError(
             f"Samples count {len(samples)} exceeds maximum {MAX_LIST_ITEMS}"
+        )
+    long_samples = [i for i, s in enumerate(samples) if not isinstance(s, str) or len(s) > MAX_SAMPLE_LENGTH]
+    if long_samples:
+        raise ValueError(
+            f"Sample(s) at indices {long_samples[:5]} exceed MAX_SAMPLE_LENGTH {MAX_SAMPLE_LENGTH}"
         )
     is_safe, error_msg = _check_pattern_complexity(pattern)
     if not is_safe:
@@ -1892,7 +1949,9 @@ class RegexFindIterResult(TypedDict):
 
 
 def _get_line_column_for_index(text: str, index: int) -> tuple[int, int]:
-    """Get 1-based line and column for a string byte index.
+    """Get 1-based line and column for a string index.
+
+    Uses precomputed newline index for O(log N) lookup.
 
     Args:
         text: Input string.
@@ -1901,15 +1960,8 @@ def _get_line_column_for_index(text: str, index: int) -> tuple[int, int]:
     Returns:
         Tuple of (line, column), both 1-based.
     """
-    line = 1
-    column = 1
-    for i in range(index):
-        if text[i] == "\n":
-            line += 1
-            column = 1
-        else:
-            column += 1
-    return line, column
+    newlines = _build_newline_index(text)
+    return _get_line_column_from_index(newlines, index)
 
 
 def regex_finditer(
@@ -2230,6 +2282,7 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
         and summary (str).
     """
     violations: list[SchemaViolation] = []
+    _walk_count = 0
 
     def _add_violation(path: str, message: str, value_type: str | None = None,
                        expected_type: str | None = None) -> None:
@@ -2242,6 +2295,10 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
             ))
 
     def _validate(path: str, value: Any, schema_def: dict, depth: int = 0) -> None:
+        nonlocal _walk_count
+        _walk_count += 1
+        if _walk_count > MAX_SCHEMA_ELEMENTS:
+            return
         if len(violations) >= MAX_SCHEMA_VIOLATIONS:
             return
         if depth > MAX_SCHEMA_DEPTH:
@@ -2381,10 +2438,13 @@ def validate_schema_light(data: Any, schema: dict) -> ValidateSchemaLightResult:
 
     _validate("", data, schema)
 
-    truncated = len(violations) >= MAX_SCHEMA_VIOLATIONS
+    truncated = len(violations) >= MAX_SCHEMA_VIOLATIONS or _walk_count > MAX_SCHEMA_ELEMENTS
 
     if not violations:
-        summary = "Data is valid"
+        if truncated:
+            summary = f"Validation truncated after {_walk_count} elements (limit {MAX_SCHEMA_ELEMENTS})"
+        else:
+            summary = "Data is valid"
     elif truncated:
         summary = f"Schema violations detected (truncated, {len(violations)} shown)"
     else:

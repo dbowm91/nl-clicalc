@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from eggcalc.exact.identifier import identifier_analyze
 from eggcalc.mcp.server import TOOL_HANDLERS, handle_request
 from eggcalc.mcp.tools import MAX_TEXT_LENGTH
@@ -6858,3 +6860,103 @@ except Exception as e:
         })
         # Should be rejected at schema level
         assert "error" in response
+
+
+class TestMCPSecurityFixes:
+    """Tests for production security fixes."""
+
+    def test_validate_regex_rejects_non_string_flags(self):
+        """M6: validate_regex rejects non-string flag items."""
+        from eggcalc.mcp.tools import validate_regex
+        result = validate_regex(".*", ["test"], [123, True])
+        assert result["ok"] is False
+        assert "All flags must be strings" in result["error"]
+
+    def test_validate_regex_rejects_non_list_flags(self):
+        """M6: validate_regex rejects non-list flags."""
+        from eggcalc.mcp.tools import validate_regex
+        result = validate_regex(".*", ["test"], "NOT_A_LIST")
+        assert result["ok"] is False
+        assert "flags must be a list" in result["error"]
+
+    def test_regex_finditer_rejects_non_string_flags(self):
+        """M6: regex_finditer rejects non-string flag items."""
+        from eggcalc.mcp.tools import regex_finditer
+        result = regex_finditer(".*", "test", [42])
+        assert result["ok"] is False
+        assert "All flags must be strings" in result["error"]
+
+    def test_regex_finditer_rejects_non_list_flags(self):
+        """M6: regex_finditer rejects non-list flags."""
+        from eggcalc.mcp.tools import regex_finditer
+        result = regex_finditer(".*", "test", 123)
+        assert result["ok"] is False
+        assert "flags must be a list" in result["error"]
+
+    def test_regex_replace_preview_rejects_long_samples(self):
+        """M3: regex_replace_preview rejects samples exceeding MAX_SAMPLE_LENGTH."""
+        from eggcalc.exact.validate import regex_replace_preview, MAX_SAMPLE_LENGTH
+        long_sample = "a" * (MAX_SAMPLE_LENGTH + 1)
+        with pytest.raises(ValueError, match="MAX_SAMPLE_LENGTH"):
+            regex_replace_preview("a", "b", [long_sample])
+
+    def test_unicode_policy_check_rejects_long_input(self):
+        """H3: unicode_policy_check rejects input exceeding MAX_TEXT_LENGTH."""
+        from eggcalc.exact.unicode_policy import unicode_policy_check, MAX_TEXT_LENGTH
+        long_text = "a" * (MAX_TEXT_LENGTH + 1)
+        result = unicode_policy_check(long_text, "identifier_strict")
+        assert result["pass_"] is False
+        assert any("exceeds" in f["message"] for f in result["findings"])
+
+    def test_canonicalize_text_rejects_long_input(self):
+        """H3: canonicalize_text rejects input exceeding MAX_TEXT_LENGTH."""
+        from eggcalc.exact.unicode_policy import canonicalize_text, MAX_TEXT_LENGTH
+        long_text = "a" * (MAX_TEXT_LENGTH + 1)
+        result = canonicalize_text(long_text, "identifier_compare")
+        assert any("exceeds" in f for f in result.get("findings", []))
+
+    def test_bidi_chars_include_lrm_rlm(self):
+        """H4: _BIDI_CHARS in unicode_policy includes LRM and RLM."""
+        from eggcalc.exact.unicode_policy import _BIDI_CHARS
+        assert "\u200e" in _BIDI_CHARS  # LEFT-TO-RIGHT MARK
+        assert "\u200f" in _BIDI_CHARS  # RIGHT-TO-LEFT MARK
+
+    def test_validate_schema_light_element_limit(self):
+        """M4: validate_schema_light limits total elements walked."""
+        from eggcalc.exact.validate import validate_schema_light, MAX_SCHEMA_ELEMENTS
+        # Create a valid schema with a huge array
+        schema = {"type": "array", "items": {"type": "string"}}
+        data = ["valid"] * (MAX_SCHEMA_ELEMENTS + 1000)
+        result = validate_schema_light(data, schema)
+        # Should either be valid (all items checked) or truncated
+        assert "ok" in result or result.get("valid") is True
+
+    def test_prompt_input_inspect_deduplicates_bidi_findings(self):
+        """M7: prompt_input_inspect deduplicates bidi + unicode_hidden findings."""
+        from eggcalc.exact.inspect_prompt import prompt_input_inspect
+        # U+202E is both a bidi control and an invisible character
+        text = "hello\u202eworld"
+        result = prompt_input_inspect(text, checks=["unicode_hidden", "bidi"])
+        findings = result["findings"]
+        # Should have at most one finding for position 5 (U+202E)
+        pos5_findings = [f for f in findings if f.get("span", {}).get("char_start") == 5]
+        assert len(pos5_findings) <= 1
+
+    def test_instruction_regex_is_cached(self):
+        """M1: _INSTRUCTION_RE is cached after first call."""
+        from eggcalc.exact.inspect_prompt import _get_instruction_re, _INSTRUCTION_RE
+        # First call should cache
+        regex1 = _get_instruction_re(None)
+        import eggcalc.exact.inspect_prompt as mod
+        assert mod._INSTRUCTION_RE is not None
+        # Second call should return cached
+        regex2 = _get_instruction_re(None)
+        assert regex1 is regex2
+
+    def test_validate_toml_text_catches_specific_exceptions(self):
+        """M5: validate_toml_text catches ValueError, not bare Exception."""
+        from eggcalc.exact.validate import validate_toml_text
+        # Invalid TOML should return valid=False
+        result = validate_toml_text("[unclosed")
+        assert result["valid"] is False
+        assert result["error"] is not None

@@ -157,8 +157,10 @@ def _build_instruction_regex(phrase_patterns: list[str] | None = None) -> re.Pat
 def _get_instruction_re(phrase_patterns: list[str] | None = None) -> re.Pattern[str]:
     """Get or build the instruction regex."""
     global _INSTRUCTION_RE
-    if phrase_patterns is not None or _INSTRUCTION_RE is None:
+    if phrase_patterns is not None:
         return _build_instruction_regex(phrase_patterns)
+    if _INSTRUCTION_RE is None:
+        _INSTRUCTION_RE = _build_instruction_regex(None)
     return _INSTRUCTION_RE
 
 
@@ -202,9 +204,10 @@ def _find_unicode_hidden(text: str) -> list[PromptInspectionFinding]:
     invisibles = _find_invisibles(text)
     for inv in invisibles:
         severity = "warn"
-        # Zero-width characters are more suspicious
+        # Zero-width characters are more suspicious — commonly used for
+        # prompt injection to hide instructions from human reviewers
         if inv["codepoint"] in ("U+200B", "U+200C", "U+200D", "U+2060", "U+FEFF"):
-            severity = "warn"
+            severity = "error"
         findings.append(PromptInspectionFinding(
             code="HIDDEN_CHAR",
             severity=severity,
@@ -327,8 +330,17 @@ def _find_instruction_phrases(
     text: str,
     phrase_patterns: list[str] | None = None,
 ) -> list[PromptInspectionFinding]:
-    """Find instruction-like phrases that could manipulate agents."""
+    """Find instruction-like phrases that could manipulate agents.
+
+    Note: phrase_patterns are treated as literal strings (escaped with re.escape),
+    not as regex patterns. This prevents ReDoS from user-supplied patterns.
+    """
     findings: list[PromptInspectionFinding] = []
+    if phrase_patterns:
+        # Defense-in-depth: reject overly long individual patterns
+        for p in phrase_patterns:
+            if len(p) > 1000:
+                continue
     regex = _get_instruction_re(phrase_patterns)
     for match in regex.finditer(text):
         matched = match.group()
@@ -484,8 +496,26 @@ def prompt_input_inspect(
     if "long_minified_lines" in active_checks:
         findings.extend(_find_long_minified_lines(text))
 
+    # Deduplicate findings by (position, codepoint) to avoid double-counting
+    # bidi characters that appear in both unicode_hidden and bidi checks
+    seen: set[tuple[int, str]] = set()
+    deduped: list[PromptInspectionFinding] = []
+    for f in findings:
+        span = f.get("span", {})
+        pos = span.get("char_start", -1)
+        codepoint = f.get("details", {}).get("codepoint", f.get("code", "UNKNOWN"))
+        key = (pos, codepoint)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(f)
+    findings = deduped
+
     findings_truncated = False
     if len(findings) > MAX_FINDINGS:
+        # Sort by severity (errors first, then warnings, then info) before truncating
+        # so high-severity findings are not dropped when low-severity findings fill the limit
+        severity_order = {"error": 0, "warn": 1, "info": 2}
+        findings.sort(key=lambda f: severity_order.get(f.get("severity", "info"), 2))
         findings = findings[:MAX_FINDINGS]
         findings_truncated = True
 

@@ -26,6 +26,8 @@ from .unicode_tools import (
     detect_mixed_scripts,
 )
 
+MAX_TEXT_LENGTH = 100_000
+
 
 class PolicyFinding(TypedDict):
     """A single finding from a policy check."""
@@ -76,8 +78,9 @@ _WINDOWS_RESERVED = frozenset({
     "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 })
 
-# Bidi control characters
+# Bidi control characters (includes LRM/RLM marks per Unicode Bidirectional Algorithm)
 _BIDI_CHARS = frozenset({
+    "\u200e", "\u200f",  # LEFT-TO-RIGHT MARK, RIGHT-TO-LEFT MARK
     "\u202a", "\u202b", "\u202c", "\u202d", "\u202e",
     "\u2066", "\u2067", "\u2068", "\u2069",
 })
@@ -112,6 +115,19 @@ def unicode_policy_check(
     Returns:
         UnicodePolicyCheckResult with pass/fail, findings, and summary.
     """
+    if len(text) > MAX_TEXT_LENGTH:
+        return UnicodePolicyCheckResult(
+            pass_=False,
+            policy=policy,
+            normalized_form="",
+            findings=[PolicyFinding(
+                rule="input_too_large",
+                severity="error",
+                message=f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            )],
+            summary=f"Input too large: {len(text)} > {MAX_TEXT_LENGTH}",
+        )
+
     if policy not in _VALID_POLICIES:
         return UnicodePolicyCheckResult(
             pass_=False,
@@ -243,9 +259,13 @@ def _check_identifier_strict(text: str, normalized: str) -> list[PolicyFinding]:
         ))
 
     # Normalization instability (NFC != NFD form)
+    # NOTE: This is an intentional heuristic for security-sensitive contexts.
+    # It fires on text containing precomposed characters that have combining
+    # equivalents (e.g., U+00E9 'é' vs 'e' + U+0301 combining acute).
+    # This is expected to have a high false-positive rate for non-ASCII text
+    # with common accented characters. Callers should filter by severity
+    # ("warning") if this is too noisy for their use case.
     if unicodedata.is_normalized("NFC", normalized) and not unicodedata.is_normalized("NFD", normalized):
-        # This is a heuristic: if NFC-normalized text is not NFD-normalized,
-        # there may be normalization instability
         nfd_form = unicodedata.normalize("NFD", normalized)
         if nfd_form != normalized:
             findings.append(PolicyFinding(
@@ -307,8 +327,10 @@ def _check_filename_safe(text: str, normalized: str) -> list[PolicyFinding]:
             message=f"Zero-width characters found: {len(zw_found)}",
         ))
 
-    # Reserved Windows names (check stem)
-    stem = normalized.split(".")[0].upper()
+    # Reserved Windows names (check stem, handling path-qualified names)
+    # Extract the basename before checking to catch names like "dir/CON.txt"
+    basename = normalized.split("/")[-1].split("\\")[-1]
+    stem = basename.split(".")[0].upper()
     if stem in _WINDOWS_RESERVED:
         findings.append(PolicyFinding(
             rule="reserved_windows_name",
@@ -418,6 +440,16 @@ def _check_json_key(text: str, normalized: str) -> list[PolicyFinding]:
             message=f"Zero-width characters found: {len(zw_found)}",
         ))
 
+    # Variation selectors (U+FE00-U+FE0F) — invisible characters that could
+    # manipulate JSON key identity
+    vs_found = [c for c in normalized if 0xFE00 <= ord(c) <= 0xFE0F]
+    if vs_found:
+        findings.append(PolicyFinding(
+            rule="variation_selectors",
+            severity="error",
+            message=f"Variation selector characters found: {len(vs_found)}",
+        ))
+
     # Confusables (warning for JSON keys)
     confusables = detect_confusables(normalized)
     if confusables:
@@ -523,6 +555,18 @@ def canonicalize_text(
             fingerprint_before="",
             fingerprint_after="",
             findings=[f"Invalid profile: {profile}. Valid profiles: {', '.join(sorted(_VALID_PROFILES))}"],
+            mapping=None,
+        )
+        return result
+
+    if len(text) > MAX_TEXT_LENGTH:
+        result = CanonicalizeResultWithMapping(
+            text=text,
+            changed=False,
+            operations_applied=[],
+            fingerprint_before="",
+            fingerprint_after="",
+            findings=[f"Input length {len(text)} exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}"],
             mapping=None,
         )
         return result
@@ -647,11 +691,8 @@ def _canonicalize_source_file_identity(text: str) -> tuple[str, list[str], list[
         current = current + "\n"
         ops.append("ensure_final_newline")
     elif current.endswith("\n\n"):
-        # Normalize multiple trailing newlines
-        while current.endswith("\n\n"):
-            current = current[:-1]
-        if not current.endswith("\n"):
-            current = current + "\n"
+        # Normalize multiple trailing newlines (strip extras, keep one)
+        current = current.rstrip("\n") + "\n"
 
     return current, ops, findings
 

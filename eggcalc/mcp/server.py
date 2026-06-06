@@ -28,6 +28,7 @@ from .schemas import TOOL_SCHEMAS
 # reason (e.g. tests of unrelated CLI code that transitively imports the
 # schema) does not globally disable random/setvar.
 _mcp_defaults_configured: bool = False
+_mcp_defaults_lock = threading.Lock()
 from .tools import (
     _sanitize_error,
     canonicalize_text_mcp,
@@ -159,7 +160,7 @@ MAX_REQUESTS_PER_SECOND = 10
 MAX_REQUEST_ID_LENGTH = 1024
 MAX_TOOL_TIMEOUT_SECONDS = 30
 MAX_CANCELLED_REQUESTS = 10_000
-_cancelled_requests: deque[Any] = deque(maxlen=MAX_CANCELLED_REQUESTS)
+_cancelled_requests: set[Any] = set()
 _cancelled_lock = threading.Lock()
 
 # Bounded thread pool for tool invocations. Prevents unbounded thread
@@ -597,10 +598,8 @@ def _handle_call_tool(request: dict) -> dict:
     req_id = request.get("id")
     with _cancelled_lock:
         if req_id is not None and req_id in _cancelled_requests:
-            # Remove from deque (rebuild without the matching element)
-            remaining = [r for r in _cancelled_requests if r != req_id]
-            _cancelled_requests.clear()
-            _cancelled_requests.extend(remaining)
+            # Remove from set
+            _cancelled_requests.discard(req_id)
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -797,13 +796,14 @@ def handle_request(request: Any) -> dict | None:
     # random/setvar in the default evaluator — only code that actually
     # uses the MCP server gets the MCP-safe defaults.
     global _mcp_defaults_configured
-    if not _mcp_defaults_configured:
-        _evaluator._mcp_mode = True
-        _evaluator.configure_default_evaluator(
-            allow_random=False,
-            allow_side_effects=False,
-        )
-        _mcp_defaults_configured = True
+    with _mcp_defaults_lock:
+        if not _mcp_defaults_configured:
+            _evaluator._mcp_mode = True
+            _evaluator.configure_default_evaluator(
+                allow_random=False,
+                allow_side_effects=False,
+            )
+            _mcp_defaults_configured = True
 
     if not isinstance(request, dict):
         return _invalid_request(None, "Invalid Request: expected JSON object")
@@ -856,7 +856,10 @@ def handle_request(request: Any) -> dict | None:
             and not isinstance(cancelled_id, bool)
         ):
             with _cancelled_lock:
-                _cancelled_requests.append(cancelled_id)
+                _cancelled_requests.add(cancelled_id)
+                # Evict arbitrary entries if over limit (set.pop() is non-deterministic)
+                while len(_cancelled_requests) > MAX_CANCELLED_REQUESTS:
+                    _cancelled_requests.pop()
         return None
     elif method == "ping":
         return {

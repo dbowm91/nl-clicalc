@@ -12,6 +12,7 @@ import logging
 import multiprocessing
 import re
 import threading
+from collections import deque
 from typing import Any
 
 from .. import EvaluationError, evaluate_raw
@@ -204,8 +205,48 @@ _SPAWN_ACQUIRE_TIMEOUT = 10  # seconds to wait for a spawn slot before failing
 # are evicted when the cap is reached.
 MAX_ORPHANED_REGEX_PROCESSES = 256
 _orphaned_regex_processes: set[multiprocessing.Process] = set()
-_orphaned_regex_order: list[multiprocessing.Process] = []
+_orphaned_regex_order: deque[multiprocessing.Process] = deque()
 _orphaned_regex_lock: threading.Lock = threading.Lock()
+
+
+def _cleanup_child_process(
+    proc: multiprocessing.Process | None,
+    queue: multiprocessing.Queue | None = None,
+) -> None:
+    """Terminate and clean up a child process and its queue.
+
+    Shared cleanup logic for validate_regex, regex_finditer, and
+    dotenv_validate subprocess workers.
+    """
+    if queue is not None:
+        try:
+            queue.close()
+        except Exception:
+            pass
+        try:
+            queue.join_thread()
+        except Exception:
+            pass
+    if proc is not None:
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=2)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=1)
+        # If process survived terminate+kill, register for defensive cleanup
+        if proc.is_alive():
+            with _orphaned_regex_lock:
+                _orphaned_regex_processes.add(proc)
+                _orphaned_regex_order.append(proc)
+                while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
+                    oldest = _orphaned_regex_order.popleft()
+                    _orphaned_regex_processes.discard(oldest)
+        try:
+            proc.close()
+        except Exception:
+            pass
+
 
 def _build_physical_constants() -> dict[str, dict[str, Any]]:
     """Build PHYSICAL_CONSTANTS from Evaluator.CONSTANTS to prevent drift.
@@ -367,7 +408,8 @@ def _sanitize_error(message: str) -> str:
     # Variable assignments with string values
     text = re.sub(r'^\s*[A-Za-z_]\w*\s*=\s*["\'][^"\']*["\']', '<var>=<redacted>', text, flags=re.MULTILINE)
     # Bare absolute file paths (Unix /path/to/file.py or Windows C:\path\file.py)
-    text = re.sub(r'(?:/[\w.-]+){2,}\.\w+', '<path>', text)
+    # Only matches absolute paths with 2+ directory components and a file extension
+    text = re.sub(r'(?<![/\w.])(/[\w./-]+\.\w{1,10})(?![/\w])', '<path>', text)
     # Also match common system directory paths without file extensions
     text = re.sub(r'(?:/(?:etc|proc|dev|sys|run|tmp|var|usr|lib|bin|sbin)(?:/[\w.-]+)+)', '<path>', text)
     text = re.sub(r'[A-Za-z]:\\(?:[\w.-]+\\)+\w+\.\w+', '<path>', text)
@@ -1287,6 +1329,22 @@ def validate_regex(
             tool="validate_regex",
         )
 
+    if flags is not None:
+        if not isinstance(flags, list):
+            return _error_response(
+                "invalid_arguments",
+                f"flags must be a list, got {type(flags).__name__}",
+                tool="validate_regex",
+            )
+        non_str_flags = [i for i, f in enumerate(flags) if not isinstance(f, str)]
+        if non_str_flags:
+            return _error_response(
+                "invalid_arguments",
+                "All flags must be strings",
+                [f"Non-string items at indices: {non_str_flags[:5]}"],
+                tool="validate_regex",
+            )
+
     long_samples = [i for i, s in enumerate(samples) if len(s) > MAX_REGEX_SAMPLE_LENGTH]
     if long_samples:
         return _error_response(
@@ -1348,33 +1406,7 @@ def validate_regex(
                 tool="validate_regex",
             )
         finally:
-            try:
-                queue.close()
-            except Exception:
-                pass
-            try:
-                queue.join_thread()
-            except Exception:
-                pass
-            if proc is not None:
-                if proc.is_alive():
-                    proc.terminate()
-                    proc.join(timeout=2)
-                if proc.is_alive():
-                    proc.kill()
-                    proc.join(timeout=1)
-                # If process survived terminate+kill, register for defensive cleanup
-                if proc.is_alive():
-                    with _orphaned_regex_lock:
-                        _orphaned_regex_processes.add(proc)
-                        _orphaned_regex_order.append(proc)
-                        while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
-                            oldest = _orphaned_regex_order.pop(0)
-                            _orphaned_regex_processes.discard(oldest)
-                try:
-                    proc.close()
-                except Exception:
-                    pass
+            _cleanup_child_process(proc, queue)
 
         if status == "error":
             return _error_response("internal_error", value, tool="validate_regex")
@@ -1602,6 +1634,22 @@ def regex_finditer(
             tool="regex_finditer",
         )
 
+    if flags is not None:
+        if not isinstance(flags, list):
+            return _error_response(
+                "invalid_arguments",
+                f"flags must be a list, got {type(flags).__name__}",
+                tool="regex_finditer",
+            )
+        non_str_flags = [i for i, f in enumerate(flags) if not isinstance(f, str)]
+        if non_str_flags:
+            return _error_response(
+                "invalid_arguments",
+                "All flags must be strings",
+                [f"Non-string items at indices: {non_str_flags[:5]}"],
+                tool="regex_finditer",
+            )
+
     safety = _regex_safety_check(pattern)
     if safety.get("risk") in ("high", "medium"):
         return _error_response(
@@ -1647,33 +1695,7 @@ def regex_finditer(
                 tool="regex_finditer",
             )
         finally:
-            try:
-                queue.close()
-            except Exception:
-                pass
-            try:
-                queue.join_thread()
-            except Exception:
-                pass
-            if proc is not None:
-                if proc.is_alive():
-                    proc.terminate()
-                    proc.join(timeout=2)
-                if proc.is_alive():
-                    proc.kill()
-                    proc.join(timeout=1)
-                # If process survived terminate+kill, register for defensive cleanup
-                if proc.is_alive():
-                    with _orphaned_regex_lock:
-                        _orphaned_regex_processes.add(proc)
-                        _orphaned_regex_order.append(proc)
-                        while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
-                            oldest = _orphaned_regex_order.pop(0)
-                            _orphaned_regex_processes.discard(oldest)
-                try:
-                    proc.close()
-                except Exception:
-                    pass
+            _cleanup_child_process(proc, queue)
 
         if status == "error":
             return _error_response("internal_error", value, tool="regex_finditer")
@@ -3778,32 +3800,7 @@ def dotenv_validate_mcp(
                 tool="dotenv_validate",
             )
         finally:
-            try:
-                queue.close()
-            except Exception:
-                pass
-            try:
-                queue.join_thread()
-            except Exception:
-                pass
-            if proc is not None:
-                if proc.is_alive():
-                    proc.terminate()
-                    proc.join(timeout=2)
-                if proc.is_alive():
-                    proc.kill()
-                    proc.join(timeout=1)
-                if proc.is_alive():
-                    with _orphaned_regex_lock:
-                        _orphaned_regex_processes.add(proc)
-                        _orphaned_regex_order.append(proc)
-                        while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
-                            oldest = _orphaned_regex_order.pop(0)
-                            _orphaned_regex_processes.discard(oldest)
-                try:
-                    proc.close()
-                except Exception:
-                    pass
+            _cleanup_child_process(proc, queue)
 
         if status == "error":
             return _error_response("internal_error", value, tool="dotenv_validate")
@@ -4335,7 +4332,9 @@ def prompt_input_inspect_mcp(
     Args:
         text: The text to inspect.
         checks: Subset of check names to run.
-        phrase_patterns: Optional literal strings or safe regexes to detect.
+        phrase_patterns: Optional literal strings to detect as instruction-like
+                        phrases. Patterns are escaped (treated as literals, not
+                        regex) to prevent ReDoS.
 
     Returns:
         Success envelope with inspection result, or error envelope.
