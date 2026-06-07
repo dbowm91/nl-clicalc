@@ -2,71 +2,72 @@
 
 Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLERS`.
 
-**Total: 59 tools**
+**Total: 60 tools**
 
 ## Inventory Table
 
 | # | Tool Name | Category | Tier | Implemented | README | docs/mcp.md | Tests | Notes |
 |---|-----------|----------|------|-------------|--------|-------------|-------|-------|
 | 1 | `argv_compare` | shell | 2 | yes | no | yes | yes | Compare argv lists or command strings by parsed argv |
-| 2 | `code_fence_extract` | markdown | 2 | yes | no | yes | yes | Extract fenced code blocks with line ranges and fingerprints |
-| 3 | `constant_lookup` | math | 2 | yes | no | no | no | Physical constant lookup (avogadro, planck, etc.) |
-| 4 | `dotenv_validate` | config | 2 | yes | no | yes | yes | Validate .env key=value text with duplicate and expansion detection |
-| 5 | `escape_text` | text | 1 | yes | no | yes | yes | Escape text for various output formats |
-| 6 | `glob_match` | path | 1 | yes | no | yes | yes | Match glob pattern against path |
-| 7 | `identifier_analyze` | identifier | 3 | yes | no | yes | yes | Classify identifier naming conventions |
-| 8 | `identifier_inspect` | identifier | 1 | yes | no | yes | yes | Detect confusables/collisions in identifiers |
-| 9 | `identifier_table_inspect` | identifier | 3 | yes | no | yes | yes | Table-level identifier collision, keyword, and style analysis |
-| 10 | `ini_validate` | config | 2 | yes | no | yes | yes | Validate INI config with section and duplicate detection |
-| 11 | `json_canonicalize` | json | 1 | yes | no | yes | yes | Deterministic JSON formatting with stable hashes |
-| 12 | `json_compare` | json | 1 | yes | no | yes | yes | Semantic JSON comparison |
-| 13 | `json_extract` | json | 2 | yes | no | yes | yes | JSON Pointer extraction (RFC 6901) |
-| 14 | `json_query` | json | 1 | yes | no | yes | yes | JSON Pointer query (RFC 6901) |
-| 15 | `json_shape` | json | 3 | yes | no | no | no | Analyze JSON structure without values |
-| 16 | `line_range_compare` | text | 2 | yes | no | yes | yes | Compare line ranges from two texts |
-| 17 | `line_range_extract` | text | 1 | yes | no | yes | yes | Extract line ranges with offsets and fingerprints |
-| 18 | `list_compare` | list | 2 | yes | yes | yes | yes | List comparison (ordered/set/multiset) |
-| 19 | `list_dedupe` | list | 1 | yes | no | yes | no | Deduplicate list with normalization support |
-| 20 | `list_sort` | list | 1 | yes | no | yes | no | Sort list with normalization support |
-| 21 | `markdown_structure` | markdown | 2 | yes | no | yes | yes | Markdown document structure analysis |
-| 22 | `math_eval` | math | 0 | yes | yes | yes | yes | Evaluate math expressions with NL/unit support |
-| 23 | `patch_apply_check` | patch | 2 | yes | no | yes | yes | Validate and simulate unified diff application |
-| 24 | `patch_summary` | patch | 2 | yes | no | yes | yes | Summarize unified diff without applying |
-| 25 | `prompt_input_inspect` | text | 2 | yes | no | yes | yes | Detect prompt injection (hidden chars, instruction phrases, ANSI escapes) |
-| 26 | `path_analyze` | path | 2 | yes | no | yes | yes | Lexical path analysis (no filesystem) |
-| 27 | `path_compare` | path | 2 | yes | no | yes | yes | Compare paths under normalization rules |
-| 28 | `path_normalize` | path | 0 | yes | no | yes | yes | Normalize path with platform semantics |
-| 29 | `path_scope_check` | path | 2 | yes | no | yes | yes | Lexical scope check (no symlink resolution) |
-| 30 | `regex_finditer` | regex | 1 | yes | no | no | yes | Find all regex matches with positions |
-| 31 | `regex_safety_check` | regex | 1 | yes | no | no | yes | Check regex for catastrophic backtracking |
-| 32 | `shell_quote_join` | shell | 2 | yes | no | yes | yes | Safely quote argv tokens into shell string |
-| 33 | `shell_split` | shell | 2 | yes | no | yes | yes | Parse shell command into argv with risk detection |
-| 34 | `text_count` | text | 0 | yes | yes | yes | yes | Character counting and frequency table |
-| 35 | `text_diff_explain` | text | 1 | yes | yes | yes | no | Explain string differences with codepoints |
-| 36 | `text_equal` | text | 0 | yes | yes | yes | yes | String comparison with normalization modes |
-| 37 | `text_fingerprint` | text | 0 | yes | no | yes | yes | Deterministic SHA-256 fingerprint |
-| 38 | `text_hash` | text | 2 | yes | no | yes | yes | Cryptographic hash computation |
-| 39 | `text_inspect` | text | 1 | yes | yes | yes | no | Hidden characters, confusables, mixed scripts |
-| 40 | `text_measure` | text | 0 | yes | yes | yes | yes | Comprehensive text metrics |
-| 41 | `text_position` | text | 2 | yes | no | yes | yes | Position conversion (byte/cp/line/UTF-16) |
-| 42 | `text_replace_check` | text | 1 | yes | no | yes | yes | Pre-edit replacement safety check |
-| 43 | `text_truncate` | text | 3 | yes | no | yes | yes | Grapheme-aware truncation |
-| 44 | `text_transform` | text | 2 | yes | no | yes | yes | Unicode normalization, casefold, trim, etc. |
-| 45 | `text_window` | text | 1 | yes | no | yes | yes | Context window around a text position |
-| 46 | `toml_shape` | toml | 2 | yes | no | yes | no | TOML structure analysis |
-| 47 | `unit_convert` | math | 2 | yes | no | no | no | Unit conversion with factors |
-| 48 | `unit_info` | math | 2 | yes | no | no | no | Unit metadata (canonical, category) |
-| 49 | `unescape_text` | text | 1 | yes | no | yes | yes | Unescape text from various formats |
-| 50 | `validate_brackets` | validation | 1 | yes | yes | yes | yes | Bracket balance checking |
-| 51 | `validate_json` | validation | 0 | yes | yes | yes | yes | JSON parsing validation |
-| 52 | `validate_regex` | regex | 1 | yes | yes | yes | yes | Regex pattern testing against samples |
-| 53 | `validate_schema_light` | validation | 3 | yes | no | yes | yes | Light JSON schema validation |
-| 54 | `validate_toml` | validation | 1 | yes | no | yes | yes | TOML parsing validation |
-| 55 | `version_compare` | version | 2 | yes | no | yes | no | Version string comparison (semver/pep440/loose) |
-| 56 | `unicode_policy_check` | unicode | 2 | yes | no | yes | yes | Apply named Unicode safety policy to text |
-| 57 | `canonicalize_text` | unicode | 2 | yes | no | yes | yes | Apply named text canonicalization profile |
-| 58 | `version_constraint_check` | version | 3 | yes | no | yes | yes | Check if version satisfies constraint (semver/cargo) |
-| 59 | `cargo_toml_inspect` | cargo | 3 | yes | yes | yes | yes | Inspect Cargo.toml text (package, workspace, deps) |
+| 2 | `cargo_toml_inspect` | cargo | 3 | yes | no | yes | yes | Inspect Cargo.toml text (package, workspace, deps) |
+| 3 | `canonicalize_text` | unicode | 2 | yes | no | yes | yes | Apply named text canonicalization profile |
+| 4 | `code_fence_extract` | markdown | 2 | yes | no | yes | yes | Extract fenced code blocks with line ranges and fingerprints |
+| 5 | `constant_lookup` | math | 2 | yes | no | no | yes | Physical constant lookup (avogadro, planck, etc.) |
+| 6 | `dotenv_validate` | config | 2 | yes | no | yes | yes | Validate .env key=value text with duplicate and expansion detection |
+| 7 | `escape_text` | text | 1 | yes | no | yes | yes | Escape text for various output formats |
+| 8 | `glob_match` | path | 1 | yes | no | yes | yes | Match glob pattern against path |
+| 9 | `identifier_analyze` | identifier | 3 | yes | no | yes | yes | Classify identifier naming conventions |
+| 10 | `identifier_inspect` | identifier | 1 | yes | no | yes | yes | Detect confusables/collisions in identifiers |
+| 11 | `identifier_table_inspect` | identifier | 3 | yes | no | yes | yes | Table-level identifier collision, keyword, and style analysis |
+| 12 | `ini_validate` | config | 2 | yes | no | yes | yes | Validate INI config with section and duplicate detection |
+| 13 | `json_canonicalize` | json | 1 | yes | no | yes | yes | Deterministic JSON formatting with stable hashes |
+| 14 | `json_compare` | json | 1 | yes | no | yes | yes | Semantic JSON comparison |
+| 15 | `json_extract` | json | 2 | yes | no | yes | yes | JSON Pointer extraction (RFC 6901) |
+| 16 | `json_query` | json | 1 | yes | no | yes | yes | JSON Pointer query (RFC 6901) |
+| 17 | `json_shape` | json | 3 | yes | no | no | yes | Analyze JSON structure without values |
+| 18 | `line_range_compare` | text | 2 | yes | no | yes | yes | Compare line ranges from two texts |
+| 19 | `line_range_extract` | text | 1 | yes | no | yes | yes | Extract line ranges with offsets and fingerprints |
+| 20 | `list_compare` | list | 2 | yes | yes | yes | yes | List comparison (ordered/set/multiset) |
+| 21 | `list_dedupe` | list | 1 | yes | no | yes | yes | Deduplicate list with normalization support |
+| 22 | `list_sort` | list | 1 | yes | no | yes | yes | Sort list with normalization support |
+| 23 | `markdown_structure` | markdown | 2 | yes | no | yes | yes | Markdown document structure analysis |
+| 24 | `math_eval` | math | 0 | yes | yes | yes | yes | Evaluate math expressions with NL/unit support |
+| 25 | `patch_apply_check` | patch | 2 | yes | no | yes | yes | Validate and simulate unified diff application |
+| 26 | `patch_summary` | patch | 2 | yes | no | yes | yes | Summarize unified diff without applying |
+| 27 | `path_analyze` | path | 2 | yes | no | yes | yes | Lexical path analysis (no filesystem) |
+| 28 | `path_compare` | path | 2 | yes | no | yes | yes | Compare paths under normalization rules |
+| 29 | `path_normalize` | path | 0 | yes | no | yes | yes | Normalize path with platform semantics |
+| 30 | `path_scope_check` | path | 2 | yes | no | yes | yes | Lexical scope check (no symlink resolution) |
+| 31 | `prompt_input_inspect` | text | 2 | yes | no | yes | yes | Detect prompt injection (hidden chars, instruction phrases, ANSI escapes) |
+| 32 | `regex_finditer` | regex | 1 | yes | no | no | yes | Find all regex matches with positions |
+| 33 | `regex_safety_check` | regex | 1 | yes | no | no | yes | Check regex for catastrophic backtracking |
+| 34 | `shell_quote_join` | shell | 2 | yes | no | yes | yes | Safely quote argv tokens into shell string |
+| 35 | `shell_split` | shell | 2 | yes | no | yes | yes | Parse shell command into argv with risk detection |
+| 36 | `text_count` | text | 0 | yes | yes | yes | yes | Character counting and frequency table |
+| 37 | `text_diff_explain` | text | 1 | yes | yes | yes | no | Explain string differences with codepoints |
+| 38 | `text_equal` | text | 0 | yes | yes | yes | yes | String comparison with normalization modes |
+| 39 | `text_fingerprint` | text | 0 | yes | no | yes | yes | Deterministic SHA-256 fingerprint |
+| 40 | `text_hash` | text | 2 | yes | no | yes | yes | Cryptographic hash computation |
+| 41 | `text_inspect` | text | 1 | yes | yes | yes | no | Hidden characters, confusables, mixed scripts |
+| 42 | `text_measure` | text | 0 | yes | yes | yes | yes | Comprehensive text metrics |
+| 43 | `text_position` | text | 2 | yes | no | yes | yes | Position conversion (byte/cp/line/UTF-16) |
+| 44 | `text_replace_check` | text | 1 | yes | no | yes | yes | Pre-edit replacement safety check |
+| 45 | `text_security_inspect` | text | 1 | yes | no | no | yes | Composite security text hygiene (verdict, findings, machine codes) |
+| 46 | `text_truncate` | text | 3 | yes | no | yes | yes | Grapheme-aware truncation |
+| 47 | `text_transform` | text | 2 | yes | no | yes | yes | Unicode normalization, casefold, trim, etc. |
+| 48 | `text_window` | text | 1 | yes | no | yes | yes | Context window around a text position |
+| 49 | `toml_shape` | toml | 2 | yes | no | yes | no | TOML structure analysis |
+| 50 | `unescape_text` | text | 1 | yes | no | yes | yes | Unescape text from various formats |
+| 51 | `unicode_policy_check` | unicode | 2 | yes | no | yes | yes | Apply named Unicode safety policy to text |
+| 52 | `unit_convert` | math | 2 | yes | no | no | no | Unit conversion with factors |
+| 53 | `unit_info` | math | 2 | yes | no | no | no | Unit metadata (canonical, category) |
+| 54 | `validate_brackets` | validation | 1 | yes | yes | yes | yes | Bracket balance checking |
+| 55 | `validate_json` | validation | 0 | yes | yes | yes | yes | JSON parsing validation |
+| 56 | `validate_regex` | regex | 1 | yes | yes | yes | yes | Regex pattern testing against samples |
+| 57 | `validate_schema_light` | validation | 3 | yes | no | yes | yes | Light JSON schema validation |
+| 58 | `validate_toml` | validation | 1 | yes | no | yes | yes | TOML parsing validation |
+| 59 | `version_compare` | version | 2 | yes | no | yes | no | Version string comparison (semver/pep440/loose) |
+| 60 | `version_constraint_check` | version | 3 | yes | no | yes | yes | Check if version satisfies constraint (semver/cargo) |
 
 ## Legend
 
@@ -83,8 +84,8 @@ Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLE
 | Documented in README | 10 |
 | Documented in docs/mcp.md | 59 |
 | Missing from docs/mcp.md | 0 |
-| Have tests | 52 |
-| Missing tests | 3 (`constant_lookup`, `list_dedupe`, `list_sort`) |
+| Have tests | 59 |
+| Missing tests | 0 |
 
 ## Category Breakdown
 

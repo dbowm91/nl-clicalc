@@ -44,6 +44,7 @@
     "text_measure",
     "text_position",
     "text_replace_check",
+    "text_security_inspect",
     "text_truncate",
     "text_transform",
     "text_window",

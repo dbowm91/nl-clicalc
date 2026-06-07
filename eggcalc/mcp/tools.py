@@ -4457,3 +4457,207 @@ def prompt_input_inspect_mcp(
         return _error_response("invalid_arguments", str(e), tool="prompt_input_inspect")
     except Exception as e:
         return _error_response("internal_error", str(e), tool="prompt_input_inspect")
+
+
+# ---------------------------------------------------------------------------
+# Composite tool: text_security_inspect
+# ---------------------------------------------------------------------------
+
+def text_security_inspect(
+    text: str,
+    policy: str = "default",
+    normalize: str = "none",
+    compare_normalized: bool = False,
+    detail: str = "summary",
+) -> dict:
+    """Composite: run security-oriented text hygiene checks.
+
+    Calls text_inspect, unicode_policy_check, canonicalize_text,
+    prompt_input_inspect, and identifier_inspect depending on the
+    chosen policy.  Returns a single verdict plus structured findings.
+    """
+    if not isinstance(text, str):
+        return _error_response(
+            "invalid_arguments",
+            "text must be a string",
+            tool="text_security_inspect",
+        )
+
+    valid_policies = ("default", "source_code", "prompt", "markdown", "identifier")
+    if policy not in valid_policies:
+        return _error_response(
+            "invalid_arguments",
+            f"policy must be one of: {', '.join(valid_policies)}",
+            tool="text_security_inspect",
+        )
+
+    all_findings: list[dict] = []
+    subresults: dict[str, Any] = {}
+    machine_codes: list[str] = []
+
+    # 1. text_inspect (always)
+    try:
+        ti = text_inspect(text, detail=detail, normalize=normalize,
+                          compare_normalized=compare_normalized)
+        if ti.get("ok") is False:
+            subresults["text_inspect"] = {"error": ti.get("error")}
+        else:
+            subresults["text_inspect"] = ti.get("result", {})
+            for w in ti.get("result", {}).get("warnings", []):
+                all_findings.append({
+                    "code": "TEXT_INSPECT_WARNING",
+                    "severity": "warn",
+                    "message": w,
+                })
+            inv = ti.get("result", {}).get("invisibles", [])
+            if inv:
+                machine_codes.append("UNICODE_RISK")
+                all_findings.append({
+                    "code": "HIDDEN_CHARS",
+                    "severity": "warn",
+                    "message": f"Found {len(inv)} invisible character(s)",
+                })
+            conf = ti.get("result", {}).get("confusables", [])
+            if conf:
+                machine_codes.append("UNICODE_RISK")
+                all_findings.append({
+                    "code": "CONFUSABLES",
+                    "severity": "warn",
+                    "message": f"Found {len(conf)} confusable character(s)",
+                })
+    except Exception as e:
+        subresults["text_inspect"] = {"error": str(e)}
+
+    # 2. unicode_policy_check (always)
+    upolicy = "source_code" if policy == "source_code" else "human_text"
+    try:
+        up = unicode_policy_check_mcp(text, policy=upolicy)
+        if up.get("ok") is not False:
+            up_findings = up.get("findings", [])
+            for f in up_findings:
+                sev = f.get("severity", "info")
+                all_findings.append({
+                    "code": f.get("code", "UNICODE_POLICY"),
+                    "severity": sev,
+                    "message": f.get("message", ""),
+                })
+            if any(f.get("severity") == "error" for f in up_findings):
+                machine_codes.append("UNICODE_RISK")
+            subresults["unicode_policy_check"] = {
+                "policy": upolicy,
+                "findings_count": len(up_findings),
+            }
+        else:
+            subresults["unicode_policy_check"] = {"error": up.get("error")}
+    except Exception as e:
+        subresults["unicode_policy_check"] = {"error": str(e)}
+
+    # 3. canonicalize_text (if normalize != none)
+    if normalize != "none":
+        try:
+            ct = canonicalize_text_mcp(text, profile=normalize)
+            if ct.get("ok") is not False:
+                changed = ct.get("result", {}).get("changed", False)
+                subresults["canonicalize_text"] = {"changed": changed}
+                if changed:
+                    machine_codes.append("NORMALIZATION_DIFF")
+            else:
+                subresults["canonicalize_text"] = {"error": ct.get("error")}
+        except Exception as e:
+            subresults["canonicalize_text"] = {"error": str(e)}
+
+    # 4. prompt_input_inspect (for prompt/markdown/default policies)
+    if policy in ("prompt", "markdown", "default"):
+        try:
+            pi = prompt_input_inspect_mcp(text)
+            if pi.get("ok") is not False:
+                pi_findings = pi.get("findings", [])
+                for f in pi_findings:
+                    all_findings.append({
+                        "code": f.get("code", "PROMPT_RISK"),
+                        "severity": f.get("severity", "warn"),
+                        "message": f.get("message", ""),
+                    })
+                if any(f.get("severity") in ("warn", "error") for f in pi_findings):
+                    machine_codes.append("PROMPT_INJECTION_RISK")
+                subresults["prompt_input_inspect"] = {
+                    "findings_count": len(pi_findings),
+                }
+            else:
+                subresults["prompt_input_inspect"] = {"error": pi.get("error")}
+        except Exception as e:
+            subresults["prompt_input_inspect"] = {"error": str(e)}
+
+    # 5. identifier_inspect (for identifier/default policies)
+    if policy in ("identifier", "default"):
+        try:
+            # identifier_inspect expects a list of identifiers
+            words = [w for w in text.split() if w.isidentifier()]
+            if words:
+                ii = identifier_inspect_mcp(words)
+            else:
+                ii = {"ok": True, "result": {"warnings": []}}
+            if ii.get("ok") is not False:
+                ii_result = ii.get("result", {})
+                ii_warnings = ii_result.get("warnings", [])
+                for w in ii_warnings:
+                    all_findings.append({
+                        "code": "IDENTIFIER_RISK",
+                        "severity": "warn",
+                        "message": w,
+                    })
+                if ii_warnings:
+                    machine_codes.append("IDENTIFIER_COLLISION_RISK")
+                subresults["identifier_inspect"] = {
+                    "warnings_count": len(ii_warnings),
+                }
+            else:
+                subresults["identifier_inspect"] = {"error": ii.get("error")}
+        except Exception as e:
+            subresults["identifier_inspect"] = {"error": str(e)}
+
+    # Determine verdict
+    severities = {f["severity"] for f in all_findings}
+    if "error" in severities:
+        verdict = "block"
+    elif "warn" in severities:
+        verdict = "review"
+    else:
+        verdict = "allow"
+
+    # Deduplicate machine codes
+    unique_machine_codes = list(dict.fromkeys(machine_codes))
+    primary_machine_code = unique_machine_codes[0] if unique_machine_codes else "TEXT_SECURITY_OK"
+
+    # Build summary
+    n_findings = len(all_findings)
+    if verdict == "allow":
+        summary = f"No security issues found ({n_findings} findings)."
+    elif verdict == "review":
+        summary = f"Review recommended: {n_findings} finding(s) require attention."
+    else:
+        summary = f"Block: {n_findings} finding(s) indicate security risk."
+
+    result: dict[str, Any] = {
+        "verdict": verdict,
+        "policy": policy,
+        "findings": all_findings,
+        "machine_code": primary_machine_code,
+        "normalized_changed": subresults.get("canonicalize_text", {}).get("changed", False),
+        "recommended_action": (
+            "allow" if verdict == "allow"
+            else "review content for hidden instructions" if verdict == "review"
+            else "do not trust this text without manual inspection"
+        ),
+        "summary": summary,
+    }
+
+    if detail in ("normal", "full"):
+        result["subresults"] = subresults
+
+    return _success_response(
+        result,
+        tool="text_security_inspect",
+        findings=all_findings or None,
+        machine_code=primary_machine_code,
+    )

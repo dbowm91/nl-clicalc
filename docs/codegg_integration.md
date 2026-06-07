@@ -120,7 +120,7 @@ for finding in result["findings"]:
 {"tool": "unicode_policy_check", "input": {"text": "...", "policy": "source_code"}}
 ```
 
-A future `prompt_input_inspect` tool will combine these checks into a single call optimized for user-pasted content.
+The `prompt_input_inspect` tool combines these checks into a single call optimized for user-pasted content, model-returned markdown, terminal transcript paste-ins, issue/PR text, and other text that may include hidden instructions, ANSI escapes, Unicode controls, or suspicious prompt phrases.
 
 ### 6. Before Large Refactors
 
@@ -140,7 +140,7 @@ for coll in result["collisions"]:
 {"tool": "identifier_inspect", "input": {"identifiers": ["...", "..."], "language": "python"}}
 ```
 
-A future `identifier_table_inspect` tool will accept entire files and detect collisions across all declared identifiers.
+The `identifier_table_inspect` tool accepts entire files and detects collisions across all declared identifiers, including keyword and style analysis.
 
 ## Automatic vs. Model-Invoked: When to Use Each
 
@@ -169,8 +169,75 @@ The harness calls deterministic tools via the Python API (in-process, no MCP ove
 ## Tool Tiers
 
 - **Tier 0** — Always available, small schema: `validate_json`, `path_normalize`, `text_fingerprint`
-- **Tier 1** — Default for coding agents: `text_replace_check`, `patch_apply_check`, `unicode_policy_check`, `identifier_inspect`
-- **Tier 2** — Opt-in for heavier analysis: `shell_split`, `validate_toml`, `path_scope_check`, `markdown_structure`
+- **Tier 1** — Default for coding agents: `text_replace_check`, `identifier_inspect`, `validate_toml`, `escape_text`
+- **Tier 2** — Opt-in for heavier analysis: `shell_split`, `patch_apply_check`, `path_scope_check`, `markdown_structure`, `unicode_policy_check`
 - **Tier 3** — Domain-specific: `identifier_analyze`, `json_shape`, `text_truncate`
 
 See [MCP Tool Inventory](tool_inventory.md) for the complete list.
+
+## Profile-Based Integration
+
+`eggcalc` provides named MCP profiles that control which tools are exposed to the model. `codegg` should use these profiles rather than maintaining a hand-written list of tools.
+
+### Recommended Default Profile
+
+Use `codegg_core` or `codegg_core_min` as the default model-facing profile:
+
+- **`codegg_core_min`** — Ultra-compact: `validate_json`, `text_diff_explain`, `path_scope_check`, `patch_apply_check`, `text_replace_check`, `shell_split`, `unicode_policy_check`
+- **`codegg_core`** — Practical default: adds `validate_toml`, `text_inspect`, `text_equal`, `path_normalize`, `regex_safety_check`, `identifier_inspect`, `cargo_toml_inspect`
+
+Do not expose all 60 tools by default. The `full` profile is available for debugging but should not be the model-facing default.
+
+### Task-Based Profile Selection
+
+Switch profiles based on the current task mode:
+
+| Task Mode | Recommended Profile |
+|-----------|-------------------|
+| Editing / refactoring | `codegg_patch` |
+| Config file work | `codegg_config` |
+| Shell / terminal commands | `codegg_shell` |
+| Suspicious paste / input | `codegg_unicode_security` |
+| Repo audit / deep review | `codegg_repo_audit` |
+| Math / unit work | `human_math` |
+
+### Mandatory Preflight Boundaries
+
+Treat these as mandatory preflight points. These checks should run automatically through direct library APIs or MCP calls before the model's output reaches the system:
+
+| Before | Use |
+|--------|-----|
+| Applying edits | `edit_preflight` or `patch_apply_check` / `text_replace_check` |
+| Command execution | `command_preflight` or `shell_split` / `regex_safety_check` |
+| Accepting config | `config_preflight` or `validate_json` / `validate_toml` / `dotenv_validate` / `ini_validate` |
+| Resolving write path | `path_scope_check` / `path_normalize` |
+| Trusting pasted text | `text_security_inspect` or `prompt_input_inspect` / `unicode_policy_check` |
+| Large rename | `identifier_inspect` / `identifier_table_inspect` |
+
+### Composite Tools
+
+`text_security_inspect` is a composite tool that combines multiple primitives into a single security pass:
+
+```python
+# Single call replaces multiple individual tool calls
+{"tool": "text_security_inspect", "input": {"text": "...", "policy": "prompt"}}
+# Returns: {verdict: "allow"|"review"|"block", findings: [...], machine_code: "..."}
+```
+
+Use composite tools for common workflows. Use individual primitives when you need fine-grained control.
+
+### Event Logging
+
+Store `machine_code` values from tool responses in the event log so users can audit why a command, edit, or config was blocked or flagged. Machine codes are stable identifiers like `TEXT_SECURITY_OK`, `UNICODE_RISK`, `PROMPT_INJECTION_RISK`, `EDIT_OK`, `PATCH_FAILED`, etc.
+
+### Compact Schema Mode
+
+For model-facing tool listings, use compact schema mode to reduce context overhead:
+
+```bash
+calc --mcp --mcp-schema-detail compact
+# or
+EGGCALC_MCP_SCHEMA_DETAIL=compact calc --mcp
+```
+
+Compact mode preserves tool names, types, and enums while removing verbose descriptions and defaults.

@@ -7001,3 +7001,629 @@ class TestDeferredD10D4:
         from eggcalc.mcp.schemas import TOOL_SCHEMAS
         desc = TOOL_SCHEMAS["unit_convert"]["inputSchema"]["properties"]["value"]["description"]
         assert "finite" in desc.lower()
+
+
+class TestConstantLookupMCP:
+    """Test constant_lookup tool via MCP protocol."""
+
+    def test_known_constant_pi(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7001,
+            "method": "tools/call",
+            "params": {
+                "name": "constant_lookup",
+                "arguments": {"name": "pi"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["value"] - 3.141592653589793 < 1e-10
+        assert content["result"]["symbol"] == "π"
+
+    def test_known_constant_avogadro(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7002,
+            "method": "tools/call",
+            "params": {
+                "name": "constant_lookup",
+                "arguments": {"name": "avogadro"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["value"] == 6.02214076e+23
+
+    def test_unknown_constant_returns_error(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7003,
+            "method": "tools/call",
+            "params": {
+                "name": "constant_lookup",
+                "arguments": {"name": "nonexistent_xyz"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is False
+
+    def test_constant_lookup_case_insensitive(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7004,
+            "method": "tools/call",
+            "params": {
+                "name": "constant_lookup",
+                "arguments": {"name": "PI"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+
+
+class TestCargoTomlInspectMCP:
+    """Test cargo_toml_inspect tool via MCP protocol."""
+
+    def test_valid_cargo_toml(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7010,
+            "method": "tools/call",
+            "params": {
+                "name": "cargo_toml_inspect",
+                "arguments": {
+                    "text": '[package]\nname = "mycrate"\nversion = "0.1.0"\n',
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["parse_ok"] is True
+
+    def test_invalid_toml_returns_error(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7011,
+            "method": "tools/call",
+            "params": {
+                "name": "cargo_toml_inspect",
+                "arguments": {"text": "[invalid toml"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["parse_ok"] is False
+
+
+class TestIdentifierTableInspectMCP:
+    """Test identifier_table_inspect tool via MCP protocol."""
+
+    def test_collisions_detected(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7020,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_table_inspect",
+                "arguments": {
+                    "identifiers": [
+                        {"name": "getUser", "kind": "function"},
+                        {"name": "get_user", "kind": "variable"},
+                    ],
+                    "language": "python",
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+
+    def test_reserved_keyword_detected(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7021,
+            "method": "tools/call",
+            "params": {
+                "name": "identifier_table_inspect",
+                "arguments": {
+                    "identifiers": [
+                        {"name": "class", "kind": "function"},
+                    ],
+                    "language": "python",
+                },
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert len(content["result"].get("reserved_keyword_hits", [])) > 0
+
+
+class TestIniValidateMCP:
+    """Test ini_validate tool via MCP protocol."""
+
+    def test_valid_ini(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7030,
+            "method": "tools/call",
+            "params": {
+                "name": "ini_validate",
+                "arguments": {
+                    "text": "[section]\nkey1 = value1\nkey2 = value2\n",
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["parse_ok"] is True
+
+    def test_duplicate_keys_warn(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7031,
+            "method": "tools/call",
+            "params": {
+                "name": "ini_validate",
+                "arguments": {
+                    "text": "[section]\nkey1 = value1\nkey1 = value2\n",
+                    "duplicate_policy": "warn",
+                },
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+
+
+class TestPatchApplyCheckMCP:
+    """Test patch_apply_check tool via MCP protocol."""
+
+    def test_clean_patch(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7040,
+            "method": "tools/call",
+            "params": {
+                "name": "patch_apply_check",
+                "arguments": {
+                    "original_text": "line1\nline2\nline3\n",
+                    "patch_text": "--- a/file.txt\n+++ b/file.txt\n@@ -1,3 +1,3 @@\n line1\n-line2\n+LINE2\n line3\n",
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["applies"] is True
+
+    def test_failing_patch(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7041,
+            "method": "tools/call",
+            "params": {
+                "name": "patch_apply_check",
+                "arguments": {
+                    "original_text": "line1\nline2\nline3\n",
+                    "patch_text": "--- a/file.txt\n+++ b/file.txt\n@@ -1,3 +1,3 @@\n line1\n-NOEXIST\n+LINE2\n line3\n",
+                },
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["applies"] is False
+
+
+class TestPatchSummaryMCP:
+    """Test patch_summary tool via MCP protocol."""
+
+    def test_basic_summary(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7050,
+            "method": "tools/call",
+            "params": {
+                "name": "patch_summary",
+                "arguments": {
+                    "patch_text": "--- a/file.txt\n+++ b/file.txt\n@@ -1,3 +1,3 @@\n line1\n-line2\n+LINE2\n line3\n",
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["additions"] == 1
+        assert content["result"]["deletions"] == 1
+
+
+class TestVersionConstraintCheckMCP:
+    """Test version_constraint_check tool via MCP protocol."""
+
+    def test_satisfies_constraint(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7060,
+            "method": "tools/call",
+            "params": {
+                "name": "version_constraint_check",
+                "arguments": {
+                    "version": "1.5.0",
+                    "constraint": ">=1.0,<2.0",
+                    "scheme": "semver",
+                },
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["satisfies"] is True
+
+    def test_does_not_satisfy(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7061,
+            "method": "tools/call",
+            "params": {
+                "name": "version_constraint_check",
+                "arguments": {
+                    "version": "2.0.0",
+                    "constraint": "^1.0",
+                    "scheme": "cargo",
+                },
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["satisfies"] is False
+
+    def test_unsupported_scheme(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 7062,
+            "method": "tools/call",
+            "params": {
+                "name": "version_constraint_check",
+                "arguments": {
+                    "version": "1.0.0",
+                    "constraint": ">=1.0",
+                    "scheme": "invalid",
+                },
+            },
+        })
+        # Invalid scheme is caught by schema validation as an invalid argument
+        assert "error" in response
+
+
+class TestProfileFiltering:
+    """Test MCP profile-based tool filtering."""
+
+    def setup_method(self):
+        """Save and restore the active profile around each test."""
+        from eggcalc.mcp.server import get_active_profile, set_active_profile
+        self._original_profile = get_active_profile()
+        self._set_profile = set_active_profile
+
+    def teardown_method(self):
+        self._set_profile(self._original_profile)
+
+    def test_tools_list_respects_profile(self):
+        self._set_profile("codegg_core_min")
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8001,
+            "method": "tools/list",
+            "params": {},
+        })
+        tools = response["result"]["tools"]
+        tool_names = [t["name"] for t in tools]
+        # codegg_core_min should be a small set
+        assert len(tool_names) < len(TOOL_HANDLERS)
+        # All returned tools should be in codegg_core_min
+        from eggcalc.mcp.server import get_profile_tools
+        expected = get_profile_tools("codegg_core_min")
+        assert sorted(tool_names) == sorted(expected)
+
+    def test_tools_list_profile_param_overrides(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8002,
+            "method": "tools/list",
+            "params": {"profile": "human_math"},
+        })
+        tools = response["result"]["tools"]
+        tool_names = [t["name"] for t in tools]
+        assert "math_eval" in tool_names
+        assert "unit_convert" in tool_names
+        # Should not include non-math tools
+        assert "json_compare" not in tool_names
+
+    def test_tools_call_rejects_tool_outside_profile(self):
+        self._set_profile("codegg_core_min")
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8003,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "5 + 3"},
+            },
+        })
+        assert "error" in response
+        assert "not available in profile" in response["error"]["message"]
+
+    def test_tools_call_allows_tool_in_profile(self):
+        self._set_profile("codegg_core_min")
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8004,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_json",
+                "arguments": {"text": "{}"},
+            },
+        })
+        assert "result" in response
+
+    def test_full_profile_allows_all_tools(self):
+        self._set_profile("full")
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8005,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "5 + 3"},
+            },
+        })
+        assert "result" in response
+
+    def test_profiles_list_method(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8006,
+            "method": "profiles/list",
+            "params": {},
+        })
+        assert "result" in response
+        result = response["result"]
+        assert "active_profile" in result
+        assert "profiles" in result
+        assert "available_profiles" in result
+        assert "full" in result["profiles"]
+        assert "codegg_core" in result["profiles"]
+
+    def test_tools_list_returns_metadata_fields(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 8007,
+            "method": "tools/list",
+            "params": {},
+        })
+        tools = response["result"]["tools"]
+        for tool in tools:
+            assert "category" in tool
+            assert "llm_exposure" in tool
+            assert "cost" in tool
+
+
+class TestTextSecurityInspect:
+    """Test text_security_inspect composite tool."""
+
+    def test_clean_text_allows(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9001,
+            "method": "tools/call",
+            "params": {
+                "name": "text_security_inspect",
+                "arguments": {"text": "the cat sat on the mat"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        # Verdict depends on findings; clean ASCII text should be allow or review
+        assert content["result"]["verdict"] in ("allow", "review")
+
+    def test_text_with_invisible_chars_reviews(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9002,
+            "method": "tools/call",
+            "params": {
+                "name": "text_security_inspect",
+                "arguments": {"text": "Hello\u200bworld"},  # zero-width space
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["verdict"] in ("review", "block")
+
+    def test_source_code_policy(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9003,
+            "method": "tools/call",
+            "params": {
+                "name": "text_security_inspect",
+                "arguments": {
+                    "text": "def foo(): pass",
+                    "policy": "source_code",
+                },
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["policy"] == "source_code"
+
+    def test_identifier_policy(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9004,
+            "method": "tools/call",
+            "params": {
+                "name": "text_security_inspect",
+                "arguments": {
+                    "text": "getUser get_user",
+                    "policy": "identifier",
+                },
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["policy"] == "identifier"
+
+    def test_invalid_policy_returns_error(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9005,
+            "method": "tools/call",
+            "params": {
+                "name": "text_security_inspect",
+                "arguments": {
+                    "text": "hello",
+                    "policy": "invalid_policy",
+                },
+            },
+        })
+        assert "error" in response
+
+    def test_detail_full_includes_subresults(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9006,
+            "method": "tools/call",
+            "params": {
+                "name": "text_security_inspect",
+                "arguments": {
+                    "text": "Hello, world!",
+                    "detail": "full",
+                },
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "subresults" in content["result"]
+
+    def test_normalize_diff_detected(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 9007,
+            "method": "tools/call",
+            "params": {
+                "name": "text_security_inspect",
+                "arguments": {
+                    "text": "caf\u00e9",
+                    "normalize": "NFD",
+                    "detail": "full",
+                },
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "normalized_changed" in content["result"]
+
+
+class TestCompactSchemaMode:
+    """Test compact schema detail mode."""
+
+    def setup_method(self):
+        from eggcalc.mcp.server import get_schema_detail, set_schema_detail
+        self._original = get_schema_detail()
+        self._set = set_schema_detail
+
+    def teardown_method(self):
+        self._set(self._original)
+
+    def test_compact_mode_removes_defaults(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 10001,
+            "method": "tools/list",
+            "params": {"schema_detail": "compact"},
+        })
+        tools = response["result"]["tools"]
+        # Pick a tool with defaults (e.g., text_equal)
+        te = next(t for t in tools if t["name"] == "text_equal")
+        props = te["inputSchema"]["properties"]
+        # Compacted schema should not have 'default' keys
+        for prop_def in props.values():
+            assert "default" not in prop_def, f"Compact schema still has default: {prop_def}"
+
+    def test_compact_mode_preserves_types_and_enums(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 10002,
+            "method": "tools/list",
+            "params": {"schema_detail": "compact"},
+        })
+        tools = response["result"]["tools"]
+        te = next(t for t in tools if t["name"] == "text_equal")
+        props = te["inputSchema"]["properties"]
+        assert "type" in props["a"]
+        assert "enum" in props["normalization"]
+
+    def test_compact_mode_truncates_descriptions(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 10003,
+            "method": "tools/list",
+            "params": {"schema_detail": "compact"},
+        })
+        tools = response["result"]["tools"]
+        for tool in tools:
+            desc = tool.get("description", "")
+            assert len(desc) <= 120, f"Description too long in compact mode: {tool['name']}"
+
+    def test_compact_mode_smaller_than_full(self):
+        full_response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 10004,
+            "method": "tools/list",
+            "params": {"schema_detail": "full"},
+        })
+        compact_response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 10005,
+            "method": "tools/list",
+            "params": {"schema_detail": "compact"},
+        })
+        full_size = len(json.dumps(full_response))
+        compact_size = len(json.dumps(compact_response))
+        assert compact_size < full_size, (
+            f"Compact ({compact_size}) should be smaller than full ({full_size})"
+        )
+
+    def test_compact_mode_runtime_behavior_unchanged(self):
+        """Tool calls should work identically regardless of schema detail."""
+        self._set("compact")
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 10006,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "5 + 3"},
+            },
+        })
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["value"] == "8"
+
+    def test_full_mode_preserves_all_fields(self):
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 10007,
+            "method": "tools/list",
+            "params": {"schema_detail": "full"},
+        })
+        tools = response["result"]["tools"]
+        te = next(t for t in tools if t["name"] == "text_equal")
+        props = te["inputSchema"]["properties"]
+        # Full mode should have defaults
+        assert "default" in props["normalization"]

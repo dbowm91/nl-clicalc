@@ -27,7 +27,10 @@ os.environ.setdefault("EGGCALC_NO_CONFIG", "1")
 
 from .. import __version__
 from .. import evaluator as _evaluator
-from .schemas import TOOL_SCHEMAS
+from .schemas import (
+    TOOL_SCHEMAS, TOOL_METADATA, TOOL_PROFILES, PROFILE_NAMES,
+    compact_schema, SCHEMA_DETAIL_FULL,
+)
 
 # Flag set the first time handle_request() runs to ensure MCP-safe defaults
 # are configured (allow_random=False, allow_side_effects=False). We do this
@@ -82,6 +85,7 @@ from .tools import (
     text_measure,
     text_position,
     text_replace_check,
+    text_security_inspect,
     text_transform,
     text_truncate,
     text_window,
@@ -159,6 +163,7 @@ TOOL_HANDLERS: dict[str, Any] = {
     "unicode_policy_check": unicode_policy_check_mcp,
     "canonicalize_text": canonicalize_text_mcp,
     "prompt_input_inspect": prompt_input_inspect_mcp,
+    "text_security_inspect": text_security_inspect,
 }
 
 MAX_REQUEST_BYTES = 1_000_000
@@ -174,6 +179,69 @@ MAX_CANCELLED_REQUESTS = 10_000
 _cancelled_requests_order: deque[Any] = deque()
 _cancelled_requests: set[Any] = set()
 _cancelled_lock = threading.Lock()
+
+# Active MCP profile.  Set by set_active_profile() or read from
+# EGGCALC_MCP_PROFILE env var at startup.  "full" is the default for
+# backward compatibility; codegg should use codegg_core or codegg_core_min.
+_active_profile: str = os.environ.get("EGGCALC_MCP_PROFILE", "full")
+_profile_lock = threading.Lock()
+
+# Schema detail level: full, normal, compact
+_schema_detail: str = os.environ.get("EGGCALC_MCP_SCHEMA_DETAIL", SCHEMA_DETAIL_FULL)
+_schema_detail_lock = threading.Lock()
+
+
+def set_active_profile(name: str) -> None:
+    """Set the active MCP profile.  Raises ValueError for unknown profiles."""
+    if name not in TOOL_PROFILES and name != "full":
+        raise ValueError(
+            f"Unknown profile: {name!r}. "
+            f"Available profiles: {', '.join(sorted(TOOL_PROFILES))}"
+        )
+    global _active_profile
+    with _profile_lock:
+        _active_profile = name
+
+
+def get_active_profile() -> str:
+    """Return the currently active MCP profile name."""
+    with _profile_lock:
+        return _active_profile
+
+
+def set_schema_detail(level: str) -> None:
+    """Set the schema detail level (compact, normal, full)."""
+    if level not in ("compact", "normal", "full"):
+        raise ValueError(f"Invalid schema detail: {level!r}. Use compact, normal, or full.")
+    global _schema_detail
+    with _schema_detail_lock:
+        _schema_detail = level
+
+
+def get_schema_detail() -> str:
+    """Return the current schema detail level."""
+    with _schema_detail_lock:
+        return _schema_detail
+
+
+def get_profile_tools(profile: str | None = None) -> list[str]:
+    """Return the sorted list of tool names for a profile.
+
+    If profile is None, uses the active profile.  Returns all stable
+    tools (including deprecated) for 'full', or the profile's tool list
+    otherwise.  Only truly hidden tools are excluded from 'full'.
+    """
+    if profile is None:
+        profile = get_active_profile()
+    if profile == "full":
+        return sorted(
+            name for name, meta in TOOL_METADATA.items()
+            if meta.get("llm_exposure") != "hidden"
+        )
+    tool_list = TOOL_PROFILES.get(profile)
+    if tool_list is None:
+        return sorted(TOOL_HANDLERS.keys())
+    return list(tool_list)
 
 # Bounded thread pool for tool invocations. Prevents unbounded thread
 # accumulation when tools time out. Tasks submitted to a full pool queue
@@ -609,6 +677,22 @@ def _handle_call_tool(request: dict) -> dict:
             },
         }
 
+    # Enforce active profile: reject tools not in the current profile
+    profile = get_active_profile()
+    profile_tools = get_profile_tools(profile)
+    if name not in profile_tools:
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32602,
+                "message": (
+                    f"Tool '{name}' is not available in profile '{profile}'. "
+                    f"Use tools/list to see available tools, or switch profile."
+                ),
+            },
+        }
+
     # Validate arguments against handler signature before calling
     handler = TOOL_HANDLERS[name]
     validation_error = _validate_arguments(handler, arguments)
@@ -787,6 +871,8 @@ def _handle_list_tools(request: dict) -> dict:
     tier_filter = params.get("tier")
     tags_filter = params.get("tags")
     names_filter = params.get("names")
+    profile_filter = params.get("profile")
+    schema_detail_param = params.get("schema_detail")
 
     if tier_filter is not None and not isinstance(tier_filter, int):
         return _invalid_request(request_id, "Invalid 'tier' parameter: expected integer")
@@ -796,9 +882,23 @@ def _handle_list_tools(request: dict) -> dict:
         return _invalid_request(request_id, "Invalid 'names' parameter: expected array")
     if names_filter is not None and not all(isinstance(n, str) for n in names_filter):
         return _invalid_request(request_id, "Invalid 'names' parameter: all items must be strings")
+    if profile_filter is not None and not isinstance(profile_filter, str):
+        return _invalid_request(request_id, "Invalid 'profile' parameter: expected string")
+    if schema_detail_param is not None and schema_detail_param not in ("compact", "normal", "full"):
+        return _invalid_request(request_id, "Invalid 'schema_detail' parameter: expected compact, normal, or full")
+
+    # Schema detail: per-request override or global default
+    detail = schema_detail_param or get_schema_detail()
+    use_compact = detail == "compact"
+
+    # Determine profile-visible tools
+    profile_tools = set(get_profile_tools(profile_filter))
 
     tools = []
     for name, schema in TOOL_SCHEMAS.items():
+        if name not in profile_tools:
+            continue
+
         if names_filter is not None:
             if name not in names_filter:
                 continue
@@ -812,14 +912,26 @@ def _handle_list_tools(request: dict) -> dict:
             if not all(tag in tool_tags for tag in tags_filter):
                 continue
 
-        tools.append({
-            "name": name,
-            "description": schema["description"],
-            "inputSchema": schema["inputSchema"],
-            "tier": schema.get("tier"),
-            "tags": schema.get("tags", []),
-            "deprecated": schema.get("deprecated", False),
-        })
+        meta = TOOL_METADATA.get(name, {})
+        if use_compact:
+            entry = compact_schema(schema)
+            entry["name"] = name
+            entry["category"] = meta.get("category")
+            entry["llm_exposure"] = meta.get("llm_exposure")
+            entry["cost"] = meta.get("cost")
+        else:
+            entry = {
+                "name": name,
+                "description": schema["description"],
+                "inputSchema": schema["inputSchema"],
+                "tier": schema.get("tier"),
+                "tags": schema.get("tags", []),
+                "deprecated": schema.get("deprecated", False),
+                "category": meta.get("category"),
+                "llm_exposure": meta.get("llm_exposure"),
+                "cost": meta.get("cost"),
+            }
+        tools.append(entry)
 
     return {
         "jsonrpc": "2.0",
@@ -842,6 +954,30 @@ def _handle_initialize(request: dict) -> dict:
                 "name": "eggcalc",
                 "version": __version__,
             },
+        },
+    }
+
+
+def _handle_list_profiles(request: dict) -> dict:
+    """Handle a profiles/list MCP request."""
+    params = request.get("params", {})
+    active = get_active_profile()
+
+    profiles_info = {}
+    for name in PROFILE_NAMES:
+        tool_list = TOOL_PROFILES.get(name, [])
+        profiles_info[name] = {
+            "tools": tool_list,
+            "tool_count": len(tool_list),
+        }
+
+    return {
+        "jsonrpc": "2.0",
+        "id": request.get("id"),
+        "result": {
+            "active_profile": active,
+            "profiles": profiles_info,
+            "available_profiles": PROFILE_NAMES,
         },
     }
 
@@ -904,6 +1040,8 @@ def handle_request(request: Any) -> dict | None:
         return _handle_list_tools(request)
     elif method == "tools/call":
         return _handle_call_tool(request)
+    elif method == "profiles/list":
+        return _handle_list_profiles(request)
     elif method == "initialize":
         return _handle_initialize(request)
     elif method == "notifications/initialized":

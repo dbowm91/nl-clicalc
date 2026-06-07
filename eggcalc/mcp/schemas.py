@@ -2235,4 +2235,859 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "text_security_inspect": {
+        "description": "Composite security-oriented text hygiene pass. Runs text_inspect, unicode_policy_check, canonicalize_text, prompt_input_inspect, and identifier_inspect depending on policy. Returns a verdict (allow/review/block) plus structured findings and machine codes.",
+        "tier": 1,
+        "tags": ["text", "unicode", "security", "composite", "prompt", "inspection"],
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Input text to inspect"},
+                "policy": {
+                    "type": "string",
+                    "enum": ["default", "source_code", "prompt", "markdown", "identifier"],
+                    "default": "default",
+                    "description": "Security policy to apply",
+                },
+                "normalize": {
+                    "type": "string",
+                    "enum": ["none", "NFC", "NFD", "NFKC", "NFKD"],
+                    "default": "none",
+                    "description": "Normalization form to analyze",
+                },
+                "compare_normalized": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Report both original and normalized analysis",
+                },
+                "detail": {
+                    "type": "string",
+                    "enum": ["summary", "normal", "full"],
+                    "default": "summary",
+                    "description": "Detail level: summary (compact verdict only), normal, or full (includes subresults)",
+                },
+            },
+            "required": ["text"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "verdict": {"type": "string", "enum": ["allow", "review", "block"]},
+                "policy": {"type": "string"},
+                "findings": {"type": "array"},
+                "machine_code": {"type": "string"},
+                "normalized_changed": {"type": "boolean"},
+                "recommended_action": {"type": "string"},
+                "summary": {"type": "string"},
+                "subresults": {"type": "object"},
+            },
+        },
+    },
 }
+
+# ---------------------------------------------------------------------------
+# Tool metadata for profile filtering, LLM exposure control, and
+# machine-readable catalog. Every key in TOOL_HANDLERS must have a
+# corresponding entry here.
+#
+# Fields:
+#   category    – tool domain (math, text, json, path, shell, etc.)
+#   tier        – 0 = ultra-common, 1 = default coding, 2 = contextual, 3 = specialized
+#   profiles    – named profiles that include this tool
+#   aliases     – alternative names (future use)
+#   llm_exposure – default | contextual | expert_only | harness_only | hidden
+#   harness_use – preflight categories this tool serves
+#   cost        – cheap | moderate | heavy
+#   stability   – stable | experimental | deprecated
+#   composite   – True if this tool wraps other primitives
+# ---------------------------------------------------------------------------
+
+TOOL_METADATA: dict[str, dict[str, Any]] = {
+    # ── Tier 0: Ultra-common ──────────────────────────────────────────────
+    "math_eval": {
+        "category": "math",
+        "tier": 0,
+        "profiles": ["full", "default", "human_math"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_equal": {
+        "category": "text",
+        "tier": 0,
+        "profiles": ["full", "default", "codegg_core"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_count": {
+        "category": "text",
+        "tier": 0,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_measure": {
+        "category": "text",
+        "tier": 0,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_fingerprint": {
+        "category": "text",
+        "tier": 0,
+        "profiles": ["full", "default", "codegg_core", "codegg_repo_audit"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["edit_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "validate_json": {
+        "category": "validation",
+        "tier": 0,
+        "profiles": ["full", "default", "codegg_core", "codegg_core_min", "codegg_config"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["config_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "path_normalize": {
+        "category": "path",
+        "tier": 0,
+        "profiles": ["full", "default", "codegg_core"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["path_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+
+    # ── Tier 1: Default coding-agent sanity ───────────────────────────────
+    "text_diff_explain": {
+        "category": "text",
+        "tier": 1,
+        "profiles": ["full", "default", "codegg_core", "codegg_patch"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["edit_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_inspect": {
+        "category": "text",
+        "tier": 1,
+        "profiles": ["full", "default", "codegg_core", "codegg_unicode_security"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["prompt_input_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_replace_check": {
+        "category": "text",
+        "tier": 1,
+        "profiles": ["full", "default", "codegg_core", "codegg_core_min", "codegg_patch"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["edit_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "line_range_extract": {
+        "category": "text",
+        "tier": 1,
+        "profiles": ["full", "default", "codegg_patch"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["edit_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "json_compare": {
+        "category": "json",
+        "tier": 1,
+        "profiles": ["full", "default", "codegg_config"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["config_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "json_canonicalize": {
+        "category": "json",
+        "tier": 1,
+        "profiles": ["full", "default", "codegg_config"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["config_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "json_query": {
+        "category": "json",
+        "tier": 1,
+        "profiles": ["full"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "deprecated",
+        "composite": False,
+    },
+    "validate_toml": {
+        "category": "validation",
+        "tier": 1,
+        "profiles": ["full", "default", "codegg_core", "codegg_config"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["config_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "validate_brackets": {
+        "category": "validation",
+        "tier": 1,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "validate_regex": {
+        "category": "regex",
+        "tier": 1,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["command_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "regex_finditer": {
+        "category": "regex",
+        "tier": 1,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "regex_safety_check": {
+        "category": "regex",
+        "tier": 1,
+        "profiles": ["full", "default", "codegg_shell"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["command_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "glob_match": {
+        "category": "path",
+        "tier": 1,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "identifier_inspect": {
+        "category": "identifier",
+        "tier": 1,
+        "profiles": ["full", "default", "codegg_core", "codegg_unicode_security"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["reasoning_only"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "escape_text": {
+        "category": "text",
+        "tier": 1,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "unescape_text": {
+        "category": "text",
+        "tier": 1,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_window": {
+        "category": "text",
+        "tier": 1,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "list_dedupe": {
+        "category": "list",
+        "tier": 1,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "list_sort": {
+        "category": "list",
+        "tier": 1,
+        "profiles": ["full", "default"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+
+    # ── Tier 2: Contextual / heavier analysis ─────────────────────────────
+    "unit_convert": {
+        "category": "math",
+        "tier": 2,
+        "profiles": ["full", "human_math"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "unit_info": {
+        "category": "math",
+        "tier": 2,
+        "profiles": ["full", "human_math"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "constant_lookup": {
+        "category": "math",
+        "tier": 2,
+        "profiles": ["full", "human_math"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "json_extract": {
+        "category": "json",
+        "tier": 2,
+        "profiles": ["full", "codegg_config"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "list_compare": {
+        "category": "list",
+        "tier": 2,
+        "profiles": ["full"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "line_range_compare": {
+        "category": "text",
+        "tier": 2,
+        "profiles": ["full", "codegg_patch"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["edit_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "markdown_structure": {
+        "category": "markdown",
+        "tier": 2,
+        "profiles": ["full", "codegg_repo_audit"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "code_fence_extract": {
+        "category": "markdown",
+        "tier": 2,
+        "profiles": ["full", "codegg_repo_audit"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "patch_apply_check": {
+        "category": "patch",
+        "tier": 2,
+        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight", "codegg_patch"],
+        "aliases": [],
+        "llm_exposure": "harness_only",
+        "harness_use": ["edit_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "patch_summary": {
+        "category": "patch",
+        "tier": 2,
+        "profiles": ["full", "codegg_patch"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "path_analyze": {
+        "category": "path",
+        "tier": 2,
+        "profiles": ["full"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "path_compare": {
+        "category": "path",
+        "tier": 2,
+        "profiles": ["full"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "path_scope_check": {
+        "category": "path",
+        "tier": 2,
+        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight"],
+        "aliases": [],
+        "llm_exposure": "harness_only",
+        "harness_use": ["path_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "shell_split": {
+        "category": "shell",
+        "tier": 2,
+        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight", "codegg_shell"],
+        "aliases": [],
+        "llm_exposure": "harness_only",
+        "harness_use": ["command_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "shell_quote_join": {
+        "category": "shell",
+        "tier": 2,
+        "profiles": ["full", "codegg_shell"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "argv_compare": {
+        "category": "shell",
+        "tier": 2,
+        "profiles": ["full", "codegg_shell"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["command_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "validate_schema_light": {
+        "category": "validation",
+        "tier": 3,
+        "profiles": ["full", "codegg_config"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["config_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "toml_shape": {
+        "category": "toml",
+        "tier": 2,
+        "profiles": ["full", "codegg_config"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "version_compare": {
+        "category": "version",
+        "tier": 2,
+        "profiles": ["full", "codegg_config"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "unicode_policy_check": {
+        "category": "unicode",
+        "tier": 2,
+        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight", "codegg_unicode_security"],
+        "aliases": [],
+        "llm_exposure": "harness_only",
+        "harness_use": ["prompt_input_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "canonicalize_text": {
+        "category": "unicode",
+        "tier": 2,
+        "profiles": ["full", "codegg_unicode_security"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["prompt_input_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "prompt_input_inspect": {
+        "category": "text",
+        "tier": 2,
+        "profiles": ["full", "codegg_unicode_security", "codegg_preflight"],
+        "aliases": [],
+        "llm_exposure": "harness_only",
+        "harness_use": ["prompt_input_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_hash": {
+        "category": "text",
+        "tier": 2,
+        "profiles": ["full"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_position": {
+        "category": "text",
+        "tier": 2,
+        "profiles": ["full", "codegg_unicode_security"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_transform": {
+        "category": "text",
+        "tier": 2,
+        "profiles": ["full", "codegg_unicode_security"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "dotenv_validate": {
+        "category": "config",
+        "tier": 2,
+        "profiles": ["full", "codegg_config"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["config_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "ini_validate": {
+        "category": "config",
+        "tier": 2,
+        "profiles": ["full", "codegg_config"],
+        "aliases": [],
+        "llm_exposure": "contextual",
+        "harness_use": ["config_preflight"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+
+    # ── Tier 3: Specialized / domain-specific ──────────────────────────────
+    "identifier_analyze": {
+        "category": "identifier",
+        "tier": 3,
+        "profiles": ["full"],
+        "aliases": [],
+        "llm_exposure": "expert_only",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "identifier_table_inspect": {
+        "category": "identifier",
+        "tier": 3,
+        "profiles": ["full", "codegg_repo_audit"],
+        "aliases": [],
+        "llm_exposure": "expert_only",
+        "harness_use": ["repo_audit"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "json_shape": {
+        "category": "json",
+        "tier": 3,
+        "profiles": ["full", "codegg_repo_audit"],
+        "aliases": [],
+        "llm_exposure": "expert_only",
+        "harness_use": ["none"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_truncate": {
+        "category": "text",
+        "tier": 3,
+        "profiles": ["full"],
+        "aliases": [],
+        "llm_exposure": "expert_only",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "version_constraint_check": {
+        "category": "version",
+        "tier": 3,
+        "profiles": ["full"],
+        "aliases": [],
+        "llm_exposure": "expert_only",
+        "harness_use": ["none"],
+        "cost": "cheap",
+        "stability": "stable",
+        "composite": False,
+    },
+    "cargo_toml_inspect": {
+        "category": "cargo",
+        "tier": 3,
+        "profiles": ["full", "codegg_core", "codegg_repo_audit"],
+        "aliases": [],
+        "llm_exposure": "expert_only",
+        "harness_use": ["config_preflight"],
+        "cost": "moderate",
+        "stability": "stable",
+        "composite": False,
+    },
+    "text_security_inspect": {
+        "category": "text",
+        "tier": 1,
+        "profiles": ["full", "codegg_core", "codegg_preflight", "codegg_unicode_security"],
+        "aliases": [],
+        "llm_exposure": "default",
+        "harness_use": ["prompt_input_preflight"],
+        "cost": "heavy",
+        "stability": "stable",
+        "composite": True,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Profile definitions.  A profile is a named set of tool names computed
+# from TOOL_METADATA.  Each entry maps a profile name to the sorted
+# list of tool names that include that profile in their metadata.
+# ---------------------------------------------------------------------------
+
+def _build_profiles() -> dict[str, list[str]]:
+    """Build profile → tool list from TOOL_METADATA."""
+    profiles: dict[str, list[str]] = {}
+    for tool_name, meta in TOOL_METADATA.items():
+        for profile in meta.get("profiles", []):
+            profiles.setdefault(profile, []).append(tool_name)
+    for tool_list in profiles.values():
+        tool_list.sort()
+    return profiles
+
+
+TOOL_PROFILES: dict[str, list[str]] = _build_profiles()
+
+# Canonical profile names in recommended order.
+PROFILE_NAMES: list[str] = [
+    "full",
+    "default",
+    "codegg_core_min",
+    "codegg_core",
+    "codegg_preflight",
+    "codegg_patch",
+    "codegg_config",
+    "codegg_unicode_security",
+    "codegg_shell",
+    "codegg_repo_audit",
+    "human_math",
+]
+
+# Schema detail levels
+SCHEMA_DETAIL_FULL = "full"
+SCHEMA_DETAIL_NORMAL = "normal"
+SCHEMA_DETAIL_COMPACT = "compact"
+
+
+def compact_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Produce a compact version of a tool schema.
+
+    Compact mode preserves:
+    - Tool name, description (truncated to 120 chars), required args, types, enums
+    - Input/output schema structure
+
+    Compact mode removes:
+    - Long description text, examples, verbose help
+    - Default values (they're handled by Python kwargs)
+    - Redundant tags and tier (available at tool level)
+    """
+    result: dict[str, Any] = {}
+
+    # Description: truncate to 120 chars
+    desc = schema.get("description", "")
+    if len(desc) > 120:
+        desc = desc[:117] + "..."
+    result["description"] = desc
+
+    # Deprecated flag
+    if schema.get("deprecated"):
+        result["deprecated"] = True
+
+    # Compact input schema: keep types, required, enums; drop defaults and descriptions
+    input_schema = schema.get("inputSchema", {})
+    compact_input = _compact_input_schema(input_schema)
+    result["inputSchema"] = compact_input
+
+    # Output schema: skip in compact mode (not needed for tool listing)
+    # Only include a minimal type marker
+    result["outputSchema"] = {"type": "object"}
+
+    return result
+
+
+def _compact_input_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Compact an input schema by stripping defaults and long descriptions."""
+    if not isinstance(schema, dict):
+        return schema
+
+    compact: dict[str, Any] = {}
+    compact["type"] = schema.get("type", "object")
+
+    props = schema.get("properties", {})
+    compact_props: dict[str, Any] = {}
+    for prop_name, prop_def in props.items():
+        if not isinstance(prop_def, dict):
+            compact_props[prop_name] = prop_def
+            continue
+        cp: dict[str, Any] = {}
+        # Keep type
+        if "type" in prop_def:
+            cp["type"] = prop_def["type"]
+        # Keep enum
+        if "enum" in prop_def:
+            cp["enum"] = prop_def["enum"]
+        # Keep required sub-fields
+        if "required" in prop_def:
+            cp["required"] = prop_def["required"]
+        # Keep items for arrays
+        if "items" in prop_def:
+            cp["items"] = prop_def["items"]
+        # Truncated description
+        desc = prop_def.get("description", "")
+        if desc:
+            if len(desc) > 80:
+                desc = desc[:77] + "..."
+            cp["description"] = desc
+        compact_props[prop_name] = cp
+
+    compact["properties"] = compact_props
+
+    # Keep required at top level
+    if "required" in schema:
+        compact["required"] = schema["required"]
+
+    return compact

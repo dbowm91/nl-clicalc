@@ -2793,10 +2793,27 @@ def main() -> int:
     parser.add_argument(
         "--mcp", action="store_true", help="Run as MCP server for exact text tools"
     )
+    parser.add_argument(
+        "--mcp-profile",
+        default=None,
+        help="MCP profile to use (default: full, or EGGCALC_MCP_PROFILE env var)",
+    )
+    parser.add_argument(
+        "--mcp-schema-detail",
+        default=None,
+        choices=["compact", "normal", "full"],
+        help="MCP schema detail level (default: full, or EGGCALC_MCP_SCHEMA_DETAIL env var)",
+    )
 
     args = parser.parse_args()
 
     if args.mcp:
+        if args.mcp_profile:
+            from eggcalc.mcp.server import set_active_profile
+            set_active_profile(args.mcp_profile)
+        if args.mcp_schema_detail:
+            from eggcalc.mcp.server import set_schema_detail
+            set_schema_detail(args.mcp_schema_detail)
         from eggcalc.mcp.server import mcp_main
         return mcp_main()
 

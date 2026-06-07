@@ -6,7 +6,7 @@ eggcalc includes an MCP (Model Context Protocol) server that exposes text analys
 
 The Model Context Protocol is a JSON-RPC 2.0 based protocol for exposing tools to AI agents. The calc MCP server provides:
 
-- **59 deterministic tools** for AI agent workflows
+- **60 deterministic tools** for AI agent workflows
 - **Deterministic results** - same input always produces same output
 - **No external dependencies** - pure Python standard library
 - **stdio-based communication** - operates over stdin/stdout
@@ -43,7 +43,7 @@ Evaluate mathematical expressions with full natural language and unit support.
 **Arguments:**
 - `expression` (string): The math expression to evaluate
 
-**Tier:** 1
+**Tier:** 0
 **Tags:** `math`, `evaluation`, `units`
 
 **Example:**
@@ -68,7 +68,7 @@ Return comprehensive text metrics.
 **Arguments:**
 - `text` (string): The text to measure
 
-**Tier:** 1
+**Tier:** 0
 **Tags:** `text`, `metrics`, `unicode`
 
 **Returns:**
@@ -105,7 +105,7 @@ Compare two strings under various normalization modes with detailed evidence.
 - `casefold` (boolean, optional): Case-insensitive comparison
 - `trim` (boolean, optional): Trim whitespace
 
-**Tier:** 1
+**Tier:** 0
 **Tags:** `text`, `comparison`, `unicode`, `normalization`
 
 **Returns:**
@@ -204,7 +204,7 @@ Count character occurrences or return frequency table.
 - `target` (string, optional): Specific character to count (if omitted, returns frequency table)
 - `normalization` (string, optional): Normalization to apply before counting
 
-**Tier:** 1
+**Tier:** 0
 **Tags:** `text`, `count`, `frequency`
 
 **Returns:**
@@ -317,7 +317,7 @@ Validate JSON and report detailed parse errors.
 **Arguments:**
 - `text` (string): JSON string to validate
 
-**Tier:** 1
+**Tier:** 0
 **Tags:** `validation`, `json`, `structured-data`
 
 **Returns:**
@@ -1327,7 +1327,7 @@ Compute a deterministic SHA-256 fingerprint of text with canonicalization option
 - `trim_final_newline` (boolean, optional): Remove trailing newline
 - `casefold` (boolean, optional): Apply casefolding before hashing
 
-**Tier:** 1
+**Tier:** 0
 **Tags:** `text`, `hash`, `fingerprint`, `sha256`, `identity`, `canonicalization`
 
 **Example:**
@@ -1408,7 +1408,7 @@ Normalize and analyze a path with explicit platform semantics.
 - `collapse_dot_segments` (boolean, optional): Remove . and .. segments (default true)
 - `preserve_trailing_separator` (boolean, optional): Keep trailing slash (default false)
 
-**Tier:** 1
+**Tier:** 0
 **Tags:** `text`, `path`, `normalization`, `platform`
 
 **Returns:**
@@ -1496,7 +1496,7 @@ Compare two version strings with explicit scheme.
 - `b` (string): Second version
 - `scheme` (string, optional): "semver", "pep440", or "loose" (default "semver")
 
-**Tier:** 3
+**Tier:** 2
 **Tags:** `text`, `version`, `semver`, `comparison`
 
 **Returns:**
@@ -1587,7 +1587,7 @@ Analyze the structure of a TOML document.
 - `max_depth` (integer, optional): Maximum nesting depth (default 4)
 - `max_tables` (integer, optional): Maximum tables to report (default 50)
 
-**Tier:** 3
+**Tier:** 2
 **Tags:** `text`, `toml`, `structured-data`, `shape`
 
 **Returns:**
@@ -1614,7 +1614,7 @@ Remove duplicates from a list with optional normalization and casefolding.
 - `casefold` (boolean, optional): Case-insensitive deduplication (default false)
 - `preserve_order` (boolean, optional): Keep first occurrence order (default true)
 
-**Tier:** 3
+**Tier:** 1
 **Tags:** `text`, `list`, `deduplication`, `normalization`
 
 **Returns:**
@@ -1642,7 +1642,7 @@ Sort a list of strings with optional normalization and casefolding.
 - `reverse` (boolean, optional): Descending order (default false)
 - `stable` (boolean, optional): Preserve relative order of equal elements (default true)
 
-**Tier:** 3
+**Tier:** 1
 **Tags:** `text`, `list`, `sorting`, `normalization`
 
 **Returns:**
