@@ -60,6 +60,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "properties": {
                 "value": {"type": "string", "description": "Evaluation result as string"},
                 "type": {"type": "string", "description": "Python type name of the result"},
+                "unit": {"type": ["string", "null"], "description": "Unit name (only when result has units)"},
+                "display": {"type": ["string", "null"], "description": "Human-readable result with units (only when result has units)"},
             },
         },
     },
@@ -1934,7 +1936,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "outputSchema": {
             "type": "object",
             "properties": {
-                "pass": {"type": "boolean", "description": "True if text passes the policy (no errors)"},
+                "pass_": {"type": "boolean", "description": "True if text passes the policy (no errors)"},
                 "policy": {"type": "string", "description": "Policy name that was applied"},
                 "normalized_form": {"type": "string", "description": "Text after normalization"},
                 "findings": {
@@ -2229,6 +2231,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 },
                 "text_length": {"type": "integer", "description": "Input text length"},
                 "checks_run": {"type": "array", "items": {"type": "string"}, "description": "Checks that were executed"},
+                "findings_truncated": {"type": "boolean", "description": "True if findings were truncated due to limits"},
             },
         },
     },
