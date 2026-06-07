@@ -18,6 +18,7 @@ Checks include:
 
 from __future__ import annotations
 
+import functools
 import re
 import unicodedata
 from typing import Any, TypedDict
@@ -118,9 +119,6 @@ _HTML_COMMENT_RE = re.compile(
     re.DOTALL,
 )
 
-# Instruction-like phrases
-_INSTRUCTION_RE = None  # built lazily
-
 
 class PromptInspectionFinding(TypedDict, total=False):
     """A single finding from prompt inspection."""
@@ -146,22 +144,30 @@ class PromptInspectionResult(TypedDict, total=False):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _build_instruction_regex(phrase_patterns: list[str] | None = None) -> re.Pattern[str]:
-    """Build a combined regex for instruction phrases."""
-    phrases = phrase_patterns if phrase_patterns else DEFAULT_INSTRUCTION_PHRASES
+@functools.lru_cache(maxsize=64)
+def _build_instruction_regex(phrase_patterns: tuple[str, ...] | None) -> re.Pattern[str]:
+    """Build a combined regex for instruction phrases.
+
+    Empty or whitespace-only patterns are filtered out. If no patterns
+    remain, returns a never-match regex.
+    """
+    phrases = list(phrase_patterns) if phrase_patterns else DEFAULT_INSTRUCTION_PHRASES
+    phrases = [p for p in phrases if p]
+    if not phrases:
+        return re.compile(r"(?!)")
     escaped = [re.escape(p) for p in phrases]
     combined = "|".join(escaped)
     return re.compile(combined, re.IGNORECASE)
 
 
 def _get_instruction_re(phrase_patterns: list[str] | None = None) -> re.Pattern[str]:
-    """Get or build the instruction regex."""
-    global _INSTRUCTION_RE
-    if phrase_patterns is not None:
-        return _build_instruction_regex(phrase_patterns)
-    if _INSTRUCTION_RE is None:
-        _INSTRUCTION_RE = _build_instruction_regex(None)
-    return _INSTRUCTION_RE
+    """Get or build the instruction regex.
+
+    The result is cached per tuple of patterns.
+    """
+    if phrase_patterns is None:
+        return _build_instruction_regex(None)
+    return _build_instruction_regex(tuple(phrase_patterns))
 
 
 def _char_span(index: int, length: int = 1) -> dict[str, int]:

@@ -7,6 +7,7 @@ and handles input validation and error wrapping.
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import multiprocessing
@@ -198,6 +199,25 @@ MAX_CONCURRENT_SPAWNED = 4
 # Process() is created in validate_regex and math_eval (via evaluate_with_timeout).
 _SPAWN_SEMAPHORE = multiprocessing.BoundedSemaphore(MAX_CONCURRENT_SPAWNED)
 _SPAWN_ACQUIRE_TIMEOUT = 10  # seconds to wait for a spawn slot before failing
+
+
+def _close_spawn_semaphore() -> None:
+    """Release the underlying semaphore on interpreter shutdown.
+
+    Prevents 'leaked semaphore objects' warnings on Python 3.14
+    where the resource_tracker flags unclosed multiprocessing
+    semaphores.
+    """
+    sem = getattr(_SPAWN_SEMAPHORE, "_semaphore", None)
+    if sem is None:
+        return
+    try:
+        sem.close()
+    except Exception:
+        pass
+
+
+atexit.register(_close_spawn_semaphore)
 
 # Set of child processes that survived terminate+kill in regex tools.
 # Checked by MCP server's _cleanup_orphaned_processes for defensive cleanup.

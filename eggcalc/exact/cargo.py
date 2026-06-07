@@ -241,11 +241,18 @@ def cargo_toml_inspect(
         findings.append("Missing or empty 'name' in [package]")
     if not package.get("version"):
         findings.append("Missing or empty 'version' in [package]")
-    if not package.get("edition"):
-        findings.append("Missing 'edition' in [package]")
-    elif package.get("edition") not in _EDITION_VALUES:
+    edition = package.get("edition")
+    raw_edition = pkg_raw.get("edition")
+    if edition is None:
         findings.append(
-            f"Unrecognized edition '{package.get('edition')}'; "
+            "Missing 'edition' in [package] "
+            "(inherits workspace edition or defaults to 2015)"
+        )
+    elif isinstance(raw_edition, dict) and raw_edition.get("workspace") is True:
+        pass
+    elif not isinstance(edition, str) or edition not in _EDITION_VALUES:
+        findings.append(
+            f"Unrecognized edition '{edition!r}; "
             f"expected one of: {', '.join(sorted(_EDITION_VALUES))}"
         )
 

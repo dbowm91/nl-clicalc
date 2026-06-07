@@ -1808,5 +1808,74 @@ class TestGapCoverage:
         assert result.unit is None
 
 
+class TestDeferredD5D6UnitSimplification:
+    """Tests for compound unit cancellation (plans/production_review_2026_07_b.md D5, D6)."""
+
+    def test_m_per_s_times_s_simplifies_to_m(self):
+        """(1 m / 1 s) * 1 s should give 1 m, not 1 m/s*s."""
+        from eggcalc.units import UnitValue
+        result = UnitValue(1.0, "m/s") * UnitValue(1.0, "s")
+        assert result.unit == "m"
+        assert result.value == 1.0
+
+    def test_m_times_m_over_m_simplifies_to_m(self):
+        """(1 m * 1 m) / 1 m should give 1 m, not 1 m*m/m."""
+        from eggcalc.units import UnitValue
+        result = UnitValue(1.0, "m*m") / UnitValue(1.0, "m")
+        assert result.unit == "m"
+        assert result.value == 1.0
+
+    def test_m_per_m_equals_dimensionless(self):
+        """1 m / 1 m should give a dimensionless value, not '1/m' string."""
+        from eggcalc.units import UnitValue
+        result = UnitValue(1.0, "m") / UnitValue(1.0, "m")
+        assert result.unit is None
+
+    def test_m_per_s_squared_times_s_squared_equals_m(self):
+        """Acceleration * time_squared should give m, not m/s**2*s**2."""
+        from eggcalc.units import UnitValue
+        result = UnitValue(9.8, "m/s**2") * UnitValue(4.0, "s**2")
+        assert result.unit == "m"
+        assert abs(result.value - 39.2) < 1e-10
+
+    def test_simplify_unit_string_helper(self):
+        """The _simplify_unit_string helper should normalize compound forms."""
+        from eggcalc.units import _simplify_unit_string
+        assert _simplify_unit_string("m/s*s") == "m"
+        assert _simplify_unit_string("m*m/m") == "m"
+        assert _simplify_unit_string("m**2*m") == "m**3"
+        assert _simplify_unit_string("m/s") == "m/s"
+        assert _simplify_unit_string("m") == "m"
+        assert _simplify_unit_string(None) is None
+        assert _simplify_unit_string("xyz") == "xyz"
+
+    def test_floordiv_simplifies_compound_units(self):
+        """Floor division of compound units should also be simplified."""
+        from eggcalc.units import UnitValue
+        result = UnitValue(7.0, "m/s") // UnitValue(1.0, "s")
+        assert result.unit == "m/s**2"
+        assert result.value == 7.0
+
+    def test_mod_simplifies_compound_units(self):
+        """Modulo of compound units should also be simplified."""
+        from eggcalc.units import UnitValue
+        result = UnitValue(7.0, "m/s") % UnitValue(2.0, "s")
+        assert result.unit == "m/s**2"
+        assert result.value == 1.0
+
+    def test_truediv_reciprocal_of_compound(self):
+        """1 / (m/s) should produce s/m, not 1/m/s."""
+        from eggcalc.units import UnitValue
+        result = UnitValue(1.0, None) / UnitValue(1.0, "m/s")
+        assert result.unit == "s/m"
+        assert result.value == 1.0
+
+    def test_canonical_forms_unchanged(self):
+        """Canonical forms pass through simplification unchanged."""
+        from eggcalc.units import _simplify_unit_string
+        for unit in ("m/s", "m/s**2", "m**2", "km/h", "mi/h", "B/s", "GB/s"):
+            assert _simplify_unit_string(unit) == unit, f"{unit!r} changed unexpectedly"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

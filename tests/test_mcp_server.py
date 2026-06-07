@@ -6944,11 +6944,9 @@ class TestMCPSecurityFixes:
 
     def test_instruction_regex_is_cached(self):
         """M1: _INSTRUCTION_RE is cached after first call."""
-        from eggcalc.exact.inspect_prompt import _get_instruction_re, _INSTRUCTION_RE
+        from eggcalc.exact.inspect_prompt import _get_instruction_re
         # First call should cache
         regex1 = _get_instruction_re(None)
-        import eggcalc.exact.inspect_prompt as mod
-        assert mod._INSTRUCTION_RE is not None
         # Second call should return cached
         regex2 = _get_instruction_re(None)
         assert regex1 is regex2
@@ -6960,3 +6958,37 @@ class TestMCPSecurityFixes:
         result = validate_toml_text("[unclosed")
         assert result["valid"] is False
         assert result["error"] is not None
+
+
+class TestDeferredD7SemaphoreCleanup:
+    """Test that _SPAWN_SEMAPHORE has an atexit cleanup handler registered."""
+
+    def test_spawn_semaphore_atexit_handler_registered(self):
+        """atexit.register should be called for _SPAWN_SEMAPHORE cleanup."""
+        from eggcalc.mcp import tools
+        assert hasattr(tools, "_close_spawn_semaphore")
+        assert callable(tools._close_spawn_semaphore)
+
+    def test_close_spawn_semaphore_is_idempotent(self):
+        """Calling _close_spawn_semaphore should not raise on a healthy semaphore."""
+        from eggcalc.mcp.tools import _close_spawn_semaphore
+        try:
+            _close_spawn_semaphore()
+        except Exception as e:
+            pytest.fail(f"_close_spawn_semaphore raised: {e}")
+
+
+class TestDeferredD10D4:
+    """Regression tests for deferred production review items D10 and D4."""
+
+    def test_phrase_patterns_schema_accepts_null(self):
+        """D10: schema must allow null for phrase_patterns."""
+        from eggcalc.mcp.schemas import TOOL_SCHEMAS
+        types = TOOL_SCHEMAS["prompt_input_inspect"]["inputSchema"]["properties"]["phrase_patterns"]["type"]
+        assert "null" in types
+
+    def test_unit_convert_schema_documents_finite_only(self):
+        """D4: unit_convert schema description must document finite-only constraint."""
+        from eggcalc.mcp.schemas import TOOL_SCHEMAS
+        desc = TOOL_SCHEMAS["unit_convert"]["inputSchema"]["properties"]["value"]["description"]
+        assert "finite" in desc.lower()

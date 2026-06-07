@@ -344,6 +344,28 @@ class TestCargoTomlInspectMissingEdition:
         result = cargo_toml_inspect(MISSING_EDITION_TOML)
         assert result["package"].get("edition") is None
 
+    def test_cargo_toml_edition_workspace_inherited(self):
+        toml_text = (
+            '[package]\n'
+            'name = "member"\n'
+            'version = "0.1.0"\n'
+            'edition.workspace = true\n'
+        )
+        result = cargo_toml_inspect(toml_text)
+        edition_findings = [f for f in result["findings"] if "edition" in f.lower()]
+        assert edition_findings == []
+
+    def test_cargo_toml_missing_edition_message_updated(self):
+        toml_text = (
+            '[package]\n'
+            'name = "lib"\n'
+            'version = "0.1.0"\n'
+        )
+        result = cargo_toml_inspect(toml_text)
+        edition_findings = [f for f in result["findings"] if "edition" in f.lower()]
+        assert len(edition_findings) == 1
+        assert "workspace" in edition_findings[0].lower()
+
 
 class TestCargoTomlInspectConfusables:
     """Tests for confusable/duplicate dependency name detection."""

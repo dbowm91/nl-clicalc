@@ -143,7 +143,7 @@ class UnitValue:
         if isinstance(other, UnitValue):
             if self.unit and other.unit:
                 result = self.value * other.value
-                unit = f"{self.unit}*{other.unit}"
+                unit = _simplify_unit_string(f"{self.unit}*{other.unit}")
             else:
                 result = self.value * other.value
                 unit = self.unit or other.unit
@@ -166,11 +166,11 @@ class UnitValue:
                     unit = None
                 else:
                     result = self.value / other.value
-                    unit = f"{self.unit}/{other.unit}"
+                    unit = _simplify_unit_string(f"{self.unit}/{other.unit}")
             elif other.unit:
                 # self is dimensionless, other has a unit -> reciprocal unit
                 result = self.value / other.value
-                unit = f"1/{other.unit}"
+                unit = _simplify_unit_string(f"1/{other.unit}")
             else:
                 # other is dimensionless; self.unit may be None or a unit
                 result = self.value / other.value
@@ -193,10 +193,10 @@ class UnitValue:
                     unit = None
                 else:
                     result = self.value // other.value
-                    unit = f"{self.unit}//{other.unit}"
+                    unit = _simplify_unit_string(f"{self.unit}//{other.unit}")
             elif other.unit:
                 result = self.value // other.value
-                unit = f"1//{other.unit}"
+                unit = _simplify_unit_string(f"1//{other.unit}")
             else:
                 result = self.value // other.value
                 unit = self.unit
@@ -227,10 +227,10 @@ class UnitValue:
                     unit = None
                 else:
                     result = self.value % other.value
-                    unit = f"{self.unit}%{other.unit}"
+                    unit = _simplify_unit_string(f"{self.unit}%{other.unit}")
             elif other.unit:
                 result = self.value % other.value
-                unit = f"1%{other.unit}"
+                unit = _simplify_unit_string(f"1%{other.unit}")
             else:
                 result = self.value % other.value
                 unit = self.unit
@@ -1683,6 +1683,13 @@ def _parse_compound_signature(unit: str) -> tuple[tuple[tuple[str, int], ...], t
       - ``"A%B"``      -> same as ``A/B``
 
     Mixed forms like ``"m**2*s"`` and ``"m/s**2"`` are also handled.
+
+    Operators ``*``, ``/``, ``//``, and ``%`` are evaluated
+    left-to-right with equal precedence (matching standard
+    mathematical convention). For example, ``"m/s*s"`` is parsed as
+    ``(m/s)*s = m``, not as ``m/(s*s) = m/s**2``. Cancellation of
+    repeated bases is performed so that the returned numerator and
+    denominator share no base and contain only positive exponents.
     """
     if not unit or not isinstance(unit, str):
         return None
@@ -1709,33 +1716,55 @@ def _parse_compound_signature(unit: str) -> tuple[tuple[tuple[str, int], ...], t
         num, den = inner
         return den, num
 
-    # Split on /, //, or % (any one marks the start of the denominator).
-    # Prefer // before / and % before // for unambiguous splitting.
-    split_idx = -1
-    split_len = 0
-    for sep in ("//", "%", "/"):
-        i = unit.find(sep)
-        if i != -1 and (split_idx == -1 or i < split_idx):
-            split_idx = i
-            split_len = len(sep)
-    if split_idx != -1:
-        num_part = unit[:split_idx]
-        den_part = unit[split_idx + split_len:]
-        num = _parse_atom_signature(num_part)
-        den = _parse_atom_signature(den_part)
-        if num is None or den is None:
+    op_idx, op = _find_last_top_level_op(unit)
+    if op_idx != -1:
+        left_str = unit[:op_idx]
+        right_str = unit[op_idx + len(op):]
+        left = _parse_compound_signature(left_str)
+        right = _parse_compound_signature(right_str)
+        if left is None or right is None:
             return None
+        if op == "*":
+            num = left[0] + right[0]
+            den = left[1] + right[1]
+        else:
+            num = left[0] + right[1]
+            den = left[1] + right[0]
         merged = _merge_signatures(num, den)
-        # Split merged back into num/den (positive and negative exps)
         num_only = tuple((b, e) for b, e in merged if e > 0)
         den_only = tuple((b, -e) for b, e in merged if e < 0)
         return num_only, den_only
 
-    # No separator: must be a single atom like "X" or "X**N".
     atom = _parse_atom_signature(unit)
     if atom is None:
         return None
     return atom, ()
+
+
+def _find_last_top_level_op(unit: str) -> tuple[int, str]:
+    """Find the rightmost top-level operator in a unit string.
+
+    Operators considered: ``*``, ``/``, ``//``, ``%``. The ``**``
+    exponentiation sequence is skipped so that it is not mistaken for
+    a multiplication. Returns ``(index, operator)`` of the rightmost
+    operator, or ``(-1, "")`` if the string contains no operator.
+    """
+    i = len(unit) - 1
+    while i >= 0:
+        c = unit[i]
+        if c == "*":
+            if i > 0 and unit[i - 1] == "*":
+                i -= 2
+                continue
+            return (i, "*")
+        if c == "/":
+            if i > 0 and unit[i - 1] == "/":
+                return (i - 1, "//")
+            return (i, "/")
+        if c == "%":
+            return (i, "%")
+        i -= 1
+    return (-1, "")
 
 
 def _parse_atom_signature(atom: str) -> tuple[tuple[str, int], ...] | None:
@@ -1918,6 +1947,22 @@ def _derived_category(unit: str) -> str | None:
     if canonical is None:
         return None
     return _DERIVED_CATEGORIES.get(canonical)
+
+
+def _simplify_unit_string(unit: str | None) -> str | None:
+    """Parse, cancel, and re-render a compound unit string.
+
+    Returns the canonical form (e.g. ``"m/s*s"`` -> ``"m"``,
+    ``"m*m/m"`` -> ``"m"``, ``"m**2*m"`` -> ``"m**3"``). Returns
+    ``None`` if the input is ``None``. Returns the input unchanged
+    if it cannot be parsed as a compound unit.
+    """
+    if unit is None:
+        return None
+    sig = _parse_compound_signature(unit)
+    if sig is None:
+        return unit
+    return _signature_to_canonical_string(sig) or unit
 
 
 def are_units_compatible(unit1: str | None, unit2: str | None) -> bool:

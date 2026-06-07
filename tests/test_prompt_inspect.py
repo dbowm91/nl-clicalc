@@ -265,6 +265,37 @@ class TestInstructionPhrases:
         codes = [f["code"] for f in result["findings"]]
         assert "INSTRUCTION_PHRASE" not in codes
 
+    def test_instruction_regex_cached_for_same_patterns(self):
+        from eggcalc.exact.inspect_prompt import _get_instruction_re
+        r1 = _get_instruction_re(["ignore previous", "system prompt"])
+        r2 = _get_instruction_re(["ignore previous", "system prompt"])
+        assert r1 is r2
+
+    def test_instruction_regex_different_patterns_different_objects(self):
+        from eggcalc.exact.inspect_prompt import _get_instruction_re
+        r1 = _get_instruction_re(["ignore previous"])
+        r2 = _get_instruction_re(["system prompt"])
+        assert r1 is not r2
+
+    def test_empty_phrase_pattern_produces_no_findings(self):
+        from eggcalc.exact.inspect_prompt import prompt_input_inspect
+        result = prompt_input_inspect(
+            "hello world",
+            checks=["instruction_phrases"],
+            phrase_patterns=[""],
+        )
+        instr = [f for f in result["findings"] if f.get("code") == "INSTRUCTION_PHRASE"]
+        assert instr == []
+
+    def test_all_empty_phrase_patterns_does_not_crash(self):
+        from eggcalc.exact.inspect_prompt import prompt_input_inspect
+        result = prompt_input_inspect(
+            "hello world",
+            checks=["instruction_phrases"],
+            phrase_patterns=["", "", ""],
+        )
+        assert isinstance(result, dict)
+
 
 class TestLongMinifiedLines:
     """Test long line detection."""

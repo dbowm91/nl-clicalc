@@ -70,7 +70,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "value": {"type": "number", "description": "Numeric value to convert"},
+                "value": {"type": "number", "description": "Numeric value to convert (must be finite; NaN and infinity are rejected)"},
                 "from_unit": {"type": "string", "description": "Source unit (e.g., 'km', 'ft', 'kg')"},
                 "to_unit": {"type": "string", "description": "Target unit (e.g., 'm', 'in', 'lb')"},
             },
@@ -2156,9 +2156,9 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "description": "Subset of checks to run: unicode_hidden, bidi, html_comments, markdown_links, ansi_escapes, terminal_controls, base64_like_blobs, instruction_phrases, long_minified_lines",
                 },
                 "phrase_patterns": {
-                    "type": "array",
+                    "type": ["array", "null"],
                     "items": {"type": "string"},
-                    "description": "Optional literal strings or safe regexes to detect as instruction-like phrases",
+                    "description": "Optional literal strings or safe regexes to detect as instruction-like phrases. Pass null for no custom patterns.",
                 },
             },
             "required": ["text"],
