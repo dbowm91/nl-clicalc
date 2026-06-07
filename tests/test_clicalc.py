@@ -1877,5 +1877,257 @@ class TestDeferredD5D6UnitSimplification:
             assert _simplify_unit_string(unit) == unit, f"{unit!r} changed unexpectedly"
 
 
+class TestProductionReviewBugfixes2026_07:
+    """Tests for bugs found in the 2026-07 production code review.
+
+    These cover cross-module correctness issues that existing tests did
+    not catch. Grouped here for clarity.
+    """
+
+    def _get_value(self, result):
+        if isinstance(result, UnitValue):
+            return result.value
+        return result
+
+    # --- MCP constant_lookup: math constants ---
+    def test_mcp_constant_lookup_pi(self):
+        from eggcalc.mcp.tools import constant_lookup
+        r = constant_lookup("pi")
+        assert r["ok"] is True
+        assert abs(r["result"]["value"] - 3.141592653589793) < 1e-12
+        assert r["result"]["display_name"] == "Pi (mathematical constant)"
+
+    def test_mcp_constant_lookup_e(self):
+        from eggcalc.mcp.tools import constant_lookup
+        r = constant_lookup("e")
+        assert r["ok"] is True
+        assert abs(r["result"]["value"] - 2.718281828459045) < 1e-12
+
+    def test_mcp_constant_lookup_tau(self):
+        from eggcalc.mcp.tools import constant_lookup
+        r = constant_lookup("tau")
+        assert r["ok"] is True
+        assert abs(r["result"]["value"] - 6.283185307179586) < 1e-12
+
+    def test_mcp_constant_lookup_c_still_works(self):
+        from eggcalc.mcp.tools import constant_lookup
+        r = constant_lookup("c")
+        assert r["ok"] is True
+        assert r["result"]["value"] == 299792458
+
+    # --- Evaluator: UnitValue / BinOp correctness ---
+    def test_evaluator_unary_plus_on_unitvalue(self):
+        """+5m should not produce a nested UnitValue."""
+        r = run("+5m", NORMALIZE, PATTERNS)
+        result, exit_code = r
+        assert exit_code == 0
+        assert isinstance(result, UnitValue)
+        assert result.value == 5.0
+        assert result.unit == "m"
+
+    def test_evaluator_pow_rejects_unit_on_right(self):
+        """2**(3m) should error, not silently produce 8.0 m."""
+        result, exit_code = run("2**(3m)", NORMALIZE, PATTERNS)
+        assert exit_code != 0
+
+    def test_evaluator_add_dimensionless_plus_unit_errors(self):
+        """5 + 3m should error, not silently mix units."""
+        result, exit_code = run("5 + 3m", NORMALIZE, PATTERNS)
+        assert exit_code != 0
+
+    def test_evaluator_sub_temperature_plus_dimensionless_errors(self):
+        """0C + 5 should error, not silently produce 5.0 C."""
+        result, exit_code = run("0C + 5", NORMALIZE, PATTERNS)
+        assert exit_code != 0
+
+    def test_evaluator_temperature_addition_works(self):
+        """1K + 1C should give 275.15 K (after offset conversion)."""
+        result, exit_code = run("1K + 1C", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert isinstance(result, UnitValue)
+        assert abs(result.value - 275.15) < 1e-9
+        assert result.unit == "K"
+
+    # --- Units: simplification / cross-form ---
+    def test_simplify_returns_none_for_fully_cancelled(self):
+        from eggcalc.units import _simplify_unit_string
+        assert _simplify_unit_string("m**0") is None
+        assert _simplify_unit_string("m/m") is None
+        assert _simplify_unit_string("m**2*m**-2") is None
+
+    def test_unitvalue_pow_zero_is_dimensionless(self):
+        from eggcalc.units import UnitValue
+        r = UnitValue(5.0, "m") ** 0
+        assert r.value == 1.0
+        assert r.unit is None
+
+    def test_cross_form_unit_addition(self):
+        """5 m2 + 100 cm**2 should give 5.01 m**2 (or 5.01 m2)."""
+        result, exit_code = run("5 m2 + 100 cm**2", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert isinstance(result, UnitValue)
+        assert abs(result.value - 5.01) < 1e-9
+        # The result unit is "m2" (the canonical form stored in the table)
+        assert result.unit in ("m2", "m**2")
+
+    def test_unit_convert_cross_form(self):
+        from eggcalc.mcp.tools import unit_convert
+        r = unit_convert(1, "m**2", "acre")
+        assert r["ok"] is True
+        assert abs(r["result"]["value"] - 0.0002471053814671653) < 1e-9
+
+    def test_unit_convert_m2_to_acre_preserved(self):
+        from eggcalc.mcp.tools import unit_convert
+        r = unit_convert(4046.8564224, "m2", "acre")
+        assert r["ok"] is True
+        assert abs(r["result"]["value"] - 1.0) < 0.01
+
+    # --- Normalize: hex/binary/octal literals ---
+    def test_hex_literal_with_trailing_letter(self):
+        """0x1F should be 31, not 1.0 F."""
+        result, exit_code = run("0x1F", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 31
+
+    def test_hex_literal_with_a_digit(self):
+        result, exit_code = run("0x1A", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 26
+
+    def test_hex_literal_uppercase(self):
+        result, exit_code = run("0XFF", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 255
+
+    def test_binary_literal(self):
+        result, exit_code = run("0b1010", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 10
+
+    def test_octal_literal(self):
+        result, exit_code = run("0o17", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 15
+
+    # --- Normalize: multi-subtraction ---
+    def test_multi_subtraction_no_spaces(self):
+        result, exit_code = run("4-5-3", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == -4
+
+    def test_multi_subtraction_with_spaces(self):
+        result, exit_code = run("5 - 3 - 2", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 0
+
+    def test_multi_subtraction_four_terms(self):
+        result, exit_code = run("5 - 3 - 2 - 1", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == -1
+
+    def test_subtraction_with_parenthesized_subexpression(self):
+        """5 - (3 + 2) should give 0."""
+        result, exit_code = run("5 - (3 + 2)", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 0
+
+    def test_subtraction_with_nested_parens(self):
+        """5 - (3 - 2) - 1 should give 3."""
+        result, exit_code = run("5 - (3 - 2) - 1", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 3
+
+    # --- Normalize: 'to the N' power syntax ---
+    def test_to_the_n_power(self):
+        result, exit_code = run("2 to the 10", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 1024
+
+    def test_to_the_n_power_decimal(self):
+        result, exit_code = run("2 to the 3.5", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert abs(self._get_value(result) - 11.313708498984761) < 1e-9
+
+    # --- Normalize: arc / hyperbolic functions ---
+    def test_arc_cosine(self):
+        import math
+        result, exit_code = run("arc cosine of 0.5", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert abs(self._get_value(result) - math.acos(0.5)) < 1e-9
+
+    def test_arc_tangent(self):
+        import math
+        result, exit_code = run("arc tangent of 1", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert abs(self._get_value(result) - math.atan(1)) < 1e-9
+
+    def test_arccosine_compact(self):
+        import math
+        result, exit_code = run("arccosine of 0.5", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert abs(self._get_value(result) - math.acos(0.5)) < 1e-9
+
+    def test_arctangent_compact(self):
+        import math
+        result, exit_code = run("arctangent of 1", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert abs(self._get_value(result) - math.atan(1)) < 1e-9
+
+    def test_hyperbolic_sine(self):
+        import math
+        result, exit_code = run("hyperbolic sine of 1", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert abs(self._get_value(result) - math.sinh(1)) < 1e-9
+
+    # --- Normalize: factorial postfix ---
+    def test_factorial_postfix(self):
+        result, exit_code = run("5!", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 120
+
+    def test_factorial_postfix_in_expression(self):
+        result, exit_code = run("5!+3", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 123
+
+    def test_factorial_postfix_in_parens(self):
+        """(5+3)! should be 40320."""
+        result, exit_code = run("(5+3)!", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 40320
+
+    # --- Normalize: implicit multiplication ---
+    def test_implicit_mul_digit_paren(self):
+        result, exit_code = run("3(4+5)", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 27
+
+    def test_implicit_mul_two_digits_paren(self):
+        result, exit_code = run("2(3+4)", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 14
+
+    def test_implicit_mul_paren_paren(self):
+        result, exit_code = run("(2)(3)", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 6
+
+    # --- Normalize: trailing decimal point ---
+    def test_trailing_dot(self):
+        result, exit_code = run("5.", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 5.0
+
+    def test_trailing_dot_in_expression(self):
+        result, exit_code = run("5. + 3", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 8.0
+
+    def test_trailing_dot_zero(self):
+        result, exit_code = run("0.", NORMALIZE, PATTERNS)
+        assert exit_code == 0
+        assert self._get_value(result) == 0.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

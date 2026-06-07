@@ -1860,6 +1860,25 @@ class Evaluator(ast.NodeVisitor):
         if from_unit == to_unit:
             return 1.0
 
+        # Cross-form compound normalization: "m2" <-> "m**2", "cm3" <-> "cm**3", etc.
+        if _units is not None and hasattr(_units, "_simplify_unit_string"):
+            simplified_from = _units._simplify_unit_string(from_unit)
+            if simplified_from is not None and simplified_from != from_unit:
+                from_unit = simplified_from
+            simplified_to = _units._simplify_unit_string(to_unit)
+            if simplified_to is not None and simplified_to != to_unit:
+                to_unit = simplified_to
+            if _units is not None and hasattr(_units, "_expand_short_compound"):
+                expanded_from = _units._expand_short_compound(from_unit)
+                if expanded_from != from_unit:
+                    from_unit = expanded_from
+                expanded_to = _units._expand_short_compound(to_unit)
+                if expanded_to != to_unit:
+                    to_unit = expanded_to
+
+        if from_unit == to_unit:
+            return 1.0
+
         # Use the live binding if we found the units module, else the
         # import-time binding (which works when nothing was rebuilt).
         conversions = _units.UNIT_CONVERSIONS if _units is not None else UNIT_CONVERSIONS
@@ -1941,28 +1960,51 @@ class Evaluator(ast.NodeVisitor):
             normalize_unit(right.unit) if isinstance(right, UnitValue) and right.unit else None
         )
 
-        # Check if operation is addition/subtraction with incompatible units
+        # Check if operation is addition/subtraction with incompatible units.
+        # Reject the case where exactly one side has units and the other doesn't
+        # — adding a dimensionless scalar to a unit (e.g., 5 + 3m) is not
+        # well-defined and previously produced silently wrong results.
         is_add_sub = op_class in (ast.Add, ast.Sub)
+        if is_add_sub:
+            one_has_unit = bool(left_unit) != bool(right_unit)
+            if one_has_unit:
+                raise EvaluationError(
+                    f"Cannot add/subtract a dimensionless value and a value with units "
+                    f"('{left_unit or 'dimensionless'}' vs '{right_unit or 'dimensionless'}')"
+                )
         if is_add_sub and not are_units_compatible(left_unit, right_unit):
             raise EvaluationError(
                 f"Cannot add/subtract incompatible units: '{left_unit}' and '{right_unit}'"
             )
 
-        # Handle unit conversion (only for addition/subtraction, not multiply/divide)
+        # Handle unit conversion (only for addition/subtraction, not multiply/divide).
+        # Temperature conversions are not multiplicative (they have an offset),
+        # so use convert_temperature when both sides are temperatures.
         if is_add_sub and left_unit and right_unit and left_unit != right_unit:
-            try:
-                factor = self._get_conversion_factor(right_unit, left_unit)
-                right_val = right_val * factor
-                right_unit = left_unit
-            except EvaluationError:
+            left_cat = get_unit_category(left_unit)
+            right_cat = get_unit_category(right_unit)
+            if left_cat == "temperature" and right_cat == "temperature":
                 try:
-                    factor = self._get_conversion_factor(left_unit, right_unit)
-                    left_val = left_val * factor
-                    left_unit = right_unit
-                except EvaluationError:
+                    right_val = convert_temperature(right_val, right_unit, left_unit)
+                    right_unit = left_unit
+                except Exception as e:
                     raise EvaluationError(
-                        f"Cannot convert between incompatible units: '{left_unit}' and '{right_unit}'"
+                        f"Cannot convert between temperatures '{right_unit}' and '{left_unit}': {e}"
                     )
+            else:
+                try:
+                    factor = self._get_conversion_factor(right_unit, left_unit)
+                    right_val = right_val * factor
+                    right_unit = left_unit
+                except EvaluationError:
+                    try:
+                        factor = self._get_conversion_factor(left_unit, right_unit)
+                        left_val = left_val * factor
+                        left_unit = right_unit
+                    except EvaluationError:
+                        raise EvaluationError(
+                            f"Cannot convert between incompatible units: '{left_unit}' and '{right_unit}'"
+                        )
 
         result_unit = left_unit or right_unit
 
@@ -1991,6 +2033,14 @@ class Evaluator(ast.NodeVisitor):
             if _int_digit_count(result) > MAX_RESULT_DIGITS:
                 raise EvaluationError(f"Result has too many digits (max {MAX_RESULT_DIGITS})")
 
+        # Power operator with a unit on the right is physically nonsensical
+        # (e.g., 2 ** 5m). Reject explicitly rather than silently dropping the
+        # right-hand unit, which would let nonsense like "32.0 m" pass.
+        if op_class is ast.Pow and isinstance(right, UnitValue) and right.unit:
+            raise EvaluationError(
+                f"Cannot raise a value to a power with units ('{right.unit}')"
+            )
+
         # Power operator: handle unit exponentiation (e.g., 5m ** 2 -> 25 m**2)
         if op_class is ast.Pow and isinstance(left, UnitValue) and left.unit:
             if isinstance(right, int):
@@ -2012,12 +2062,24 @@ class Evaluator(ast.NodeVisitor):
         # 0. UnitValue / UnitValue with same units -> dimensionless (e.g., 5m / 3m -> 1.666...)
         # 1. UnitValue / UnitValue with different units -> "left_unit/right_unit" (simplified)
         # 2. UnitValue / number whose AST name is a unit -> "left_unit/name" (e.g., km/h, mi/h)
-        if op_class is ast.Div and isinstance(left, UnitValue) and left.unit:
-            if isinstance(right, UnitValue) and right.unit:
+        # 3. number / UnitValue with a unit -> "1/right_unit" (e.g., 5 / 2s -> 2.5 1/s)
+        if op_class is ast.Div and isinstance(right, UnitValue) and right.unit:
+            if isinstance(left, UnitValue) and left.unit:
                 if left.unit == right.unit:
                     return left_val / right_val
                 compound = _simplify_unit_string(f"{left.unit}/{right.unit}")
                 return UnitValue(left_val / right_val, compound)
+            if not isinstance(left, UnitValue) and right_unit_name is None:
+                compound = _simplify_unit_string(f"1/{right.unit}")
+                if compound is None:
+                    return left_val / right_val
+                return UnitValue(left_val / right_val, compound)
+            if not isinstance(left, UnitValue) and right_unit_name:
+                compound = _simplify_unit_string(f"1/{right_unit_name}")
+                if compound is None:
+                    return left_val / right_val
+                return UnitValue(left_val / right_val, compound)
+        if op_class is ast.Div and isinstance(left, UnitValue) and left.unit:
             if not isinstance(right, UnitValue) and right_unit_name:
                 compound = _simplify_unit_string(f"{left.unit}/{right_unit_name}")
                 return UnitValue(left_val / right_val, compound)
@@ -2067,6 +2129,10 @@ class Evaluator(ast.NodeVisitor):
 
         if op_class is ast.Invert and not isinstance(operand, int):
             raise EvaluationError("Bitwise NOT requires an integer operand")
+
+        # UAdd is the identity — return operand directly to avoid nesting UnitValue.
+        if op_class is ast.UAdd:
+            return operand
 
         result = self.UNARYOPS[op_class](operand)
 

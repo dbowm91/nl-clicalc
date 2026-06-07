@@ -266,10 +266,16 @@ class UnitValue:
         if self.unit:
             if isinstance(other, int):
                 result = self.value**other
-                unit = f"{self.unit}**{other}"
+                # Anything to the 0th power is dimensionless.
+                if other == 0:
+                    return UnitValue(result, None)
+                unit = _simplify_unit_string(f"{self.unit}**{other}") or f"{self.unit}**{other}"
             elif isinstance(other, float) and other.is_integer():
+                int_exp = int(other)
                 result = self.value**other
-                unit = f"{self.unit}**{int(other)}"
+                if int_exp == 0:
+                    return UnitValue(result, None)
+                unit = _simplify_unit_string(f"{self.unit}**{int_exp}") or f"{self.unit}**{int_exp}"
             else:
                 raise ValueError(
                     f"Cannot raise unit '{self.unit}' to non-integer power"
@@ -1381,6 +1387,24 @@ UNIT_ALIASES: dict[str, str] = {
     "sqyd": "yd2",
     "squareyard": "yd2",
     "squareyards": "yd2",
+    # Area: "**" exponent form (used in compound expressions and accepted as
+    # a unit alias for direct unit_convert calls; equivalent to the short form)
+    "m**2": "m2",
+    "cm**2": "cm2",
+    "mm**2": "mm2",
+    "km**2": "km2",
+    "in**2": "in2",
+    "ft**2": "ft2",
+    "yd**2": "yd2",
+    "mi**2": "mi2",
+    "m**3": "m3",
+    "cm**3": "cm3",
+    "mm**3": "mm3",
+    "km**3": "km3",
+    "in**3": "in3",
+    "ft**3": "ft3",
+    "yd**3": "yd3",
+    "mi**3": "mi3",
     # Frequency
     "Hz": "Hz",
     "hertz": "Hz",
@@ -1493,11 +1517,112 @@ def get_conversion_factor(from_unit: str, to_unit: str) -> float:
     if from_unit == to_unit:
         return 1.0
 
+    # The conversion table stores multiple equivalent forms of the same
+    # unit (e.g., "m2", "m**2", "m^2"). We try the original pair first,
+    # then fall back to looking up either side in any of its equivalent
+    # forms so cross-form lookups succeed (e.g., "m**2" -> "acre" stored
+    # as "m2" -> "acre").
     key = (from_unit, to_unit)
     if key in UNIT_CONVERSIONS:
         return UNIT_CONVERSIONS[key]
 
+    from_forms = _short_compound_forms(from_unit)
+    to_forms = _short_compound_forms(to_unit)
+    seen: set[tuple[str, str]] = set()
+    seen.add((from_unit, to_unit))
+    for f in from_forms:
+        for t in to_forms:
+            if (f, t) in seen:
+                continue
+            seen.add((f, t))
+            if (f, t) in UNIT_CONVERSIONS:
+                return UNIT_CONVERSIONS[(f, t)]
+            if (t, f) in UNIT_CONVERSIONS:
+                return 1.0 / UNIT_CONVERSIONS[(t, f)]
+
+    # Try the compound-simplification form too (e.g., "m**2/s**2" -> "m2/s2")
+    simplified_from = _simplify_unit_string(from_unit)
+    if simplified_from is not None and simplified_from != from_unit:
+        if (simplified_from, to_unit) in UNIT_CONVERSIONS:
+            return UNIT_CONVERSIONS[(simplified_from, to_unit)]
+        if (to_unit, simplified_from) in UNIT_CONVERSIONS:
+            return 1.0 / UNIT_CONVERSIONS[(to_unit, simplified_from)]
+    simplified_to = _simplify_unit_string(to_unit)
+    if simplified_to is not None and simplified_to != to_unit:
+        if (from_unit, simplified_to) in UNIT_CONVERSIONS:
+            return UNIT_CONVERSIONS[(from_unit, simplified_to)]
+        if (simplified_to, from_unit) in UNIT_CONVERSIONS:
+            return 1.0 / UNIT_CONVERSIONS[(simplified_to, from_unit)]
+
     raise ValueError(f"Cannot convert from {from_unit} to {to_unit}")
+
+
+# Map short compound unit forms ("m2", "cm2", "km3", "m2/s2") to the
+# equivalent "**" and "^" forms so cross-form conversions work. Used by
+# get_conversion_factor; the base aliases remain valid for input parsing.
+_SHORT_COMPOUND_FORMS: dict[str, tuple[str, str, str]] = {
+    "m2": ("m2", "m**2", "m^2"),
+    "cm2": ("cm2", "cm**2", "cm^2"),
+    "mm2": ("mm2", "mm**2", "mm^2"),
+    "km2": ("km2", "km**2", "km^2"),
+    "in2": ("in2", "in**2", "in^2"),
+    "ft2": ("ft2", "ft**2", "ft^2"),
+    "yd2": ("yd2", "yd**2", "yd^2"),
+    "mi2": ("mi2", "mi**2", "mi^2"),
+    "m3": ("m3", "m**3", "m^3"),
+    "cm3": ("cm3", "cm**3", "cm^3"),
+    "mm3": ("mm3", "mm**3", "mm^3"),
+    "km3": ("km3", "km**3", "km^3"),
+    "in3": ("in3", "in**3", "in^3"),
+    "ft3": ("ft3", "ft**3", "ft^3"),
+    "yd3": ("yd3", "yd**3", "yd^3"),
+    "mi3": ("mi3", "mi**3", "mi^3"),
+}
+_SHORT_COMPOUND_EXPANSION: dict[str, str] = {short: star for short, (_, star, _) in _SHORT_COMPOUND_FORMS.items()}
+_SHORT_COMPOUND_CARET: dict[str, str] = {short: caret for short, (_, _, caret) in _SHORT_COMPOUND_FORMS.items()}
+_SHORT_COMPOUND_COLLAPSE: dict[str, str] = {star: short for short, (short, star, _) in _SHORT_COMPOUND_FORMS.items()}
+
+
+def _expand_short_compound(unit: str) -> str:
+    """Expand a short compound form like 'm2' to 'm**2'.
+
+    Returns the input unchanged when no expansion is needed. Only single
+    short forms are handled here; cross-form operations on compound
+    expressions (e.g., 'm2/s2' vs 'm**2/s**2') rely on
+    ``_simplify_unit_string`` to canonicalize first.
+    """
+    return _SHORT_COMPOUND_EXPANSION.get(unit, unit)
+
+
+def _collapse_short_compound(unit: str) -> str:
+    """Collapse a 'm**2' form to 'm2' (the short compound form).
+
+    Returns the input unchanged when no collapse is needed.
+    """
+    return _SHORT_COMPOUND_COLLAPSE.get(unit, unit)
+
+
+def _short_compound_forms(unit: str) -> list[str]:
+    """Return all equivalent short-compound forms of the given unit.
+
+    Returns a list including the input and any of {short, "**", "^"}
+    forms that are known equivalents. The list is deduplicated and
+    preserves order so the original form is checked first.
+    """
+    forms: list[str] = []
+    seen: set[str] = set()
+    for f in (unit, _expand_short_compound(unit), _collapse_short_compound(unit)):
+        if f not in seen:
+            forms.append(f)
+            seen.add(f)
+    # Also add the caret form if any of the short/expanded forms have one
+    for _, (s_short, s_star, s_caret) in _SHORT_COMPOUND_FORMS.items():
+        if unit == s_short or unit == s_star or unit == s_caret:
+            for f in (s_short, s_star, s_caret):
+                if f not in seen:
+                    forms.append(f)
+                    seen.add(f)
+    return forms
 
 
 def is_unit(text: str) -> bool:
@@ -1751,7 +1876,6 @@ _DERIVED_CATEGORIES: dict[str, str] = {
     "cm**3": "volume",
     "mm**3": "volume",
     "km**3": "volume",
-    "L/m**3": "volume",
     # Speed / velocity
     "m/s": "speed",
     "km/h": "speed",
@@ -1863,7 +1987,9 @@ def _simplify_unit_string(unit: str | None) -> str | None:
 
     Returns the canonical form (e.g. ``"m/s*s"`` -> ``"m"``,
     ``"m*m/m"`` -> ``"m"``, ``"m**2*m"`` -> ``"m**3"``). Returns
-    ``None`` if the input is ``None``. Returns the input unchanged
+    ``None`` if the input is ``None``, or if the simplified result
+    is fully dimensionless (e.g. ``"m**0"`` -> ``None``,
+    ``"m/m"`` -> ``None``). Returns the input unchanged
     if it cannot be parsed as a compound unit.
     """
     if unit is None:
@@ -1871,7 +1997,7 @@ def _simplify_unit_string(unit: str | None) -> str | None:
     sig = _parse_compound_signature(unit)
     if sig is None:
         return unit
-    return _signature_to_canonical_string(sig) or unit
+    return _signature_to_canonical_string(sig)
 
 
 def are_units_compatible(unit1: str | None, unit2: str | None) -> bool:

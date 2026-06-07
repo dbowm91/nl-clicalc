@@ -281,6 +281,13 @@ def _build_physical_constants() -> dict[str, dict[str, Any]]:
 
     _CONSTANT_META: dict[str, tuple[str, str]] = {
         # (symbol, display_name)
+        # Mathematical constants
+        "pi": ("π", "Pi (mathematical constant)"),
+        "e": ("e", "Euler's number"),
+        "tau": ("τ", "Tau (2π)"),
+        "i": ("i", "Imaginary unit"),
+        "j": ("j", "Imaginary unit (engineering)"),
+        # Physical constants
         "na": ("N_A", "Avogadro constant"),
         "avogadro": ("N_A", "Avogadro constant"),
         "avogadros": ("N_A", "Avogadro constant"),

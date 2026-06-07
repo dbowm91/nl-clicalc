@@ -147,13 +147,12 @@ FUNCTION_MAPPINGS: dict[str, str] = {
     "tan": "tan",
     "arcsine": "asin",
     "asin": "asin",
-    "inverse sine": "asin",
+    "arccosine": "acos",
     "arccos": "acos",
     "acos": "acos",
-    "inverse cosine": "acos",
+    "arctangent": "atan",
     "arctan": "atan",
     "atan": "atan",
-    "inverse tangent": "atan",
     "sinh": "sinh",
     "hyperbolic sine": "sinh",
     "cosh": "cosh",
@@ -446,7 +445,10 @@ def _build_config() -> tuple[dict, dict]:
         # Handle stripped_chars: literals get escaped, but regex patterns like \bof\b are preserved
         "stripped_chars": re.compile(f"({'|'.join([re.escape(p) if not (p.startswith(r'\\b') or r'\\b' in p) else p for p in sorted(STRIPPED_PHRASES, key=len, reverse=True)])})"),
         "int": re.compile(r"^[-+]?[0-9]\d*$"),
-        "float": re.compile(r"^[-+]?(?:[0-9]\d*(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?$"),
+        # Float regex accepts a trailing decimal point ("5." -> 5.0) so
+        # users can write Python-style shorthand. Both ".5" and "5." are
+        # accepted; "5." is normalized to "5.0" before evaluation.
+        "float": re.compile(r"^[-+]?(?:[0-9]\d*(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$"),
         "valid_operations": re.compile(
             f"^({'|'.join([re.escape(s) for s in symbols] + [re.escape(f) for f in FUNCTION_MAPPINGS.values()] + [re.escape(c) for c in CONSTANT_WORDS.keys()])}){{1}}$"
         ),
@@ -909,13 +911,30 @@ def convert_from_human_handler(
 
 
 def _should_split_number_minus(token: str) -> bool:
-    """Check if token matches pattern: digit-sequence minus digit-sequence."""
-    return bool(re.match(r"^\d+-\d+$", token))
+    """Check if token matches pattern: digit-sequence minus digit-sequence.
+
+    Matches one or more subtraction operators between digit runs, e.g.
+    ``4-5-3`` or ``4-5-3-2``. Used by ``split_at_operators`` to split
+    arithmetic expressions where multiple subtraction operators were
+    collapsed into a single token (because the splitter deliberately
+    leaves bare ``-`` alone to avoid splitting unary ``-5``).
+    """
+    return bool(re.match(r"^\d+(?:-\d+)+$", token))
 
 
 def _should_split_double_minus(token: str) -> bool:
     """Check if token matches pattern: digit-sequence -- digit-sequence."""
     return bool(re.match(r"^\d+--\d+$", token))
+
+
+def _should_split_trailing_minus(token: str) -> bool:
+    """Check if token ends with a subtraction operator that the splitter
+    failed to isolate (e.g., ``"5-"`` when followed by a parenthesized
+    expression). Returns True when the token is a digit run followed
+    by a single trailing ``-`` that wasn't picked up by the symbol
+    replacement pass.
+    """
+    return bool(re.match(r"^\d+-$", token))
 
 
 def split_at_operators(
@@ -928,17 +947,40 @@ def split_at_operators(
 
     tokens = [t.strip() for t in expression.split("\\") if t.strip()]
 
-    for i in range(len(tokens)):
+    # We split on the other operators, but leave bare "-" alone (to avoid
+    # splitting the unary "-" of "-5"). However, that means "4-5-3" comes
+    # through as a single token "4-5-3" and a digit-then-paren like
+    # "5-(3+2)" becomes the token "5-". Walk the tokens with a while-loop
+    # so newly-inserted tokens can be re-checked in the same pass, and
+    # recompute len(tokens) each iteration to handle the inserts.
+    i = 0
+    while i < len(tokens):
         is_num = check_if_number(tokens[i])["bool"]
         is_op = patterns["operators"].match(tokens[i]) is not None
 
         if not is_num and not is_op:
             if _should_split_number_minus(tokens[i]):
                 token = tokens[i]
+                # Split on the FIRST '-' only; subsequent iterations of the
+                # while-loop handle the remainder. This matches the
+                # left-associative semantics of Python's '-' operator.
                 parts = token.split("-", 1)
                 tokens[i] = parts[0]
                 tokens.insert(i + 1, "-")
                 tokens.insert(i + 2, parts[1])
+                # Don't advance — let the next iteration split the new
+                # "<num>-<num>" token at the head, so "4-5-3" becomes
+                # ["4", "-", "5", "-", "3"] rather than stopping at
+                # ["4", "-", "5-3"].
+                continue
+            elif _should_split_trailing_minus(tokens[i]):
+                # Trailing minus the symbol-replacer missed (e.g., "5-" in
+                # "5-(3+2)"). Split off the minus so the next token can be
+                # processed correctly.
+                token = tokens[i]
+                tokens[i] = token[:-1]
+                tokens.insert(i + 1, "-")
+                continue
             elif _should_split_double_minus(tokens[i]):
                 token = tokens[i]
                 parts = token.split("--", 1)
@@ -948,6 +990,7 @@ def split_at_operators(
             elif _should_split_number_sequence(tokens[i]):
                 parts = tokens[i].split()
                 tokens[i:i+1] = parts
+        i += 1
 
     return tokens
 
@@ -1159,6 +1202,23 @@ _MULTI_WORD_FUNCTIONS: dict[str, str] = {
     "inverse sine": "asin",
     "inverse cosine": "acos",
     "inverse tangent": "atan",
+    # "arc X" forms (alternative to "inverse X")
+    "arc sine": "asin",
+    "arc cosine": "acos",
+    "arc tangent": "atan",
+    "arc cos": "acos",
+    "arc sin": "asin",
+    "arc tan": "atan",
+    # Hyperbolic variants
+    "hyperbolic sine": "sinh",
+    "hyperbolic cosine": "cosh",
+    "hyperbolic tangent": "tanh",
+    "hyperbolic arcsine": "asinh",
+    "hyperbolic arccosine": "acosh",
+    "hyperbolic arctangent": "atanh",
+    "inverse hyperbolic sine": "asinh",
+    "inverse hyperbolic cosine": "acosh",
+    "inverse hyperbolic tangent": "atanh",
 }
 
 # --- Pre-computed constants for normalize() (avoid per-call rebuild) ---
@@ -1288,6 +1348,12 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         flags=re.IGNORECASE,
     )
 
+    # Insert implicit multiplication between a number and a following "("
+    # so "3(4+5)" parses as "3*(4+5)" = 27 instead of a syntax error.
+    # The whitespace-removal loop below only inserts '*' when there's
+    # whitespace, so we must do this earlier as a regex.
+    expression = re.sub(r"(\d)(?=\()", r"\1*", expression)
+
     # Replace multi-word number phrases to prevent incorrect joining
     # e.g., "one hundred" -> "100", "two thousand" -> "2000"
     for phrase, replacement in _SORTED_MULTI_WORD_NUMBERS:
@@ -1295,6 +1361,17 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     # Strip "and" as a filler word in NL number expressions
     expression = re.sub(r"\band\b", "", expression, flags=re.IGNORECASE)
+
+    # Handle short-form power phrases BEFORE individual word replacement so
+    # that "2 to the 10" doesn't become "2 TO 10". Long forms like
+    # "to the power of" and "raised to" are handled by the word_to_all
+    # loop below; this catches the abbreviated form "N to the M".
+    expression = re.sub(
+        r"(\d+(?:\.\d+)?)\s+to\s+the\s+(\d+(?:\.\d+)?)",
+        r"\1**\2",
+        expression,
+        flags=re.IGNORECASE,
+    )
 
     _binary_word_check(expression)
 
@@ -1568,6 +1645,10 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
                 # Implicit multiplication: ")(" or ")<digit>" -> ")*(" or ")*<digit>"
                 # (e.g., "(2+3)4" -> "(2+3)*4", "(2+3)(4+5)" -> "(2+3)*(4+5)")
                 result.append("*")
+            if result and result[-1].isdigit() and char == "(":
+                # Implicit multiplication: "<digit>(" -> "<digit>*("
+                # (e.g., "3(4+5)" -> "3*(4+5)", "2(3+4)" -> "2*(3+4)")
+                result.append("*")
             result.append(char)
             # Check if we just completed a function name. Only mark
             # prev_was_func_end if the current char is alphanumeric AND
@@ -1598,6 +1679,20 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
             i += 1
 
     expression = "".join(result)
+
+    # Postfix factorial: "<n>!" -> "factorial(<n>)". Apply AFTER whitespace
+    # removal so we get the bare "<num>!" form. Skip cases like "!=" or
+    # "is not" by requiring the "!" to immediately follow a number or a
+    # closing paren (no whitespace between).
+    expression = re.sub(
+        r"(\d+(?:\.\d+)?|\([^()]*\))(\!+)",
+        lambda m: (
+            f"factorial({m.group(1)}){('!' * (len(m.group(2)) - 1))}"
+            if len(m.group(2)) > 1
+            else f"factorial({m.group(1)})"
+        ),
+        expression,
+    )
 
     return expression
 
@@ -1711,6 +1806,27 @@ def _preprocess_units(expression: str) -> str:
             result.append(char)
             i += 1
         elif char.isdigit():
+            # Detect Python integer-literal prefixes (0x..., 0b..., 0o...)
+            # and pass the whole literal through unchanged. Without this, the
+            # trailing hex/binary/octal digit sequence (e.g., "1F", "0A") is
+            # misread as "<num>*<unit>" (F/A = Fahrenheit/Ampere), corrupting
+            # the literal into nonsense like "0x1*F".
+            if (
+                char == "0"
+                and i + 1 < len(expression)
+                and expression[i + 1] in ("x", "X", "b", "B", "o", "O")
+            ):
+                j = i + 2
+                # Hex letters; binary/octal digits are already matched below.
+                while j < len(expression) and (
+                    expression[j].isdigit()
+                    or expression[j] in ("a", "b", "c", "d", "e", "f", "A", "B", "C", "D", "E", "F", "_")
+                ):
+                    j += 1
+                result.append(expression[i:j])
+                i = j
+                continue
+
             # Look for number followed by optional whitespace and unit
             num_start = i
             while i < len(expression) and (expression[i].isdigit() or expression[i] == "."):
