@@ -254,7 +254,9 @@ def _cleanup_child_process(
         if proc.is_alive():
             proc.kill()
             proc.join(timeout=1)
-        # If process survived terminate+kill, register for defensive cleanup
+        # If process survived terminate+kill, register for defensive cleanup.
+        # Do NOT close the handle here — it will be closed by
+        # _cleanup_orphaned_processes after it finishes.
         if proc.is_alive():
             with _orphaned_regex_lock:
                 _orphaned_regex_processes.add(proc)
@@ -262,10 +264,11 @@ def _cleanup_child_process(
                 while len(_orphaned_regex_order) > MAX_ORPHANED_REGEX_PROCESSES:
                     oldest = _orphaned_regex_order.popleft()
                     _orphaned_regex_processes.discard(oldest)
-        try:
-            proc.close()
-        except Exception:
-            pass
+        else:
+            try:
+                proc.close()
+            except Exception:
+                pass
 
 
 def _build_physical_constants() -> dict[str, dict[str, Any]]:
@@ -2989,6 +2992,12 @@ def identifier_inspect_mcp(
         )
 
     for ident in identifiers:
+        if not isinstance(ident, str):
+            return _error_response(
+                "invalid_arguments",
+                f"Each identifier must be a string, got {type(ident).__name__}",
+                tool="identifier_inspect",
+            )
         if len(ident) > MAX_TEXT_LENGTH:
             return _error_response(
                 "input_too_large",
