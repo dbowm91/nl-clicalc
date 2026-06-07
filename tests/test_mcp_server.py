@@ -6727,13 +6727,22 @@ print('OK')
         )
         assert err is not None and "multiple" in err
 
-    def test_schema_type_array_rejected(self):
-        """H-2: schema `type: [...]` (array) is rejected to avoid silent no-op."""
+    def test_schema_type_array_supported(self):
+        """H-2 follow-up: schema `type: [...]` (list of types) is supported
+        for nullable fields, and accepts any matching type."""
         from eggcalc.mcp import server
-        err = server._validate_value_against_schema(
+        # Nullable string accepts both None and a real string
+        assert server._validate_value_against_schema(
             "x", {"type": ["string", "null"]}, "x"
+        ) is None
+        assert server._validate_value_against_schema(
+            None, {"type": ["string", "null"]}, "x"
+        ) is None
+        # Rejects non-matching type
+        err = server._validate_value_against_schema(
+            42, {"type": ["string", "null"]}, "x"
         )
-        assert err is not None and "unsupported" in err
+        assert err is not None and "must be one of" in err
 
     def test_fact_rejects_unit_argument(self):
         """M-12: fact(5m) must raise, not silently return 120."""

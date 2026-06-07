@@ -644,7 +644,10 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
         if not is_unit(to_unit):
             return _error_response("invalid_arguments", f"Unknown unit: {to_unit}", tool="unit_convert")
 
-        if get_unit_category(from_unit) == "temperature" and get_unit_category(to_unit) == "temperature":
+        from_cat = get_unit_category(from_unit)
+        to_cat = get_unit_category(to_unit)
+
+        if from_cat == "temperature" and to_cat == "temperature":
             result = convert_temperature(value, from_unit, to_unit)
             return _success_response({
                 "value": result,
@@ -652,9 +655,6 @@ def unit_convert(value: float, from_unit: str, to_unit: str) -> dict:
                 "to_unit": to_unit,
                 "factor": None,
             }, tool="unit_convert")
-
-        from_cat = get_unit_category(from_unit)
-        to_cat = get_unit_category(to_unit)
         # Reject cross-category conversions (e.g., length -> mass) when
         # both categories are known. If either is None, let
         # get_conversion_factor attempt the conversion and fail naturally.
@@ -1411,7 +1411,7 @@ def validate_regex(
                 args=(pattern, samples, flags, ignore_case, multiline, dotall, ascii, queue),
             )
             proc.start()
-        except BaseException:
+        except Exception:
             released = True
             _SPAWN_SEMAPHORE.release()
             raise
@@ -1700,7 +1700,7 @@ def regex_finditer(
                 args=(pattern, text, flags, max_matches, include_line_column, include_groups, queue),
             )
             proc.start()
-        except BaseException:
+        except Exception:
             released = True
             _SPAWN_SEMAPHORE.release()
             raise
@@ -2755,7 +2755,7 @@ def text_window(
     # in downstream _text_position / _text_window math.
     _MAX_POS = MAX_TEXT_LENGTH * 16
     for key in ("value", "byte_offset", "codepoint_index", "grapheme_index",
-                "line", "column", "utf16_offset"):
+                "line", "column"):
         if key in position:
             v = position[key]
             if not isinstance(v, int) or isinstance(v, bool):
@@ -3697,7 +3697,14 @@ def _dotenv_validate_worker(
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
     except (ImportError, ValueError, OSError):
-        pass
+        # RLIMIT_AS may not be enforced on all platforms (e.g., macOS). Fall back to CPU time limit.
+        try:
+            import sys as _sys
+            if _sys.platform == "darwin":
+                import resource
+                resource.setrlimit(resource.RLIMIT_CPU, (5, 10))
+        except (ImportError, ValueError, OSError):
+            pass
     try:
         result = _dotenv_validate(text, allow_export, key_pattern, duplicate_policy)
         result_queue.put(("ok", result))
@@ -3805,7 +3812,7 @@ def dotenv_validate_mcp(
                 args=(text, allow_export, key_pattern, duplicate_policy, queue),
             )
             proc.start()
-        except BaseException:
+        except Exception:
             released = True
             _SPAWN_SEMAPHORE.release()
             raise

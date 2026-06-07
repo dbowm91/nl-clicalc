@@ -270,13 +270,10 @@ class UnitValue:
             elif isinstance(other, float) and other.is_integer():
                 result = self.value**other
                 unit = f"{self.unit}**{int(other)}"
-            elif isinstance(other, (int, float)):
+            else:
                 raise ValueError(
                     f"Cannot raise unit '{self.unit}' to non-integer power"
                 )
-            else:
-                result = self.value**other
-                unit = self.unit
         else:
             result = self.value**other
             unit = self.unit
@@ -936,15 +933,23 @@ UNIT_ALIASES: dict[str, str] = {
     "m": "m",
     "meter": "m",
     "meters": "m",
+    "metre": "m",
+    "metres": "m",
     "km": "km",
     "kilometer": "km",
     "kilometers": "km",
+    "kilometre": "km",
+    "kilometres": "km",
     "cm": "cm",
     "centimeter": "cm",
     "centimeters": "cm",
+    "centimetre": "cm",
+    "centimetres": "cm",
     "mm": "mm",
     "millimeter": "mm",
     "millimeters": "mm",
+    "millimetre": "mm",
+    "millimetres": "mm",
     "um": "um",
     "μm": "um",
     "micrometer": "um",
@@ -1129,9 +1134,13 @@ UNIT_ALIASES: dict[str, str] = {
     "l": "L",
     "liter": "L",
     "liters": "L",
+    "litre": "L",
+    "litres": "L",
     "mL": "mL",
     "milliliter": "mL",
     "milliliters": "mL",
+    "millilitre": "mL",
+    "millilitres": "mL",
     "uL": "uL",
     "μL": "uL",
     "microliter": "uL",
@@ -1307,6 +1316,7 @@ UNIT_ALIASES: dict[str, str] = {
     "F": "F",
     "fahrenheit": "F",
     "R": "R",
+    "r": "R",
     "Ra": "R",
     "rankine": "R",
     # Speed
@@ -1501,155 +1511,54 @@ def is_unit(text: str) -> bool:
 
 
 UNIT_CATEGORIES: dict[str, str] = {
+    base_unit: category
+    for category, units_dict in UNIT_BASE.items()
+    for base_unit in units_dict
+}
+
+# Manual category mapping. The base unit names in UNIT_BASE (e.g. "m"
+# for length, "kg" for mass) are kept as the category value for
+# backwards compatibility with the original public API. The full set
+# of categories is documented as a literal below so consumers can
+# rely on a fixed, named set.
+_BASE_CATEGORY: dict[str, str] = {
     "m": "length",
-    "km": "length",
-    "cm": "length",
-    "mm": "length",
-    "um": "length",
-    "nm": "length",
-    "pm": "length",
-    "inch": "length",
-    "ft": "length",
-    "yd": "length",
-    "mi": "length",
-    "ly": "length",
-    "au": "length",
-    "pc": "length",
-    "angstrom": "length",
-    "fermi": "length",
-    "nmi": "length",
-    "furlong": "length",
-    "chain": "length",
-    "rd": "length",
-    "fathom": "length",
-    "smoot": "length",
     "s": "time",
-    "ms": "time",
-    "us": "time",
-    "ns": "time",
-    "ps": "time",
-    "min": "time",
-    "h": "time",
-    "d": "time",
-    "wk": "time",
-    "yr": "time",
-    "fortnight": "time",
-    "decade": "time",
-    "century": "time",
-    "millennium": "time",
     "B": "data",
-    "bit": "data",
-    "KB": "data",
-    "MB": "data",
-    "GB": "data",
-    "TB": "data",
-    "PB": "data",
-    "EB": "data",
-    "ZB": "data",
-    "YB": "data",
     "bps": "data_rate",
-    "Kbps": "data_rate",
-    "Mbps": "data_rate",
-    "Gbps": "data_rate",
     "kg": "mass",
-    "g": "mass",
-    "mg": "mass",
-    "ug": "mass",
-    "ng": "mass",
-    "lb": "mass",
-    "oz": "mass",
-    "ton": "mass",
-    "tonne": "mass",
-    "stone": "mass",
-    "long_ton": "mass",
-    "imperial_ton": "mass",
-    "slug": "mass",
-    "ct": "mass",
-    "gr": "mass",
-    "dr": "mass",
     "L": "volume",
-    "mL": "volume",
-    "uL": "volume",
-    "gal": "volume",
-    "qt": "volume",
-    "pt": "volume",
-    "cup": "volume",
-    "floz": "volume",
-    "tbsp": "volume",
-    "tsp": "volume",
-    "m3": "volume",
-    "ft3": "volume",
-    "cm3": "volume",
-    "in3": "volume",
-    "yd3": "volume",
     "Pa": "pressure",
-    "kPa": "pressure",
-    "MPa": "pressure",
-    "GPa": "pressure",
-    "bar": "pressure",
-    "mbar": "pressure",
-    "atm": "pressure",
-    "psi": "pressure",
-    "mmHg": "pressure",
-    "torr": "pressure",
-    "inHg": "pressure",
-    "mmH2O": "pressure",
-    "inH2O": "pressure",
     "J": "energy",
-    "kJ": "energy",
-    "MJ": "energy",
-    "GJ": "energy",
-    "cal": "energy",
-    "kcal": "energy",
-    "Wh": "energy",
-    "kWh": "energy",
-    "BTU": "energy",
-    "eV": "energy",
     "W": "power",
-    "kW": "power",
-    "MW": "power",
-    "GW": "power",
-    "mW": "power",
-    "hp": "power",
     "N": "force",
-    "mN": "force",
-    "kN": "force",
-    "dyne": "force",
-    "lbf": "force",
     "V": "voltage",
-    "kV": "voltage",
-    "mV": "voltage",
-    "μV": "voltage",
     "A": "current",
-    "mA": "current",
-    "μA": "current",
     "rad": "angle",
-    "deg": "angle",
+    "m/s": "speed",
+    "m2": "area",
+    "Hz": "frequency",
+}
+# Remap the auto-derived UNIT_CATEGORIES from the raw base unit (e.g.
+# "m") to a friendly category name (e.g. "length") so MCP tools and
+# external consumers see stable category strings.
+UNIT_CATEGORIES = {
+    unit: _BASE_CATEGORY.get(cat, cat)
+    for unit, cat in UNIT_CATEGORIES.items()
+}
+
+# Manual categories for units that live outside UNIT_BASE (temperatures
+# use offset math and dimensionless categories, neither of which fit the
+# multiplicative UNIT_BASE structure). These complete the coverage so
+# any unit in UNIT_ALIASES has a category, which is required for
+# add/subtract compatibility checks.
+UNIT_CATEGORIES_EXTRA: dict[str, str] = {
     "K": "temperature",
     "C": "temperature",
     "F": "temperature",
     "R": "temperature",
-    "m/s": "speed",
-    "km/h": "speed",
-    "mph": "speed",
-    "kn": "speed",
-    "mach": "speed",
-    "m2": "area",
-    "km2": "area",
-    "cm2": "area",
-    "mm2": "area",
-    "ha": "area",
-    "acre": "area",
-    "ft2": "area",
-    "in2": "area",
-    "mi2": "area",
-    "yd2": "area",
-    "Hz": "frequency",
-    "kHz": "frequency",
-    "MHz": "frequency",
-    "GHz": "frequency",
-    "THz": "frequency",
 }
+UNIT_CATEGORIES.update(UNIT_CATEGORIES_EXTRA)
 
 
 def get_unit_category(unit: str) -> str | None:

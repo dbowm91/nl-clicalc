@@ -26,6 +26,7 @@ from .units import (
     UNIT_ALIASES,
     UNIT_CONVERSIONS,
     UnitValue,
+    _simplify_unit_string,
     are_units_compatible,
     convert_temperature,
     get_unit_category,
@@ -1917,8 +1918,20 @@ class Evaluator(ast.NodeVisitor):
 
         # Get the name of the right operand if it's a Name node (for compound unit detection)
         right_name: str | None = None
+        right_unit_name: str | None = None
         if isinstance(node.right, ast.Name):
             right_name = node.right.id
+            if right_name in UNIT_ALIASES:
+                right_unit_name = UNIT_ALIASES[right_name]
+
+        # Also detect a trailing unit on the right side when it is itself
+        # a parenthesized or preprocessed expression. E.g., "(5m) / (2s)"
+        # or "5m / 2*s" — the AST BinOp right is itself a BinOp/Name whose
+        # visited value is a UnitValue. We handle that via right being a
+        # UnitValue below, but we also accept a name-typed right whose
+        # normalized form is a unit.
+        if right_unit_name is None and isinstance(right, UnitValue) and right.unit:
+            right_unit_name = right.unit
 
         # Extract values and units
         left_val = left.value if isinstance(left, UnitValue) else left
@@ -1983,11 +1996,13 @@ class Evaluator(ast.NodeVisitor):
             if isinstance(right, int):
                 if right == 0:
                     return result  # anything**0 is dimensionless
-                return UnitValue(result, f"{left.unit}**{right}")
+                simplified = _simplify_unit_string(f"{left.unit}**{right}") or f"{left.unit}**{right}"
+                return UnitValue(result, simplified)
             if isinstance(right, float) and right.is_integer():
                 if int(right) == 0:
                     return result
-                return UnitValue(result, f"{left.unit}**{int(right)}")
+                simplified = _simplify_unit_string(f"{left.unit}**{int(right)}") or f"{left.unit}**{int(right)}"
+                return UnitValue(result, simplified)
             # Non-integer exponent on a unit is physically nonsensical
             raise EvaluationError(
                 f"Cannot raise unit '{left.unit}' to non-integer power"
@@ -1995,17 +2010,16 @@ class Evaluator(ast.NodeVisitor):
 
         # Compound unit detection for division:
         # 0. UnitValue / UnitValue with same units -> dimensionless (e.g., 5m / 3m -> 1.666...)
-        # 1. UnitValue / UnitValue with different units -> "left_unit/right_unit"
+        # 1. UnitValue / UnitValue with different units -> "left_unit/right_unit" (simplified)
         # 2. UnitValue / number whose AST name is a unit -> "left_unit/name" (e.g., km/h, mi/h)
         if op_class is ast.Div and isinstance(left, UnitValue) and left.unit:
             if isinstance(right, UnitValue) and right.unit:
                 if left.unit == right.unit:
                     return left_val / right_val
-                compound = f"{left.unit}/{right.unit}"
+                compound = _simplify_unit_string(f"{left.unit}/{right.unit}")
                 return UnitValue(left_val / right_val, compound)
-            if not isinstance(right, UnitValue) and right_name and right_name in UNIT_ALIASES:
-                unit_name = UNIT_ALIASES[right_name]
-                compound = f"{left.unit}/{unit_name}"
+            if not isinstance(right, UnitValue) and right_unit_name:
+                compound = _simplify_unit_string(f"{left.unit}/{right_unit_name}")
                 return UnitValue(left_val / right_val, compound)
 
         # Compound unit detection for floor division and modulo:
@@ -2013,17 +2027,30 @@ class Evaluator(ast.NodeVisitor):
         if op_class in (ast.FloorDiv, ast.Mod) and isinstance(left, UnitValue) and left.unit:
             if isinstance(right, UnitValue) and right.unit and left.unit == right.unit:
                 return result  # dimensionless
+            if (
+                op_class is ast.FloorDiv
+                and not isinstance(right, UnitValue)
+                and right_unit_name
+            ):
+                compound = _simplify_unit_string(f"{left.unit}//{right_unit_name}")
+                return UnitValue(result, compound)
+            if (
+                op_class is ast.Mod
+                and not isinstance(right, UnitValue)
+                and right_unit_name
+            ):
+                compound = _simplify_unit_string(f"{left.unit}%{right_unit_name}")
+                return UnitValue(result, compound)
 
         # Compound unit detection for multiplication:
-        # UnitValue * UnitValue -> "left_unit*right_unit" (including same-unit: m*m -> m*m)
+        # UnitValue * UnitValue -> simplified "left_unit*right_unit" (m*m -> m**2)
         # UnitValue * number whose AST name is a unit -> "left_unit*name"
         if op_class is ast.Mult and isinstance(left, UnitValue) and left.unit:
             if isinstance(right, UnitValue) and right.unit:
-                compound = f"{left.unit}*{right.unit}"
+                compound = _simplify_unit_string(f"{left.unit}*{right.unit}")
                 return UnitValue(left_val * right_val, compound)
-            if not isinstance(right, UnitValue) and right_name and right_name in UNIT_ALIASES:
-                unit_name = UNIT_ALIASES[right_name]
-                compound = f"{left.unit}*{unit_name}"
+            if not isinstance(right, UnitValue) and right_unit_name:
+                compound = _simplify_unit_string(f"{left.unit}*{right_unit_name}")
                 return UnitValue(left_val * right_val, compound)
 
         if result_unit is None:

@@ -291,6 +291,12 @@ print(f"km to m factor: {factor}")  # Should be 1000.0
 - Prefixed units like `kN`, `mV`, `mA` map to themselves in `UNIT_ALIASES`
 - Temperature conversions use offset math, not multiplicative factors
 - `mps` (meters per second) is in `UNIT_CATEGORIES` as "speed"
+- `UNIT_CATEGORIES` is auto-derived from `UNIT_BASE` (multiplicative categories like length, mass) plus manual entries for temperature. British spellings (`metre`/`metres`, `litre`/`litres`, `kilometre`/...) are included in `UNIT_ALIASES` and therefore in the derived category map.
+
+### Unit Power and Division Semantics
+- `5m ** 2` evaluates to `25.0 m**2` (power binds the unit, not the base). The preprocessor wraps `<num>*<unit>` in parens when followed by `**` to preserve correct precedence.
+- `5m / 2s` evaluates to `2.5 m/s` (the right-hand `*<unit>` is bound to the denominator). `_add_same_unit_division_parens` always wraps the denominator in parens.
+- Multiplication of same units simplifies via `_simplify_unit_string`: `5m * 5m` -> `25.0 m**2`, `5m * 5m * 5m` -> `125.0 m**3`.
 
 ## Deferred Items
 

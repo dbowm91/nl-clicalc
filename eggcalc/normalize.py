@@ -59,7 +59,7 @@ MAX_NESTING_DEPTH = 100
 _UNITS_BY_LENGTH: list[str] = sorted(UNIT_ALIASES.keys(), key=len, reverse=True)
 
 # Lowercase temperature abbreviations that should map to canonical uppercase forms
-_LOWERCASE_TEMP_UNITS: dict[str, str] = {"f": "F", "c": "C", "k": "K"}
+_LOWERCASE_TEMP_UNITS: dict[str, str] = {"f": "F", "c": "C", "k": "K", "r": "R"}
 
 # Common unit prefixes for faster lookup (most frequently used units first)
 _COMMON_UNITS: list[str] = [
@@ -246,6 +246,35 @@ FUNCTION_MAPPINGS: dict[str, str] = {
     "listvars": "listvars",
     "clearvars": "clearvars",
     "convert": "convert",
+    # Function-name aliases for evaluators that expose multiple spelling
+    # variants of the same operation. These let users write the form
+    # they prefer in natural language input.
+    "as_percent": "aspercent",
+    "atan2": "atan2",
+    "bitlshift": "bitlshift",
+    "bitrshift": "bitrshift",
+    "conjugate": "conj",
+    "degrees": "degrees",
+    "expm1": "expm1",
+    "fact": "factorial",
+    "is_prime": "isprime",
+    "ln": "log",
+    "log1p": "log1p",
+    "next_prime": "nextprime",
+    "percent_of": "percentof",
+    "pow": "pow",
+    "prev_prime": "prevprime",
+    "prime_factors": "primefactors",
+    "radians": "radians",
+    "randrange": "randrange",
+    "std_sample": "std_sample",
+    "stds": "std_sample",
+    "trunc": "trunc",
+    "uniform": "uniform",
+    "var_sample": "var_sample",
+    "variance_sample": "var_sample",
+    "vars": "vars",
+    "M": "MR",
 }
 
 # Number words
@@ -1076,6 +1105,8 @@ _IMPLICIT_MUL_FUNCS: set[str] = {
 
 # Named constants that participate in implicit multiplication with numbers.
 # Only multi-letter constants to avoid conflicts (e.g., "2e3" is scientific notation).
+# Single-letter "e" is excluded because it conflicts with scientific notation
+# like "1e3" and with reserved identifiers — use "2.71828" or "(pi tau)" instead.
 _IMPLICIT_MUL_CONSTANTS: set[str] = {
     "pi", "tau",
 }
@@ -1087,8 +1118,8 @@ _SINGLE_ARG_IMPLICIT_MUL: set[str] = {
     "sinh", "cosh", "tanh", "log", "ln", "log10", "log2",
     "exp", "abs", "factorial", "fact", "cbrt", "floor",
     "ceil", "round", "sign", "isprime", "nextprime",
-    "prevprime", "random", "gauss", "hypot", "primefactors",
-    "randint", "sine", "cosine", "tangent", "absolute", "ceiling",
+    "prevprime", "random", "primefactors",
+    "sine", "cosine", "tangent", "absolute", "ceiling",
 }
 
 # Subset of _IMPLICIT_MUL_FUNCS that take multiple arguments. Used by
@@ -1099,6 +1130,7 @@ _MULTI_ARG_OF_FUNCS: set[str] = {
     "mean", "median", "mode", "std", "variance", "var",
     "gcd", "lcm", "perm", "comb", "nPr", "nCr",
     "sum", "max", "min", "clamp",
+    "gauss", "hypot", "randint",
 }
 
 
@@ -1481,8 +1513,15 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
             # Skip space outside parentheses
             i += 1
         else:
-            # Detect: digit or ")" followed by a function name token (e.g., "5 sin" -> "5*sin")
-            if char.isalpha() and result and result[-1] in "0123456789)":
+            # Detect: digit, ")", or alpha-constant followed by a
+            # function/constant name (e.g., "5 sin" -> "5*sin",
+            # "pi tau" -> "pi*tau", "2 sqrt 9" -> "2*sqrt 9").
+            prev_back_token = _peek_alpha_token_back(result)
+            is_prev_constant = prev_back_token in _IMPLICIT_MUL_CONSTANTS
+            if char.isalpha() and result and (
+                result[-1] in "0123456789)"
+                or (result[-1].isalpha() and is_prev_constant)
+            ):
                 # Look ahead to see if current alpha sequence matches an implicit-mul function
                 trail: list[str] = []
                 j = i
@@ -1500,13 +1539,41 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
                     continue
 
             if prev_was_func_end and char.isdigit():
-                result.append("*")
+                # Only insert '*' if the alpha run is actually a known
+                # function name and the next char is a non-alphanumeric
+                # separator (whitespace or '('). For "log10", the alpha
+                # run is "log" but it is NOT a function in this context;
+                # "log10" is the actual function name. We detect this by
+                # looking ahead: if the next char is alphanumeric and the
+                # alpha+next forms a longer function name, do NOT insert
+                # '*'. The expanded alpha run is handled in the
+                # implicit-mul block above, but for safety we also check
+                # the trailing digit pattern here.
+                #
+                # Look at the alpha run we just emitted
+                trail = []
+                for c in reversed(result):
+                    if c.isalpha():
+                        trail.append(c)
+                    else:
+                        break
+                alpha_run = "".join(reversed(trail))
+                # Build the would-be full name including the upcoming digit
+                full_name = alpha_run + char
+                # If the full name is a function in the implicit-mul set,
+                # do NOT insert '*' — keep them together.
+                if full_name not in _IMPLICIT_MUL_FUNCS and full_name not in _IMPLICIT_MUL_CONSTANTS:
+                    result.append("*")
             if result and result[-1] == ")" and (char.isdigit() or char == "("):
                 # Implicit multiplication: ")(" or ")<digit>" -> ")*(" or ")*<digit>"
                 # (e.g., "(2+3)4" -> "(2+3)*4", "(2+3)(4+5)" -> "(2+3)*(4+5)")
                 result.append("*")
             result.append(char)
-            # Check if we just completed a function name
+            # Check if we just completed a function name. Only mark
+            # prev_was_func_end if the current char is alphanumeric AND
+            # the next non-alphanumeric char is a real separator
+            # (whitespace or '('). Otherwise the alpha run is part of a
+            # longer identifier (e.g. "log" in "log10").
             if char.isalpha():
                 # Look back to see if the current alpha sequence is a function name
                 trail = []
@@ -1516,7 +1583,16 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
                     else:
                         break
                 cand = "".join(reversed(trail))
-                prev_was_func_end = cand in _IMPLICIT_MUL_FUNCS
+                # Look ahead: if the next char is alphanumeric, this is
+                # not yet a complete function name (e.g. "log" in
+                # "log10" — wait for "log10" before deciding).
+                next_is_alnum = (i + 1 < n and (expression[i + 1].isalnum()))
+                if next_is_alnum:
+                    # Don't set prev_was_func_end yet — wait for the
+                    # alpha run to complete.
+                    prev_was_func_end = False
+                else:
+                    prev_was_func_end = cand in _IMPLICIT_MUL_FUNCS
             else:
                 prev_was_func_end = False
             i += 1
@@ -1663,9 +1739,26 @@ def _preprocess_units(expression: str) -> str:
                             # Emit the canonical form (e.g., "in" -> "inch") so
                             # the evaluator doesn't depend on the alias ordering.
                             canonical = UNIT_ALIASES.get(unit, unit)
-                            result.append(num)
-                            result.append("*")
-                            result.append(canonical)
+                            # If the next non-whitespace token is "**", the unit
+                            # is being exponentiated. Wrap "<num>*<unit>" in
+                            # parens so the unit participates in the exponent,
+                            # not the base: "5m ** 2" -> "(5*m)**2" = 25 m**2.
+                            # Without the parens, "5*m**2" parses as
+                            # "5*(m**2)" and the unit's own value (1) makes
+                            # the multiplication a no-op.
+                            k = i + len(unit)
+                            while k < len(expression) and expression[k].isspace():
+                                k += 1
+                            if k + 1 < len(expression) and expression[k] == "*" and expression[k + 1] == "*":
+                                result.append("(")
+                                result.append(num)
+                                result.append("*")
+                                result.append(canonical)
+                                result.append(")")
+                            else:
+                                result.append(num)
+                                result.append("*")
+                                result.append(canonical)
                             i += len(unit)
                             found_unit = True
                             break
@@ -1682,9 +1775,23 @@ def _preprocess_units(expression: str) -> str:
                                 and result[-2] == "0"
                             )
                             if not is_hex:
-                                result.append(num)
-                                result.append("*")
-                                result.append(_LOWERCASE_TEMP_UNITS[first_char.lower()])
+                                temp_canonical = _LOWERCASE_TEMP_UNITS[first_char.lower()]
+                                # If followed by "**", wrap "<num>*<unit>" in
+                                # parens so the unit participates in the
+                                # exponent: "5c ** 2" -> "(5*C)**2" = 25 C**2.
+                                k = i + 1
+                                while k < len(expression) and expression[k].isspace():
+                                    k += 1
+                                if k + 1 < len(expression) and expression[k] == "*" and expression[k + 1] == "*":
+                                    result.append("(")
+                                    result.append(num)
+                                    result.append("*")
+                                    result.append(temp_canonical)
+                                    result.append(")")
+                                else:
+                                    result.append(num)
+                                    result.append("*")
+                                    result.append(temp_canonical)
                                 i += 1
                                 found_unit = True
                     if not found_unit:
@@ -1730,20 +1837,46 @@ def _preprocess_units(expression: str) -> str:
     return _add_same_unit_division_parens("".join(result))
 
 
-def _add_same_unit_division_parens(expression: str) -> str:
-    """Wrap the denominator in parentheses for same-unit division.
+def _peek_alpha_token_back(result_list: list[str]) -> str:
+    """Return the trailing alpha-only run from a list of characters.
 
-    Detects patterns like "5*m/3*m" or "10*km/5*km" where the same unit
-    appears on both sides of a division, and wraps the denominator to
-    preserve correct operator precedence: "5*m/(3*m)" -> dimensionless.
+    Used to detect a preceding identifier in the implicit-mul whitespace
+    loop. For example, after emitting 'p', 'i' the previous token is
+    'pi' and we can decide whether to insert '*' before the next token.
+    Returns the empty string if the list is empty or the trailing run
+    is not a contiguous alpha sequence.
+    """
+    trail: list[str] = []
+    for c in reversed(result_list):
+        if c.isalpha():
+            trail.append(c)
+        else:
+            break
+    return "".join(reversed(trail))
+
+
+def _add_same_unit_division_parens(expression: str) -> str:
+    """Wrap the denominator in parentheses for unit-on-division-right.
+
+    Detects patterns like "5*m/3*s" or "10*km/5*hr" where the right
+    operand of a division has a trailing unit, and wraps the entire
+    right operand in parens to preserve correct operator precedence.
+    Without this fix, "5*m/3*s" parses as "((5*m)/3)*s" which yields
+    the wrong unit "m*s" instead of "m/s".
+
+    Also handles same-unit division: "5*m/3*m" -> "5*m/(3*m)" so the
+    units cancel and the result is dimensionless.
     """
     def _replace(match: re.Match) -> str:
         left_unit = match.group(1)
         denom = match.group(2)
         right_unit = match.group(3)
-        if left_unit == right_unit:
-            return f"{left_unit}/({denom}*{right_unit})"
-        return match.group(0)
+        # Always wrap the denominator in parens so the trailing unit
+        # is bound to the right operand, not pulled out as a
+        # postfix multiplication. This makes "5*m/3*s" evaluate as
+        # "5*m/(3*s)" = "1.666... m/s" instead of the buggy
+        # "((5*m)/3)*s" = "1.666... m*s".
+        return f"{left_unit}/({denom}*{right_unit})"
 
     return re.sub(r'\b([a-zA-Z]+)/(\d+)\*([a-zA-Z]+)\b', _replace, expression)
 

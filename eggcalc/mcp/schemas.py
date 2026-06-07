@@ -82,7 +82,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "value": {"type": "number", "description": "Converted value"},
                 "from_unit": {"type": "string"},
                 "to_unit": {"type": "string"},
-                "factor": {"type": "number", "description": "Conversion factor used"},
+                "factor": {"type": ["number", "null"], "description": "Conversion factor used (null for temperature conversions)"},
             },
         },
     },
@@ -158,6 +158,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "lines": {"type": "integer"},
                 "nonempty_lines": {"type": "integer"},
                 "blank_lines": {"type": "integer"},
+                "ascii": {"type": "integer"},
+                "non_ascii": {"type": "integer"},
                 "warnings": {"type": "array"},
             },
         },
@@ -324,7 +326,8 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "properties": {
                 "text": {"type": "string", "description": "Input string"},
                 "target": {
-                    "type": "string",
+                    "type": ["string", "null"],
+                    "default": None,
                     "description": "Single character to count (None for frequency table)",
                 },
                 "normalization": {

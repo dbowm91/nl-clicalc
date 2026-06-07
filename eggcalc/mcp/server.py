@@ -11,12 +11,19 @@ import inspect
 import json
 import logging
 import multiprocessing
+import os
 import sys
 import threading
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any
+
+# Disable any user-supplied config loading at import time, before any
+# other eggcalc modules have a chance to read the env var. The MCP
+# server is a tool surface for agents, not a user REPL, and loading
+# arbitrary code from the working directory would be a security risk.
+os.environ.setdefault("EGGCALC_NO_CONFIG", "1")
 
 from .. import __version__
 from .. import evaluator as _evaluator
@@ -160,6 +167,11 @@ MAX_REQUESTS_PER_SECOND = 10
 MAX_REQUEST_ID_LENGTH = 1024
 MAX_TOOL_TIMEOUT_SECONDS = 30
 MAX_CANCELLED_REQUESTS = 10_000
+# FIFO eviction order for cancellation records. We use deque + set
+# so we can pop the oldest entry deterministically when the cap is
+# exceeded (set.pop() would be non-deterministic and could evict the
+# record for a still-relevant request).
+_cancelled_requests_order: deque[Any] = deque()
 _cancelled_requests: set[Any] = set()
 _cancelled_lock = threading.Lock()
 
@@ -194,22 +206,22 @@ _orphaned_lock = threading.Lock()
 
 def _cleanup_orphaned_processes() -> None:
     """Terminate any orphaned child processes that survived their handler's cleanup."""
-    # Also check evaluator and regex tool orphan sets
-    try:
-        from ..evaluator import _orphaned_eval_processes, _orphaned_eval_lock
-        with _orphaned_eval_lock:
-            _orphaned_processes.update(_orphaned_eval_processes)
-            _orphaned_eval_processes.clear()
-    except Exception:
-        pass
-    try:
-        from .tools import _orphaned_regex_processes, _orphaned_regex_lock
-        with _orphaned_regex_lock:
-            _orphaned_processes.update(_orphaned_regex_processes)
-            _orphaned_regex_processes.clear()
-    except Exception:
-        pass
     with _orphaned_lock:
+        # Also check evaluator and regex tool orphan sets
+        try:
+            from ..evaluator import _orphaned_eval_processes, _orphaned_eval_lock
+            with _orphaned_eval_lock:
+                _orphaned_processes.update(_orphaned_eval_processes)
+                _orphaned_eval_processes.clear()
+        except Exception:
+            pass
+        try:
+            from .tools import _orphaned_regex_processes, _orphaned_regex_lock
+            with _orphaned_regex_lock:
+                _orphaned_processes.update(_orphaned_regex_processes)
+                _orphaned_regex_processes.clear()
+        except Exception:
+            pass
         stale = [p for p in _orphaned_processes if p.is_alive()]
         for proc in stale:
             try:
@@ -287,17 +299,16 @@ def _find_close_match(name: str, handlers: dict[str, Any]) -> str | None:
     best_match: str | None = None
     best_distance = float('inf')
 
+    def _at_word_boundary(sub: str, s: str) -> bool:
+        idx = s.find(sub)
+        if idx == -1:
+            return False
+        if idx == 0:
+            return True
+        return s[idx - 1] in ('_', '-')
+
     for tool_name in handlers:
         tool_lower = tool_name.lower()
-
-        # Prefix/substring match at word boundary is always good
-        def _at_word_boundary(sub: str, s: str) -> bool:
-            idx = s.find(sub)
-            if idx == -1:
-                return False
-            if idx == 0:
-                return True
-            return s[idx - 1] in ('_', '-')
 
         if _at_word_boundary(name_lower, tool_lower) or _at_word_boundary(tool_lower, name_lower):
             if best_match is None or len(tool_name) < len(best_match):
@@ -382,11 +393,14 @@ def _validate_value_against_schema(
     if expected_type is None:
         return None
 
-    # JSON Schema allows type as a list (e.g. ["string", "null"]). We do
-    # not support that form (it would silently no-op the type check), so
-    # reject it explicitly.
-    if not isinstance(expected_type, str):
-        return f"Argument '{path}' has unsupported 'type' (must be a string, got {type(expected_type).__name__})"
+    # JSON Schema allows type as a string or a list of strings (e.g.
+    # ["string", "null"] for a nullable field). We support both forms.
+    if isinstance(expected_type, list):
+        type_options = expected_type
+    elif isinstance(expected_type, str):
+        type_options = [expected_type]
+    else:
+        return f"Argument '{path}' has unsupported 'type' (must be a string or list of strings, got {type(expected_type).__name__})"
 
     type_map = {
         "string": str,
@@ -397,13 +411,34 @@ def _validate_value_against_schema(
         "object": dict,
         "null": type(None),
     }
-    python_type = type_map.get(expected_type)
-    if python_type is not None and not isinstance(value, python_type):
-        return f"Argument '{path}' must be {expected_type}, got {type(value).__name__}"
+
+    if not all(t in type_map for t in type_options):
+        return f"Argument '{path}' has unknown 'type' value(s): {expected_type!r}"
+
+    # Build the union of allowed Python types from the schema's type list.
+    allowed_types: list = []
+    for t in type_options:
+        mapped = type_map[t]
+        if isinstance(mapped, tuple):
+            allowed_types.extend(mapped)
+        else:
+            allowed_types.append(mapped)
+    allowed_types_tuple: tuple = tuple(allowed_types)
+
+    if not isinstance(value, allowed_types_tuple):
+        # Preserve the original "must be X" wording for single-type
+        # schemas (used by tests and external consumers). For list
+        # schemas (nullable fields), use the explicit "one of [...]"
+        # form so the user sees all valid types.
+        if len(type_options) == 1:
+            return f"Argument '{path}' must be {type_options[0]}, got {type(value).__name__}"
+        return f"Argument '{path}' must be one of [{', '.join(type_options)}], got {type(value).__name__}"
 
     # Bool is subclass of int in Python; reject bool for integer/number
-    if expected_type in ("integer", "number") and isinstance(value, bool):
-        return f"Argument '{path}' must be {expected_type}, got bool"
+    if any(t in ("integer", "number") for t in type_options) and isinstance(value, bool):
+        if len(type_options) == 1:
+            return f"Argument '{path}' must be {type_options[0]}, got bool"
+        return f"Argument '{path}' must be one of [{', '.join(type_options)}], got bool"
 
     const_value = prop.get("const")
     if const_value is not None and value != const_value:
@@ -414,7 +449,7 @@ def _validate_value_against_schema(
         return f"Argument '{path}' must be one of: {', '.join(str(v) for v in enum_values)}"
 
     # String length constraints + pattern
-    if expected_type == "string" and isinstance(value, str):
+    if "string" in type_options and isinstance(value, str):
         min_length = prop.get("minLength")
         if min_length is not None and len(value) < min_length:
             return f"Argument '{path}' length {len(value)} is less than minLength {min_length}"
@@ -431,7 +466,7 @@ def _validate_value_against_schema(
                 return f"Argument '{path}' has invalid pattern: {e}"
 
     # Numeric range constraints
-    if expected_type in ("number", "integer") and isinstance(value, (int, float)) and not isinstance(value, bool):
+    if any(t in ("number", "integer") for t in type_options) and isinstance(value, (int, float)) and not isinstance(value, bool):
         import math as _math
         if _math.isnan(value):
             return f"Argument '{path}' must be a finite number, got NaN"
@@ -452,13 +487,11 @@ def _validate_value_against_schema(
         multiple = prop.get("multipleOf")
         if multiple is not None and multiple > 0 and not isinstance(value, bool):
             remainder = value % multiple
-            if remainder != 0 and remainder != multiple:
-                if not _math.isclose(remainder, 0, rel_tol=1e-9, abs_tol=1e-12) and \
-                   not _math.isclose(remainder, multiple, rel_tol=1e-9, abs_tol=1e-12):
-                    return f"Argument '{path}' value {value} is not a multiple of {multiple}"
+            if not _math.isclose(remainder, 0, rel_tol=1e-9, abs_tol=1e-12):
+                return f"Argument '{path}' value {value} is not a multiple of {multiple}"
 
     # Recursive validation for nested objects (only when sub-schema defines properties)
-    if expected_type == "object" and isinstance(value, dict):
+    if "object" in type_options and isinstance(value, dict):
         sub_props = prop.get("properties", {})
         sub_required = prop.get("required", [])
         sub_additional = prop.get("additionalProperties", False)
@@ -484,7 +517,7 @@ def _validate_value_against_schema(
                         return err
 
     # Recursive validation for arrays
-    if expected_type == "array" and isinstance(value, list):
+    if "array" in type_options and isinstance(value, list):
         min_items = prop.get("minItems")
         if min_items is not None and len(value) < min_items:
             return f"Argument '{path}' has {len(value)} items, less than minItems {min_items}"
@@ -601,8 +634,12 @@ def _handle_call_tool(request: dict) -> dict:
     req_id = request.get("id")
     with _cancelled_lock:
         if req_id is not None and req_id in _cancelled_requests:
-            # Remove from set
+            # Remove from both the set and the FIFO order queue
             _cancelled_requests.discard(req_id)
+            try:
+                _cancelled_requests_order.remove(req_id)
+            except ValueError:
+                pass
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -635,10 +672,24 @@ def _handle_call_tool(request: dict) -> dict:
         result = future.result(timeout=MAX_TOOL_TIMEOUT_SECONDS)
     except FuturesTimeoutError:
         timed_out = True
-        logging.warning(
-            "MCP tool '%s' timed out after %ds; background thread continues",
-            name, MAX_TOOL_TIMEOUT_SECONDS,
-        )
+        # Cancel the future so the worker thread can return promptly.
+        # cancel() is best-effort: it returns False if the task is
+        # already running, in which case the worker will complete on
+        # its own. In either case, we MUST not block waiting on the
+        # future; just log and return a timeout error to the client.
+        if future is not None:
+            cancelled = future.cancel()
+            if not cancelled:
+                logging.warning(
+                    "MCP tool '%s' timed out after %ds; "
+                    "worker already running and cannot be cancelled",
+                    name, MAX_TOOL_TIMEOUT_SECONDS,
+                )
+            else:
+                logging.info(
+                    "MCP tool '%s' cancelled before execution began",
+                    name,
+                )
     except Exception as e:
         message = _sanitize_error(str(e))[:2000]
         return {
@@ -860,10 +911,16 @@ def handle_request(request: Any) -> dict | None:
             and not isinstance(cancelled_id, bool)
         ):
             with _cancelled_lock:
-                _cancelled_requests.add(cancelled_id)
-                # Evict arbitrary entries if over limit (set.pop() is non-deterministic)
+                if cancelled_id not in _cancelled_requests:
+                    _cancelled_requests.add(cancelled_id)
+                    _cancelled_requests_order.append(cancelled_id)
+                # Evict oldest entries (FIFO) if over limit. Using a
+                # deque + set pair gives deterministic eviction order
+                # so the record for a still-relevant request won't be
+                # discarded by set.pop()'s non-deterministic choice.
                 while len(_cancelled_requests) > MAX_CANCELLED_REQUESTS:
-                    _cancelled_requests.pop()
+                    oldest = _cancelled_requests_order.popleft()
+                    _cancelled_requests.discard(oldest)
         return None
     elif method == "ping":
         return {
