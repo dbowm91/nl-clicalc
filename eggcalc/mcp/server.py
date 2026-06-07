@@ -209,17 +209,19 @@ def _cleanup_orphaned_processes() -> None:
     with _orphaned_lock:
         # Also check evaluator and regex tool orphan sets
         try:
-            from ..evaluator import _orphaned_eval_processes, _orphaned_eval_lock
+            from ..evaluator import _orphaned_eval_processes, _orphaned_eval_order, _orphaned_eval_lock
             with _orphaned_eval_lock:
                 _orphaned_processes.update(_orphaned_eval_processes)
                 _orphaned_eval_processes.clear()
+                _orphaned_eval_order.clear()
         except Exception:
             pass
         try:
-            from .tools import _orphaned_regex_processes, _orphaned_regex_lock
+            from .tools import _orphaned_regex_processes, _orphaned_regex_order, _orphaned_regex_lock
             with _orphaned_regex_lock:
                 _orphaned_processes.update(_orphaned_regex_processes)
                 _orphaned_regex_processes.clear()
+                _orphaned_regex_order.clear()
         except Exception:
             pass
         stale = [p for p in _orphaned_processes if p.is_alive()]
@@ -434,8 +436,8 @@ def _validate_value_against_schema(
             return f"Argument '{path}' must be {type_options[0]}, got {type(value).__name__}"
         return f"Argument '{path}' must be one of [{', '.join(type_options)}], got {type(value).__name__}"
 
-    # Bool is subclass of int in Python; reject bool for integer/number
-    if any(t in ("integer", "number") for t in type_options) and isinstance(value, bool):
+    # Bool is subclass of int in Python; reject bool when all allowed types are numeric
+    if all(t in ("integer", "number") for t in type_options) and isinstance(value, bool):
         if len(type_options) == 1:
             return f"Argument '{path}' must be {type_options[0]}, got bool"
         return f"Argument '{path}' must be one of [{', '.join(type_options)}], got bool"
@@ -651,7 +653,9 @@ def _handle_call_tool(request: dict) -> dict:
                                 "ok": False,
                                 "error": f"Tool '{name}' request was cancelled",
                                 "error_type": "cancelled",
+                                "hints": [],
                                 "tool": name,
+                                "warnings": [],
                             }),
                         }
                     ],
@@ -714,8 +718,9 @@ def _handle_call_tool(request: dict) -> dict:
                                 "ok": False,
                                 "error": f"Tool '{name}' execution timed out after {MAX_TOOL_TIMEOUT_SECONDS}s",
                                 "error_type": "timeout",
-                                "tool": name,
                                 "hints": ["Try a simpler input or shorter text"],
+                                "tool": name,
+                                "warnings": [],
                             }
                         ),
                     }

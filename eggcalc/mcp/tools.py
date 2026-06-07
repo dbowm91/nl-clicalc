@@ -1377,6 +1377,15 @@ def validate_regex(
             tool="validate_regex",
         )
 
+    total_chars = sum(len(s) for s in samples)
+    if total_chars > MAX_TEXT_LENGTH:
+        return _error_response(
+            "input_too_large",
+            f"Total sample size {total_chars} characters exceeds MAX_TEXT_LENGTH {MAX_TEXT_LENGTH}",
+            [f"Maximum total {MAX_TEXT_LENGTH} characters across all samples"],
+            tool="validate_regex",
+        )
+
     if len(pattern) > MAX_PATTERN_LENGTH_REGEX:
         return _error_response(
             "input_too_large",

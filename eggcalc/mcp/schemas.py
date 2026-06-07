@@ -542,7 +542,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "properties": {
                 "valid_pattern": {"type": "boolean"},
                 "results": {"type": "array"},
-                "error": {"type": "string"},
+                "error": {"type": ["string", "null"]},
                 "flags_used": {"type": "object"},
             },
         },
