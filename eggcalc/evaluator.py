@@ -2342,6 +2342,14 @@ def evaluate_with_timeout(
     Args:
         expression: A raw expression string (with spaces, natural language, etc.)
         timeout: Maximum time in seconds (default: 5.0)
+        allow_random: If provided, configures the child process's default
+            evaluator to permit or deny random functions (random, randint,
+            ...). When ``None`` (the default), the parent process's current
+            setting is forwarded.
+        allow_side_effects: If provided, configures the child process's
+            default evaluator to permit or deny state-mutating functions
+            (setvar, store, ...). When ``None``, the parent process's
+            current setting is forwarded.
 
     Returns:
         The result of the evaluation (int, float, str, or UnitValue).
@@ -2353,18 +2361,6 @@ def evaluate_with_timeout(
     Note:
         Expressions that exceed MAX_EXPONENT (10000) or MAX_FACTORIAL (1000)
         will fail with EvaluationError before the timeout is reached.
-
-    Args:
-        expression: A raw expression string (with spaces, natural language, etc.)
-        timeout: Maximum time in seconds (default: 5.0)
-        allow_random: If provided, configures the child process's default
-            evaluator to permit or deny random functions (random, randint,
-            ...). When ``None`` (the default), the parent process's current
-            setting is forwarded.
-        allow_side_effects: If provided, configures the child process's
-            default evaluator to permit or deny state-mutating functions
-            (setvar, store, ...). When ``None``, the parent process's
-            current setting is forwarded.
 
     Example:
         >>> result = evaluate_with_timeout("sum([i**2 for i in range(100)])", timeout=1.0)

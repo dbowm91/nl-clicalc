@@ -451,8 +451,11 @@ def _validate_value_against_schema(
             return f"Argument '{path}' value {value} must be < exclusiveMaximum {excl_max}"
         multiple = prop.get("multipleOf")
         if multiple is not None and multiple > 0 and not isinstance(value, bool):
-            if value % multiple != 0:
-                return f"Argument '{path}' value {value} is not a multiple of {multiple}"
+            remainder = value % multiple
+            if remainder != 0 and remainder != multiple:
+                if not _math.isclose(remainder, 0, rel_tol=1e-9, abs_tol=1e-12) and \
+                   not _math.isclose(remainder, multiple, rel_tol=1e-9, abs_tol=1e-12):
+                    return f"Argument '{path}' value {value} is not a multiple of {multiple}"
 
     # Recursive validation for nested objects (only when sub-schema defines properties)
     if expected_type == "object" and isinstance(value, dict):
