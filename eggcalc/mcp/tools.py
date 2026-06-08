@@ -3045,18 +3045,21 @@ def identifier_inspect_mcp(
 
         findings: list[dict] = []
         for ident_info in result.get("identifiers", []):
-            for issue in ident_info.get("issues", []):
+            for warning in ident_info.get("warnings", []):
                 findings.append({
-                    "code": issue.get("code", "IDENT_ISSUE"),
-                    "severity": issue.get("severity", "warn"),
-                    "message": issue.get("message", "Identifier issue"),
+                    "code": "IDENT_WARNING",
+                    "severity": "warn",
+                    "message": warning,
                     "details": {"identifier": ident_info.get("raw", "")},
                 })
         for collision in result.get("collisions", []):
+            kind = collision.get("kind", "unknown")
+            a = collision.get("a", "")
+            b = collision.get("b", "")
             findings.append({
                 "code": "IDENT_COLLISION",
                 "severity": "warn",
-                "message": collision.get("message", "Identifier collision detected"),
+                "message": f"{kind}: '{a}' collides with '{b}'",
                 "details": collision,
             })
 
@@ -4987,17 +4990,21 @@ def command_preflight(
         try:
             rs = regex_safety_check(command)
             if rs.get("ok") is not False:
-                rs_findings = rs.get("findings", [])
+                rs_result = rs.get("result", {})
+                rs_findings = rs_result.get("findings", [])
+                risk = rs_result.get("risk", "none")
                 for f in rs_findings:
+                    sev = "warn" if risk != "none" else "info"
                     all_findings.append({
-                        "code": f.get("code", "REGEX_RISK"),
-                        "severity": f.get("severity", "warn"),
+                        "code": f.get("kind", "REGEX_RISK").upper(),
+                        "severity": sev,
                         "message": f.get("message", ""),
                     })
-                if any(f.get("severity") in ("warn", "error") for f in rs_findings):
+                if rs_findings and risk != "none":
                     machine_codes.append("REGEX_RISK")
                 subresults["regex_safety_check"] = {
                     "findings_count": len(rs_findings),
+                    "risk": risk,
                 }
         except Exception:
             pass

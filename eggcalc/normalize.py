@@ -1570,7 +1570,7 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         return m.group(0)
 
     expression = re.sub(
-        r"(-)(\d+(?:\+\d+)+)",
+        r"^(-)(\d+(?:\+\d+)+)",
         _wrap_negative_compound,
         expression,
     )
@@ -1699,7 +1699,7 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     # Postfix factorial: "<n>!" -> "factorial(<n>)". Apply AFTER whitespace
     # removal so we get the bare "<num>!" form. Skip cases like "!=" or
-    # "is not" by requiring the "!" to immediately follow a number or a
+    # is not by requiring the "!" to immediately follow a number or a
     # closing paren (no whitespace between). Handles nested parentheses.
     def _replace_factorial(m: re.Match) -> str:
         content = m.group(1)
@@ -1709,18 +1709,14 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
             result += "!" * (len(bangs) - 1)
         return result
 
-    # First handle simple cases: number! or single-paren group!
-    expression = re.sub(
-        r"(\d+(?:\.\d+)?|\((?:[^()]*|\([^()]*\))*\))(\!+)",
-        _replace_factorial,
-        expression,
-    )
-    # Handle deeper nesting iteratively until no more changes
+    # Iteratively replace factorial: handle any depth of nesting by
+    # repeatedly matching "factorial(...stuff...)!" and wrapping.
     prev = None
     while prev != expression:
         prev = expression
+        # Match: number!, (expr)!, or factorial(...)!
         expression = re.sub(
-            r"(factorial\((?:[^()]*|\([^()]*\))*\))(\!+)",
+            r"(\d+(?:\.\d+)?|\((?:[^()]*|\([^()]*\))*\)|factorial\((?:[^()]*|\([^()]*\))*\))(\!+)",
             _replace_factorial,
             expression,
         )
