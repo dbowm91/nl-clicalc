@@ -186,7 +186,7 @@ Use `codegg_core` or `codegg_core_min` as the default model-facing profile:
 - **`codegg_core_min`** — Ultra-compact: `validate_json`, `text_diff_explain`, `path_scope_check`, `patch_apply_check`, `text_replace_check`, `shell_split`, `unicode_policy_check`
 - **`codegg_core`** — Practical default: adds `validate_toml`, `text_inspect`, `text_equal`, `path_normalize`, `regex_safety_check`, `identifier_inspect`, `cargo_toml_inspect`
 
-Do not expose all 60 tools by default. The `full` profile is available for debugging but should not be the model-facing default.
+Do not expose all 64 tools by default. The `full` profile is available for debugging but should not be the model-facing default.
 
 ### Task-Based Profile Selection
 
@@ -241,3 +241,71 @@ EGGCALC_MCP_SCHEMA_DETAIL=compact calc --mcp
 ```
 
 Compact mode preserves tool names, types, and enums while removing verbose descriptions and defaults.
+
+## MCP Profile Selection
+
+### Model-Facing Profiles (Recommended for Codegg)
+
+Use `codegg_core` for the full model-facing tool surface:
+
+```bash
+calc --mcp --mcp-profile codegg_core --mcp-schema-detail compact
+```
+
+Use `codegg_core_min` for minimal model-facing exposure (composite workflow tools only):
+
+```bash
+calc --mcp --mcp-profile codegg_core_min --mcp-schema-detail compact
+```
+
+### Harness/Preflight Profiles (Automatic Checks)
+
+These profiles contain low-level primitives for automatic harness checks. They are NOT typically model-facing:
+
+- `codegg_preflight` — Reference profile for automatic preflight checks
+- `codegg_patch` — Edit/patch preflight primitives
+- `codegg_config` — Config validation primitives
+- `codegg_shell` — Shell command analysis primitives
+- `codegg_unicode_security` — Unicode security analysis primitives
+
+### Debug/Specialist Profiles
+
+- `full` — All tools. For debugging and human/expert use, NOT normal model exposure.
+- `human_math` — Math/unit tools only. Enable only for math/unit-heavy tasks.
+- `codegg_repo_audit` — Repository audit tools.
+
+## Event Log Example
+
+When codegg uses composite tools, the harness can log structured events:
+
+```json
+{
+  "event": "preflight_result",
+  "tool": "edit_preflight",
+  "profile": "codegg_preflight",
+  "verdict": "block",
+  "machine_code": "AMBIGUOUS_REPLACEMENT",
+  "findings_count": 2
+}
+```
+
+Key fields:
+- `tool` — MCP tool name that produced the result
+- `profile` — Active profile at call time
+- `verdict` — Top-level action (`allow`, `review`, `block`, `ok_to_apply`, etc.)
+- `machine_code` — Machine-readable result code for programmatic routing
+- `findings_count` — Number of structured findings in the result
+
+## Composite Tools vs Primitives
+
+Codegg should prefer **composite workflow tools** for model-facing workflows:
+
+| Composite Tool | Primitives Used |
+|---------------|-----------------|
+| `text_security_inspect` | `text_inspect`, `unicode_policy_check`, `canonicalize_text`, `prompt_input_inspect`, `identifier_inspect` |
+| `edit_preflight` | `text_replace_check`, `patch_apply_check`, `line_range_extract`, `text_fingerprint`, `text_diff_explain` |
+| `command_preflight` | `shell_split`, `regex_safety_check` |
+| `config_preflight` | `validate_json`, `validate_toml`, `dotenv_validate`, `ini_validate`, `cargo_toml_inspect` |
+| `structured_data_compare` | `json_compare`, `json_canonicalize`, `json_shape` |
+
+Use **primitive tools** directly only when the harness needs fine-grained control over individual checks.

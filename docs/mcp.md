@@ -6,7 +6,7 @@ eggcalc includes an MCP (Model Context Protocol) server that exposes text analys
 
 The Model Context Protocol is a JSON-RPC 2.0 based protocol for exposing tools to AI agents. The calc MCP server provides:
 
-- **60 deterministic tools** for AI agent workflows
+- **64 deterministic tools** for AI agent workflows
 - **Deterministic results** - same input always produces same output
 - **No external dependencies** - pure Python standard library
 - **stdio-based communication** - operates over stdin/stdout
@@ -2090,6 +2090,154 @@ Surface hidden or misleading content in user-pasted input, docs, or prompt-like 
 ```
 
 **Note:** This is deterministic inspection, not semantic classification. It reports observable features only, not intent.
+
+---
+
+### text_security_inspect
+
+Composite security text hygiene check. Combines prompt injection detection, hidden character inspection, and confusable analysis into a single call with a unified verdict and machine-readable codes.
+
+**Arguments:**
+- `text` (string): Text to inspect for security concerns
+
+**Tier:** 1
+**Tags:** `text`, `security`, `inspection`, `composite`
+
+**Returns:**
+- `verdict`: "safe", "warn", or "risk"
+- `findings`: Array of Finding objects
+- `machine_code`: Stable code summarizing the outcome
+- `recommended_next_tool`: Suggested follow-up tool
+- `summary`: Human-readable summary
+
+**Example:**
+```json
+{"name": "text_security_inspect", "arguments": {"text": "Hello <!-- hidden --> world"}}
+// Returns: {"ok": true, "result": {"verdict": "warn", "findings": [...], "summary": "1 finding"}}
+```
+
+**Note:** Composite tool — calls `prompt_input_inspect`, `text_inspect`, and `text_equal` internally.
+
+---
+
+### edit_preflight
+
+Composite pre-edit validation. Check whether a text edit (string replacement, unified diff, or line-range replacement) would apply cleanly before modifying a file.
+
+**Arguments:**
+- `text` (string): Source text to edit
+- `old` (string, optional): Text to find (for string replacement)
+- `new` (string, optional): Replacement text (for string replacement)
+- `patch_text` (string, optional): Unified diff patch (for patch mode)
+- `start_line` (integer, optional): First line (for line_range mode)
+- `end_line` (integer, optional): Last line inclusive (for line_range mode)
+- `replacement` (string, optional): Replacement text (for line_range mode)
+- `mode` (string): "replace", "patch", or "line_range"
+
+**Tier:** 1
+**Tags:** `text`, `edit`, `safety`, `composite`
+
+**Returns:**
+- `would_change`: Boolean
+- `match_count`: Number of matches found
+- `apply_ok`: Boolean (for patch mode)
+- `findings`: Array of analysis notes
+- `machine_code`: Stable code summarizing the outcome
+
+**Example:**
+```json
+{"name": "edit_preflight", "arguments": {"text": "hello world", "old": "world", "new": "earth", "mode": "replace"}}
+// Returns: {"ok": true, "result": {"would_change": true, "match_count": 1, "findings": []}}
+```
+
+**Note:** Composite tool — dispatches to `text_replace_check` or `patch_apply_check` based on mode.
+
+---
+
+### command_preflight
+
+Composite command analysis before execution. Parse a shell command, detect risky lexical features, and report security findings.
+
+**Arguments:**
+- `command` (string): Shell command string to analyze
+
+**Tier:** 1
+**Tags:** `shell`, `security`, `preflight`, `composite`
+
+**Returns:**
+- `parse_ok`: Boolean
+- `argv`: Parsed argument tokens
+- `features`: Detected risky features
+- `findings`: Array of analysis notes
+- `machine_code`: Stable code summarizing the outcome
+
+**Example:**
+```json
+{"name": "command_preflight", "arguments": {"command": "cargo test -- --nocapture"}}
+// Returns: {"ok": true, "result": {"parse_ok": true, "argv": ["cargo", "test", "--", "--nocapture"], "features": {}, "findings": []}}
+```
+
+**Note:** Composite tool — calls `shell_split` and applies additional safety heuristics.
+
+---
+
+### config_preflight
+
+Composite config validation with format auto-detect. Detects config format (TOML, JSON, .env, INI) and validates accordingly.
+
+**Arguments:**
+- `text` (string): Config text to validate
+- `format` (string, optional): Force format — "toml", "json", "dotenv", "ini" (auto-detected if omitted)
+
+**Tier:** 1
+**Tags:** `config`, `validation`, `preflight`, `composite`
+
+**Returns:**
+- `detected_format`: Detected config format
+- `valid`: Boolean
+- `errors`: Array of validation errors
+- `findings`: Array of analysis notes
+- `machine_code`: Stable code summarizing the outcome
+
+**Example:**
+```json
+{"name": "config_preflight", "arguments": {"text": "[package]\nname = \"demo\"\nversion = \"0.1.0\""}}
+// Returns: {"ok": true, "result": {"detected_format": "toml", "valid": true, "errors": [], "findings": []}}
+```
+
+**Note:** Composite tool — dispatches to `validate_toml`, `validate_json`, `dotenv_validate`, or `ini_validate` based on format.
+
+---
+
+### structured_data_compare
+
+Composite JSON comparison with shape analysis. Compare two JSON documents semantically and include structural shape information in the result.
+
+**Arguments:**
+- `a` (string): First JSON document
+- `b` (string): Second JSON document
+- `ignore_object_order` (boolean, optional): Sort object keys (default true)
+- `include_shape` (boolean, optional): Include shape analysis (default true)
+
+**Tier:** 2
+**Tags:** `json`, `structured-data`, `comparison`, `composite`
+
+**Returns:**
+- `equal`: Boolean
+- `diff_count`: Number of differences
+- `diffs`: Array of diff objects
+- `shape_a`: Shape of first document (if include_shape)
+- `shape_b`: Shape of second document (if include_shape)
+- `summary`: Human-readable summary
+- `machine_code`: Stable code summarizing the outcome
+
+**Example:**
+```json
+{"name": "structured_data_compare", "arguments": {"a": "{\"x\": 1}", "b": "{\"x\": 2}"}}
+// Returns: {"ok": true, "result": {"equal": false, "diff_count": 1, "diffs": [...], "shape_a": {"x": "integer"}, "shape_b": {"x": "integer"}}}
+```
+
+**Note:** Composite tool — calls `json_compare` and `json_shape` internally.
 
 ---
 

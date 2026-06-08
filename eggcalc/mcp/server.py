@@ -193,6 +193,17 @@ _cancelled_lock = threading.Lock()
 _active_profile: str = os.environ.get("EGGCALC_MCP_PROFILE", "full")
 _profile_lock = threading.Lock()
 
+# Validate startup profile eagerly
+if _active_profile not in TOOL_PROFILES and _active_profile != "full":
+    import sys as _sys
+    _available = ", ".join(sorted(TOOL_PROFILES))
+    print(
+        f"Error: Invalid EGGCALC_MCP_PROFILE: {_active_profile!r}. "
+        f"Available profiles: {_available}",
+        file=_sys.stderr,
+    )
+    raise SystemExit(1)
+
 # Schema detail level: full, normal, compact
 _schema_detail: str = os.environ.get("EGGCALC_MCP_SCHEMA_DETAIL", SCHEMA_DETAIL_FULL)
 _schema_detail_lock = threading.Lock()
@@ -245,10 +256,12 @@ def get_profile_tools(profile: str | None = None) -> list[str]:
             name for name, meta in TOOL_METADATA.items()
             if meta.get("llm_exposure") != "hidden"
         )
-    tool_list = TOOL_PROFILES.get(profile)
-    if tool_list is None:
-        return sorted(TOOL_HANDLERS.keys())
-    return list(tool_list)
+    if profile not in TOOL_PROFILES:
+        available = ", ".join(sorted(TOOL_PROFILES))
+        raise ValueError(
+            f"Unknown MCP profile: {profile!r}. Available profiles: {available}"
+        )
+    return list(TOOL_PROFILES[profile])
 
 # Bounded thread pool for tool invocations. Prevents unbounded thread
 # accumulation when tools time out. Tasks submitted to a full pool queue
@@ -686,7 +699,17 @@ def _handle_call_tool(request: dict) -> dict:
 
     # Enforce active profile: reject tools not in the current profile
     profile = get_active_profile()
-    profile_tools = get_profile_tools(profile)
+    try:
+        profile_tools = get_profile_tools(profile)
+    except ValueError as e:
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32602,
+                "message": str(e),
+            },
+        }
     if name not in profile_tools:
         return {
             "jsonrpc": "2.0",
@@ -899,7 +922,17 @@ def _handle_list_tools(request: dict) -> dict:
     use_compact = detail == "compact"
 
     # Determine profile-visible tools
-    profile_tools = set(get_profile_tools(profile_filter))
+    try:
+        profile_tools = set(get_profile_tools(profile_filter))
+    except ValueError as e:
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {
+                "code": -32602,
+                "message": str(e),
+            },
+        }
 
     tools = []
     for name, schema in TOOL_SCHEMAS.items():

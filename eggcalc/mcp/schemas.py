@@ -2826,7 +2826,7 @@ TOOL_METADATA: dict[str, dict[str, Any]] = {
     "patch_apply_check": {
         "category": "patch",
         "tier": 2,
-        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight", "codegg_patch"],
+        "profiles": ["full", "codegg_preflight", "codegg_patch"],
         "aliases": [],
         "llm_exposure": "harness_only",
         "harness_use": ["edit_preflight"],
@@ -2870,7 +2870,7 @@ TOOL_METADATA: dict[str, dict[str, Any]] = {
     "path_scope_check": {
         "category": "path",
         "tier": 2,
-        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight"],
+        "profiles": ["full", "codegg_preflight"],
         "aliases": [],
         "llm_exposure": "harness_only",
         "harness_use": ["path_preflight"],
@@ -2881,7 +2881,7 @@ TOOL_METADATA: dict[str, dict[str, Any]] = {
     "shell_split": {
         "category": "shell",
         "tier": 2,
-        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight", "codegg_shell"],
+        "profiles": ["full", "codegg_preflight", "codegg_shell"],
         "aliases": [],
         "llm_exposure": "harness_only",
         "harness_use": ["command_preflight"],
@@ -2947,7 +2947,7 @@ TOOL_METADATA: dict[str, dict[str, Any]] = {
     "unicode_policy_check": {
         "category": "unicode",
         "tier": 2,
-        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight", "codegg_unicode_security"],
+        "profiles": ["full", "codegg_preflight", "codegg_unicode_security"],
         "aliases": [],
         "llm_exposure": "harness_only",
         "harness_use": ["prompt_input_preflight"],
@@ -3103,7 +3103,7 @@ TOOL_METADATA: dict[str, dict[str, Any]] = {
     "text_security_inspect": {
         "category": "text",
         "tier": 1,
-        "profiles": ["full", "codegg_core", "codegg_preflight", "codegg_unicode_security"],
+        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight", "codegg_unicode_security"],
         "aliases": [],
         "llm_exposure": "default",
         "harness_use": ["prompt_input_preflight"],
@@ -3114,7 +3114,7 @@ TOOL_METADATA: dict[str, dict[str, Any]] = {
     "edit_preflight": {
         "category": "patch",
         "tier": 1,
-        "profiles": ["full", "codegg_core", "codegg_preflight", "codegg_patch"],
+        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight", "codegg_patch"],
         "aliases": [],
         "llm_exposure": "default",
         "harness_use": ["edit_preflight"],
@@ -3125,7 +3125,7 @@ TOOL_METADATA: dict[str, dict[str, Any]] = {
     "command_preflight": {
         "category": "shell",
         "tier": 1,
-        "profiles": ["full", "codegg_core", "codegg_preflight", "codegg_shell"],
+        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight", "codegg_shell"],
         "aliases": [],
         "llm_exposure": "default",
         "harness_use": ["command_preflight"],
@@ -3136,7 +3136,7 @@ TOOL_METADATA: dict[str, dict[str, Any]] = {
     "config_preflight": {
         "category": "config",
         "tier": 1,
-        "profiles": ["full", "codegg_core", "codegg_preflight", "codegg_config"],
+        "profiles": ["full", "codegg_core", "codegg_core_min", "codegg_preflight", "codegg_config"],
         "aliases": [],
         "llm_exposure": "default",
         "harness_use": ["config_preflight"],
@@ -3147,7 +3147,7 @@ TOOL_METADATA: dict[str, dict[str, Any]] = {
     "structured_data_compare": {
         "category": "json",
         "tier": 2,
-        "profiles": ["full", "codegg_config"],
+        "profiles": ["full", "codegg_core", "codegg_config"],
         "aliases": [],
         "llm_exposure": "contextual",
         "harness_use": ["config_preflight"],
@@ -3204,11 +3204,13 @@ def compact_schema(schema: dict[str, Any]) -> dict[str, Any]:
     Compact mode preserves:
     - Tool name, description (truncated to 120 chars), required args, types, enums
     - Input/output schema structure
+    - Output property keys and types (top-level only) for composite tools
 
     Compact mode removes:
     - Long description text, examples, verbose help
     - Default values (they're handled by Python kwargs)
     - Redundant tags and tier (available at tool level)
+    - Nested output schema detail
     """
     result: dict[str, Any] = {}
 
@@ -3227,9 +3229,43 @@ def compact_schema(schema: dict[str, Any]) -> dict[str, Any]:
     compact_input = _compact_input_schema(input_schema)
     result["inputSchema"] = compact_input
 
-    # Output schema: skip in compact mode (not needed for tool listing)
-    # Only include a minimal type marker
-    result["outputSchema"] = {"type": "object"}
+    # Output schema: preserve top-level property keys and types
+    output_schema = schema.get("outputSchema", {})
+    result["outputSchema"] = _compact_output_schema(output_schema)
+
+    return result
+
+
+def normal_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Normal detail level schema. Currently returns the full schema.
+
+    TODO: Implement true normal mode that drops verbose examples and
+    long descriptions while preserving input/output structure.
+    """
+    return schema
+
+
+def _compact_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Compact an output schema by keeping top-level property keys/types only."""
+    if not isinstance(schema, dict):
+        return {"type": "object"}
+
+    result: dict[str, Any] = {"type": schema.get("type", "object")}
+
+    props = schema.get("properties", {})
+    if props:
+        compact_props: dict[str, Any] = {}
+        for prop_name, prop_def in props.items():
+            if isinstance(prop_def, dict):
+                cp: dict[str, Any] = {}
+                if "type" in prop_def:
+                    cp["type"] = prop_def["type"]
+                if "enum" in prop_def:
+                    cp["enum"] = prop_def["enum"]
+                compact_props[prop_name] = cp
+            else:
+                compact_props[prop_name] = {}
+        result["properties"] = compact_props
 
     return result
 

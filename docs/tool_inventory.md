@@ -12,11 +12,11 @@ Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLE
 | 2 | `cargo_toml_inspect` | cargo | 3 | yes | no | yes | yes | Inspect Cargo.toml text (package, workspace, deps) |
 | 3 | `canonicalize_text` | unicode | 2 | yes | no | yes | yes | Apply named text canonicalization profile |
 | 4 | `code_fence_extract` | markdown | 2 | yes | no | yes | yes | Extract fenced code blocks with line ranges and fingerprints |
-| 5 | `command_preflight` | shell | 1 | yes | no | no | yes | Composite: analyze command before execution |
-| 6 | `config_preflight` | config | 1 | yes | no | no | yes | Composite: validate config text with format auto-detect |
+| 5 | `command_preflight` | shell | 1 | yes | no | yes | yes | Composite: analyze command before execution |
+| 6 | `config_preflight` | config | 1 | yes | no | yes | yes | Composite: validate config text with format auto-detect |
 | 7 | `constant_lookup` | math | 2 | yes | no | no | yes | Physical constant lookup (avogadro, planck, etc.) |
 | 8 | `dotenv_validate` | config | 2 | yes | no | yes | yes | Validate .env key=value text with duplicate and expansion detection |
-| 9 | `edit_preflight` | patch | 1 | yes | no | no | yes | Composite: validate edit before applying (replace/patch/line_range) |
+| 9 | `edit_preflight` | patch | 1 | yes | no | yes | yes | Composite: validate edit before applying (replace/patch/line_range) |
 | 10 | `escape_text` | text | 1 | yes | no | yes | yes | Escape text for various output formats |
 | 11 | `glob_match` | path | 1 | yes | no | yes | yes | Match glob pattern against path |
 | 12 | `identifier_analyze` | identifier | 3 | yes | no | yes | yes | Classify identifier naming conventions |
@@ -46,7 +46,7 @@ Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLE
 | 36 | `regex_safety_check` | regex | 1 | yes | no | no | yes | Check regex for catastrophic backtracking |
 | 37 | `shell_quote_join` | shell | 2 | yes | no | yes | yes | Safely quote argv tokens into shell string |
 | 38 | `shell_split` | shell | 2 | yes | no | yes | yes | Parse shell command into argv with risk detection |
-| 39 | `structured_data_compare` | json | 2 | yes | no | no | yes | Composite: compare JSON data with diffs and shape analysis |
+| 39 | `structured_data_compare` | json | 2 | yes | no | yes | yes | Composite: compare JSON data with diffs and shape analysis |
 | 40 | `text_count` | text | 0 | yes | yes | yes | yes | Character counting and frequency table |
 | 41 | `text_diff_explain` | text | 1 | yes | yes | yes | yes | Explain string differences with codepoints |
 | 42 | `text_equal` | text | 0 | yes | yes | yes | yes | String comparison with normalization modes |
@@ -56,7 +56,7 @@ Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLE
 | 46 | `text_measure` | text | 0 | yes | yes | yes | yes | Comprehensive text metrics |
 | 47 | `text_position` | text | 2 | yes | no | yes | yes | Position conversion (byte/cp/line/UTF-16) |
 | 48 | `text_replace_check` | text | 1 | yes | no | yes | yes | Pre-edit replacement safety check |
-| 49 | `text_security_inspect` | text | 1 | yes | no | no | yes | Composite security text hygiene (verdict, findings, machine codes) |
+| 49 | `text_security_inspect` | text | 1 | yes | no | yes | yes | Composite security text hygiene (verdict, findings, machine codes) |
 | 50 | `text_truncate` | text | 3 | yes | no | yes | yes | Grapheme-aware truncation |
 | 51 | `text_transform` | text | 2 | yes | no | yes | yes | Unicode normalization, casefold, trim, etc. |
 | 52 | `text_window` | text | 1 | yes | no | yes | yes | Context window around a text position |
@@ -86,8 +86,8 @@ Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLE
 |-------|-------|
 | Total tools | 64 |
 | Documented in README | 10 |
-| Documented in docs/mcp.md | 60 |
-| Missing from docs/mcp.md | 4 |
+| Documented in docs/mcp.md | 64 |
+| Missing from docs/mcp.md | 0 |
 | Have tests | 64 |
 | Missing tests | 0 |
 
