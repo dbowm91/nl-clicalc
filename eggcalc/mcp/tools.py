@@ -5136,7 +5136,7 @@ def config_preflight(
                                     all_findings.append({
                                         "code": "SCHEMA_ERROR",
                                         "severity": "error" if strict else "warn",
-                                        "message": err,
+                                        "message": err.get("message", str(err)) if isinstance(err, dict) else str(err),
                                     })
                     except Exception:
                         pass
@@ -5357,6 +5357,8 @@ def structured_data_compare(
 
     all_findings: list[dict] = []
     subresults: dict[str, Any] = {}
+    valid_a = False
+    valid_b = False
 
     # 1. Validate both sides
     try:
@@ -5458,7 +5460,7 @@ def structured_data_compare(
 
     # --- Verdict ---
     # Use json_compare result for equality, not findings severity
-    jc_equal = subresults.get("json_compare", {}).get("equal", True)
+    jc_equal = subresults.get("json_compare", {}).get("equal", False)
     equal = jc_equal and not any(f["severity"] in ("error", "warn") for f in all_findings)
     if not equal:
         machine_code = "DATA_DIFF"

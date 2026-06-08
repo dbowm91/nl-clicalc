@@ -1183,7 +1183,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "properties": {
                 "text": {"type": "string", "description": "Input JSON string to canonicalize"},
                 "sort_keys": {"type": "boolean", "default": True, "description": "Sort object keys alphabetically"},
-                "indent": {"type": "integer", "description": "Indentation spaces (None for minified)"},
+                "indent": {"type": ["integer", "null"], "description": "Indentation spaces (null for minified)"},
                 "ensure_ascii": {"type": "boolean", "default": False, "description": "Use ASCII escaping for non-ASCII characters"},
                 "detect_duplicate_keys": {"type": "boolean", "default": True, "description": "Report duplicate keys in the input"},
                 "trailing_newline": {"type": "boolean", "default": False, "description": "Add a trailing newline to the canonical form"},

@@ -1278,6 +1278,12 @@ def _build_multi_word_numbers() -> dict[str, str]:
 
 
 _MULTI_WORD_NUMBERS: dict[str, str] = _build_multi_word_numbers()
+# Compound fraction words (e.g., "one half" → 0.5)
+_MULTI_WORD_NUMBERS["one half"] = "0.5"
+_MULTI_WORD_NUMBERS["one quarter"] = "0.25"
+_MULTI_WORD_NUMBERS["one third"] = "0.3333333333333333"
+_MULTI_WORD_NUMBERS["two thirds"] = "0.6666666666666666"
+_MULTI_WORD_NUMBERS["three quarters"] = "0.75"
 
 # Set of all number words (for hyphen detection)
 _ALL_NUMBER_WORDS_SET: frozenset[str] = frozenset(
@@ -1437,10 +1443,6 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         prev_expr = expression
         expression = re.sub(r"(\d+\.\d*)\s+(\d)", lambda m: m.group(1) + m.group(2), expression)
 
-    # Handle "N percent" -> "N/100" AFTER word_to_all substitutions
-    # This allows NL words like "fifty" to be converted to digits first
-    expression = re.sub(r"(\d+(?:\.\d+)?)\s+percent\b", lambda m: str(float(m.group(1)) / 100), expression, flags=re.IGNORECASE)
-
     # Strip short filler phrases after word-to-operator conversion
     expression = patterns["stripped_chars"].sub("", expression)
 
@@ -1493,9 +1495,9 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
 
     # Convert percentages (e.g., 50% -> 0.5, but not 5%3 which is modulo)
-    # Only match % directly attached to a number, NOT followed by a digit
+    # Match % directly attached to a number or with optional space, NOT followed by a digit
     # (negative lookahead ensures "5%3" stays as modulo, not "0.05" + "3")
-    expression = re.sub(r"(\d+(?:\.\d+)?)%(?!\d)", lambda m: str(float(m.group(1)) / 100), expression)
+    expression = re.sub(r"(\d+(?:\.\d+)?)\s*%(?!\d)", lambda m: str(float(m.group(1)) / 100), expression)
 
     # Convert 'i' suffix to 'j' for complex numbers (e.g., 3+4i -> 3+4j)
     # Match: number followed by 'i' (not preceded by another letter)
@@ -1553,6 +1555,16 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     )
     # Restore temperature expressions from placeholder (strip "degrees", keep unit)
     expression = expression.replace(_DEG_PLACEHOLDER, "")
+
+    # Handle "N percent" -> "N/100" BEFORE _join_number_parts so compound
+    # numbers like "twenty five percent" → "20 5 percent" → "(20+5)/100" = 0.25
+    # Match digit sequences (possibly space-separated) followed by "percent"
+    expression = re.sub(
+        r"(\d+(?:\.\d+)?(?:\s+\d+(?:\.\d+)?)*)\s+percent\b",
+        lambda m: f"({m.group(1).replace(' ', '+')})/100",
+        expression,
+        flags=re.IGNORECASE,
+    )
 
     # Join space-separated number sequences with + for proper evaluation
     # This must happen BEFORE whitespace removal so we get "3+100+20+2" instead of "3100202"

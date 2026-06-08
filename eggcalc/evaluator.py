@@ -105,6 +105,7 @@ _SIDE_EFFECT_FUNCTIONS: frozenset[str] = frozenset({
 _DIMENSIONLESS_REQUIRED_FUNCTIONS: frozenset[str] = frozenset({
     "abs", "floor", "ceil", "trunc", "round", "sign",
     "factorial", "fact", "gcd", "lcm", "perm", "comb", "nPr", "nCr",
+    "pow", "expm1",
 })
 
 # Historical note: some one-letter constant names (e.g., 'c', 'k', 'r') are
@@ -2039,11 +2040,15 @@ class Evaluator(ast.NodeVisitor):
         except ZeroDivisionError:
             raise EvaluationError("Cannot divide by zero")
 
-        # Check for NaN/inf in float results (int results cannot be NaN/inf)
-        if isinstance(result, float) and (math.isnan(result) or math.isinf(result)):
-            raise EvaluationError("Result too large")
-        if isinstance(result, float) and abs(result) > MAX_RESULT_VALUE:
-            raise EvaluationError("Result too large")
+        # Check for NaN/inf in float/complex results (int results cannot be NaN/inf)
+        if isinstance(result, complex):
+            if math.isnan(result.real) or math.isnan(result.imag) or math.isinf(result.real) or math.isinf(result.imag):
+                raise EvaluationError("Result too large")
+        elif isinstance(result, float):
+            if math.isnan(result) or math.isinf(result):
+                raise EvaluationError("Result too large")
+            if abs(result) > MAX_RESULT_VALUE:
+                raise EvaluationError("Result too large")
 
         # Check digit count for large int results from Add/Sub/Mult/Shift
         if isinstance(result, int) and op_class in (ast.Add, ast.Sub, ast.Mult, ast.LShift, ast.RShift):
@@ -2103,9 +2108,15 @@ class Evaluator(ast.NodeVisitor):
 
         # Compound unit detection for floor division and modulo:
         # Same-unit -> dimensionless (e.g., 6m // 3m -> 2, 7m % 3m -> 1)
+        # Different units -> rejected (physically meaningless for // and %)
         if op_class in (ast.FloorDiv, ast.Mod) and isinstance(left, UnitValue) and left.unit:
-            if isinstance(right, UnitValue) and right.unit and left.unit == right.unit:
-                return result  # dimensionless
+            if isinstance(right, UnitValue) and right.unit:
+                if left.unit == right.unit:
+                    return result  # dimensionless
+                raise EvaluationError(
+                    f"Floor division and modulo with different units "
+                    f"('{left.unit}' and '{right.unit}') are not supported"
+                )
             if (
                 op_class is ast.FloorDiv
                 and not isinstance(right, UnitValue)
