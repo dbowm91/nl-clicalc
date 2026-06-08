@@ -125,7 +125,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "properties": {
                 "name": {"type": "string"},
                 "value": {"type": "number", "description": "Constant value"},
-                "symbol": {"type": "string", "description": " display symbol (e.g., 'N_A', 'h', 'c')"},
+                "symbol": {"type": "string", "description": "Display symbol (e.g., 'N_A', 'h', 'c')"},
                 "display_name": {"type": "string", "description": "Human-readable name"},
             },
         },
@@ -354,6 +354,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "text_count": {
         "description": "Count exact characters or produce a character frequency table with codepoint positions, grapheme clusters, bytes, or substring matches.",
         "tier": 0,
+        "tags": ["text", "count", "character", "frequency"],
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -450,6 +451,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "validate_brackets": {
         "description": "Check whether delimiters are structurally balanced and report unmatched delimiters with line/column positions.",
         "tier": 1,
+        "tags": ["validation", "brackets", "delimiters"],
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -473,6 +475,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "validate_json": {
         "description": "Validate JSON and report precise parse errors or top-level structure information.",
         "tier": 0,
+        "tags": ["validation", "json", "structured-data"],
         "inputSchema": {
             "type": "object",
             "properties": {
