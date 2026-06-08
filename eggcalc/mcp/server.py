@@ -40,6 +40,7 @@ from .schemas import (
 _mcp_defaults_configured: bool = False
 _mcp_defaults_lock = threading.Lock()
 from .tools import (
+    _sanitize_error,
     canonicalize_text_mcp,
     cargo_toml_inspect_mcp,
     code_fence_extract_mcp,
@@ -1129,7 +1130,6 @@ def main() -> int:
 
     Reads JSON-RPC requests from stdin and writes responses to stdout.
     """
-    import os
     os.environ["EGGCALC_NO_CONFIG"] = "1"
     # MCP-safe defaults are configured by handle_request() on first call,
     # so the very first request also sets them. We do not need to

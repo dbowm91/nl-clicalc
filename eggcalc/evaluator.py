@@ -176,6 +176,8 @@ def _check_result_size(result: Any) -> Any:
             try:
                 if not math.isfinite(result.value):
                     raise EvaluationError("Result too large")
+                if abs(result.value) > MAX_RESULT_VALUE:
+                    raise EvaluationError("Result too large")
             except (OverflowError, ValueError):
                 raise EvaluationError("Result too large")
         if isinstance(result.value, int) and not isinstance(result.value, bool):
@@ -188,6 +190,8 @@ def _check_result_size(result: Any) -> Any:
             raise EvaluationError("Result too large")
     elif isinstance(result, float):
         if math.isnan(result) or math.isinf(result):
+            raise EvaluationError("Result too large")
+        if abs(result) > MAX_RESULT_VALUE:
             raise EvaluationError("Result too large")
     if isinstance(result, int) and not isinstance(result, bool):
         if _int_digit_count(result) > MAX_RESULT_DIGITS:
@@ -2026,6 +2030,8 @@ class Evaluator(ast.NodeVisitor):
 
         # Check for NaN/inf in float results (int results cannot be NaN/inf)
         if isinstance(result, float) and (math.isnan(result) or math.isinf(result)):
+            raise EvaluationError("Result too large")
+        if isinstance(result, float) and abs(result) > MAX_RESULT_VALUE:
             raise EvaluationError("Result too large")
 
         # Check digit count for large int results from Add/Sub/Mult/Shift

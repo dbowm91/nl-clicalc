@@ -592,6 +592,18 @@ UNIT_BASE: dict[str, dict[str, float]] = {
         "yd^3": 764.554857984,
         "cubicyard": 764.554857984,
         "cubicyards": 764.554857984,
+        "mm3": 1e-6,
+        "mm^3": 1e-6,
+        "cubicmillimeter": 1e-6,
+        "cubicmillimeters": 1e-6,
+        "km3": 1e12,
+        "km^3": 1e12,
+        "cubickilometer": 1e12,
+        "cubickilometers": 1e12,
+        "mi3": 4.168181825e12,
+        "mi^3": 4.168181825e12,
+        "cubicmile": 4.168181825e12,
+        "cubicmiles": 4.168181825e12,
     },
     # Pressure (base: Pascal)
     "Pa": {
@@ -1772,7 +1784,9 @@ def _parse_compound_signature(unit: str) -> tuple[tuple[tuple[str, int], ...], t
     atom = _parse_atom_signature(unit)
     if atom is None:
         return None
-    return atom, ()
+    num_only = tuple((b, e) for b, e in atom if e > 0)
+    den_only = tuple((b, -e) for b, e in atom if e < 0)
+    return num_only, den_only
 
 
 def _find_last_top_level_op(unit: str) -> tuple[int, str]:
@@ -1876,6 +1890,7 @@ _DERIVED_CATEGORIES: dict[str, str] = {
     "cm**3": "volume",
     "mm**3": "volume",
     "km**3": "volume",
+    "mi**3": "volume",
     # Speed / velocity
     "m/s": "speed",
     "km/h": "speed",

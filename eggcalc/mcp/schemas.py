@@ -393,6 +393,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "text_truncate": {
         "description": "Truncate a string to a specified number of grapheme clusters (user-perceived characters). Preserves emoji, combining sequences, and flag sequences intact. Useful for AI agent prompts where visual length matters.",
         "tier": 3,
+        "tags": ["text", "truncation", "grapheme", "unicode"],
         "inputSchema": {
             "type": "object",
             "properties": {

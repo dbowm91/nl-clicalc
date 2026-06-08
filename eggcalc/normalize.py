@@ -1525,7 +1525,7 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         return f"(({m.group(1)}*pi/180)*{m.group(2)}/rad)"
 
     expression = re.sub(
-        r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b\s+(?:in|IN)\s+(\w+)",
+        r"(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b\s+(?:in|IN|to|TO)\s+(\w+)",
         _degrees_temp_handler,
         expression,
         flags=re.IGNORECASE,
@@ -1557,6 +1557,23 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Join space-separated number sequences with + for proper evaluation
     # This must happen BEFORE whitespace removal so we get "3+100+20+2" instead of "3100202"
     expression = _join_number_parts(expression)
+
+    # Fix: "negative twenty one" → "-(20+1)" instead of "-20+1" = -19
+    # After _join_number_parts joins compound numbers with +, detect patterns like
+    # "-20+1" (from "negative twenty one") and wrap in parentheses so negation
+    # applies to the whole sum: "-(20+1)" = -21.
+    def _wrap_negative_compound(m: re.Match) -> str:
+        compound = m.group(2)
+        # Only wrap if there's a + in the compound (multiple numbers joined)
+        if "+" in compound:
+            return f"-({compound})"
+        return m.group(0)
+
+    expression = re.sub(
+        r"(-)(\d+(?:\+\d+)+)",
+        _wrap_negative_compound,
+        expression,
+    )
 
     # Replace whitespace outside parentheses with nothing
     # Preserve whitespace inside parentheses to separate function args
@@ -1683,16 +1700,30 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Postfix factorial: "<n>!" -> "factorial(<n>)". Apply AFTER whitespace
     # removal so we get the bare "<num>!" form. Skip cases like "!=" or
     # "is not" by requiring the "!" to immediately follow a number or a
-    # closing paren (no whitespace between).
+    # closing paren (no whitespace between). Handles nested parentheses.
+    def _replace_factorial(m: re.Match) -> str:
+        content = m.group(1)
+        bangs = m.group(2)
+        result = f"factorial({content})"
+        if len(bangs) > 1:
+            result += "!" * (len(bangs) - 1)
+        return result
+
+    # First handle simple cases: number! or single-paren group!
     expression = re.sub(
-        r"(\d+(?:\.\d+)?|\([^()]*\))(\!+)",
-        lambda m: (
-            f"factorial({m.group(1)}){('!' * (len(m.group(2)) - 1))}"
-            if len(m.group(2)) > 1
-            else f"factorial({m.group(1)})"
-        ),
+        r"(\d+(?:\.\d+)?|\((?:[^()]*|\([^()]*\))*\))(\!+)",
+        _replace_factorial,
         expression,
     )
+    # Handle deeper nesting iteratively until no more changes
+    prev = None
+    while prev != expression:
+        prev = expression
+        expression = re.sub(
+            r"(factorial\((?:[^()]*|\([^()]*\))*\))(\!+)",
+            _replace_factorial,
+            expression,
+        )
 
     return expression
 
@@ -1925,7 +1956,7 @@ def _preprocess_units(expression: str) -> str:
             best_end = i
             while j < len(expression) and expression[j].isalpha():
                 candidate = expression[i:j + 1]
-                if candidate in UNIT_ALIASES:
+                if candidate in UNIT_ALIASES or candidate.lower() in UNIT_ALIASES:
                     unit_tok = candidate
                     best_end = j + 1
                     j += 1
@@ -1938,9 +1969,18 @@ def _preprocess_units(expression: str) -> str:
                     if j - i > 25:
                         break
             if unit_tok:
-                canonical = UNIT_ALIASES.get(unit_tok, unit_tok)
-                result.append(canonical)
-                i = best_end
+                # Word boundary check: the next char after the unit must not be
+                # alphanumeric, otherwise this is a function name (e.g., "log",
+                # "lcm", "round"), not a unit.
+                if best_end < len(expression) and expression[best_end].isalnum():
+                    # Not a unit; emit the first char as-is
+                    if i < len(expression) and expression[i].isalpha():
+                        result.append(expression[i])
+                        i += 1
+                else:
+                    canonical = UNIT_ALIASES.get(unit_tok, UNIT_ALIASES.get(unit_tok.lower(), unit_tok))
+                    result.append(canonical)
+                    i = best_end
             else:
                 # Not a unit alias; emit as-is
                 if i < len(expression) and expression[i].isalpha():

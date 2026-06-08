@@ -4533,7 +4533,7 @@ def text_security_inspect(
     try:
         up = unicode_policy_check_mcp(text, policy=upolicy)
         if up.get("ok") is not False:
-            up_findings = up.get("findings", [])
+            up_findings = up.get("result", {}).get("findings", [])
             for f in up_findings:
                 sev = f.get("severity", "info")
                 all_findings.append({
@@ -4555,14 +4555,12 @@ def text_security_inspect(
     # 3. canonicalize_text (if normalize != none)
     if normalize != "none":
         try:
-            ct = canonicalize_text_mcp(text, profile=normalize)
-            if ct.get("ok") is not False:
-                changed = ct.get("result", {}).get("changed", False)
-                subresults["canonicalize_text"] = {"changed": changed}
-                if changed:
-                    machine_codes.append("NORMALIZATION_DIFF")
-            else:
-                subresults["canonicalize_text"] = {"error": ct.get("error")}
+            import unicodedata
+            normalized = unicodedata.normalize(normalize, text)
+            changed = normalized != text
+            subresults["canonicalize_text"] = {"changed": changed, "form": normalize}
+            if changed:
+                machine_codes.append("NORMALIZATION_DIFF")
         except Exception as e:
             subresults["canonicalize_text"] = {"error": str(e)}
 
@@ -4571,7 +4569,7 @@ def text_security_inspect(
         try:
             pi = prompt_input_inspect_mcp(text)
             if pi.get("ok") is not False:
-                pi_findings = pi.get("findings", [])
+                pi_findings = pi.get("result", {}).get("findings", [])
                 for f in pi_findings:
                     all_findings.append({
                         "code": f.get("code", "PROMPT_RISK"),
@@ -4596,20 +4594,19 @@ def text_security_inspect(
             if words:
                 ii = identifier_inspect_mcp(words)
             else:
-                ii = {"ok": True, "result": {"warnings": []}}
+                ii = {"ok": True, "result": {"identifiers": [], "collisions": []}, "findings": []}
             if ii.get("ok") is not False:
-                ii_result = ii.get("result", {})
-                ii_warnings = ii_result.get("warnings", [])
-                for w in ii_warnings:
+                ii_findings = ii.get("findings", [])
+                for f in ii_findings:
                     all_findings.append({
-                        "code": "IDENTIFIER_RISK",
-                        "severity": "warn",
-                        "message": w,
+                        "code": f.get("code", "IDENTIFIER_RISK"),
+                        "severity": f.get("severity", "warn"),
+                        "message": f.get("message", ""),
                     })
-                if ii_warnings:
+                if ii_findings:
                     machine_codes.append("IDENTIFIER_COLLISION_RISK")
                 subresults["identifier_inspect"] = {
-                    "warnings_count": len(ii_warnings),
+                    "findings_count": len(ii_findings),
                 }
             else:
                 subresults["identifier_inspect"] = {"error": ii.get("error")}
@@ -4765,7 +4762,7 @@ def edit_preflight(
             else:
                 result = pr.get("result", {})
                 subresults["patch_apply_check"] = result
-                if not result.get("applies_cleanly", True):
+                if not result.get("applies", True):
                     machine_codes.append("PATCH_FAILED")
                     all_findings.append({
                         "code": "PATCH_FAILED",
@@ -4838,7 +4835,7 @@ def edit_preflight(
         try:
             fp = text_fingerprint_mcp(original)
             if fp.get("ok") is not False:
-                result_fp = fp.get("result", {}).get("fingerprint", "")
+                result_fp = fp.get("result", {}).get("sha256", "")
                 if result_fp != expected_fingerprint:
                     machine_codes.append("FINGERPRINT_MISMATCH")
                     all_findings.append({
@@ -4951,12 +4948,11 @@ def command_preflight(
             result = ss.get("result", {})
             subresults["shell_split"] = {
                 "argv": result.get("argv", []),
-                "shell_operators": result.get("shell_operators", []),
                 "features": result.get("features", {}),
             }
-            # Check for risky features
+            # Check for risky features from boolean flags
             features = result.get("features", {})
-            risky = features.get("risky_features", [])
+            risky = [k for k, v in features.items() if v]
             for rf in risky:
                 sev = "error" if policy == "strict" else "warn"
                 all_findings.append({
@@ -4966,13 +4962,13 @@ def command_preflight(
                 })
             if risky:
                 machine_codes.append("SHELL_RISK")
-            # Check for shell operators
-            ops = result.get("shell_operators", [])
+            # Check for shell operators via feature flags
+            ops = [k for k, v in features.items() if v and k not in ("has_unbalanced_quotes",)]
             if ops and policy != "permissive":
                 all_findings.append({
                     "code": "SHELL_OPERATORS",
                     "severity": "warn",
-                    "message": f"Command contains shell operators: {ops}",
+                    "message": f"Command contains shell features: {ops}",
                 })
                 machine_codes.append("SHELL_RISK")
     except Exception as e:
@@ -5093,8 +5089,6 @@ def config_preflight(
                 detected_format = "json"
             else:
                 detected_format = "toml"
-        elif stripped.startswith("["):
-            detected_format = "toml"
         elif "=" in stripped and not stripped.startswith("{"):
             # Could be dotenv or INI
             detected_format = "dotenv"
@@ -5131,7 +5125,7 @@ def config_preflight(
                             subresults["validate_schema_light"] = sr_result
                             if not sr_result.get("valid", True):
                                 machine_codes.append("CONFIG_SCHEMA_MISMATCH")
-                                for err in sr_result.get("errors", []):
+                                for err in sr_result.get("violations", []):
                                     all_findings.append({
                                         "code": "SCHEMA_ERROR",
                                         "severity": "error" if strict else "warn",
@@ -5143,8 +5137,11 @@ def config_preflight(
                     try:
                         cj = json_canonicalize(text)
                         if cj.get("ok") is not False:
+                            cj_result = cj.get("result", {})
+                            canonical = cj_result.get("canonical")
+                            changed = canonical is not None and canonical != text
                             subresults["json_canonicalize"] = {
-                                "changed": cj.get("result", {}).get("changed", False),
+                                "changed": changed,
                             }
                     except Exception:
                         pass
@@ -5203,10 +5200,10 @@ def config_preflight(
             else:
                 result = dr.get("result", {})
                 subresults["dotenv_validate"] = result
-                parse_ok = result.get("valid", False)
+                parse_ok = result.get("parse_ok", False)
                 if not parse_ok:
                     machine_codes.append("CONFIG_PARSE_FAILED")
-                    for err in result.get("errors", []):
+                    for err in result.get("findings", []):
                         all_findings.append({
                             "code": "DOTENV_ERROR",
                             "severity": "error",
@@ -5232,10 +5229,10 @@ def config_preflight(
             else:
                 result = ir.get("result", {})
                 subresults["ini_validate"] = result
-                parse_ok = result.get("valid", False)
+                parse_ok = result.get("parse_ok", False)
                 if not parse_ok:
                     machine_codes.append("CONFIG_PARSE_FAILED")
-                    for err in result.get("errors", []):
+                    for err in result.get("findings", []):
                         all_findings.append({
                             "code": "INI_ERROR",
                             "severity": "error",
