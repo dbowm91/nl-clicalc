@@ -158,7 +158,7 @@ def _check_constant_unit_collisions() -> None:
     if collisions:
         import sys
         print(
-            f"Warning: CONSTANTS entries shadow UNIT_ALIASES (unreachable as "
+            f"Warning: UNIT_ALIASES shadow CONSTANTS (unreachable as "
             f"constants; use long form): {sorted(collisions)}",
             file=sys.stderr,
         )

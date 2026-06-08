@@ -4939,7 +4939,8 @@ def command_preflight(
 
     # 1. shell_split (always)
     try:
-        ss = shell_split(command)
+        shell = "posix" if platform in ("posix", "auto") else platform
+        ss = shell_split(command, shell=shell)
         if ss.get("ok") is False:
             machine_codes.append("SHELL_PARSE_ERROR")
             all_findings.append({
@@ -4965,15 +4966,6 @@ def command_preflight(
                 })
             if risky:
                 machine_codes.append("SHELL_RISK")
-            # Check for shell operators via feature flags
-            ops = [k for k, v in features.items() if v and k not in ("has_unbalanced_quotes",)]
-            if ops and policy != "permissive":
-                all_findings.append({
-                    "code": "SHELL_OPERATORS",
-                    "severity": "warn",
-                    "message": f"Command contains shell features: {ops}",
-                })
-                machine_codes.append("SHELL_RISK")
     except Exception as e:
         all_findings.append({
             "code": "INTERNAL_ERROR",
@@ -4988,24 +4980,34 @@ def command_preflight(
     )
     if looks_like_regex:
         try:
-            rs = regex_safety_check(command)
-            if rs.get("ok") is not False:
-                rs_result = rs.get("result", {})
-                rs_findings = rs_result.get("findings", [])
-                risk = rs_result.get("risk", "none")
-                for f in rs_findings:
-                    sev = "warn" if risk != "none" else "info"
-                    all_findings.append({
-                        "code": f.get("kind", "REGEX_RISK").upper(),
-                        "severity": sev,
-                        "message": f.get("message", ""),
+            # Extract regex-like arguments from parsed argv instead of
+            # passing the entire command string as a pattern
+            argv = subresults.get("shell_split", {}).get("argv", [])
+            _regex_metachars = set(r".*+?[]|()^$\{}")
+            regex_args = [
+                arg for arg in argv
+                if not arg.startswith("-") and any(c in _regex_metachars for c in arg)
+            ]
+            for pattern in regex_args:
+                rs = regex_safety_check(pattern)
+                if rs.get("ok") is not False:
+                    rs_result = rs.get("result", {})
+                    rs_findings = rs_result.get("findings", [])
+                    risk = rs_result.get("risk", "none")
+                    for f in rs_findings:
+                        sev = "warn" if risk != "none" else "info"
+                        all_findings.append({
+                            "code": f.get("kind", "REGEX_RISK").upper(),
+                            "severity": sev,
+                            "message": f.get("message", ""),
+                        })
+                    if rs_findings and risk != "none":
+                        machine_codes.append("REGEX_RISK")
+                    subresults.setdefault("regex_safety_check", []).append({
+                        "pattern": pattern,
+                        "findings_count": len(rs_findings),
+                        "risk": risk,
                     })
-                if rs_findings and risk != "none":
-                    machine_codes.append("REGEX_RISK")
-                subresults["regex_safety_check"] = {
-                    "findings_count": len(rs_findings),
-                    "risk": risk,
-                }
         except Exception:
             pass
 
@@ -5459,9 +5461,11 @@ def structured_data_compare(
         pass
 
     # --- Verdict ---
-    # Use json_compare result for equality, not findings severity
+    # Use json_compare result for equality, not findings severity.
+    # TYPE_MISMATCH is informational only (structural difference), not value equality.
     jc_equal = subresults.get("json_compare", {}).get("equal", False)
-    equal = jc_equal and not any(f["severity"] in ("error", "warn") for f in all_findings)
+    has_value_diff = any(f["code"] == "VALUE_DIFF" for f in all_findings)
+    equal = jc_equal and not has_value_diff
     if not equal:
         machine_code = "DATA_DIFF"
     else:

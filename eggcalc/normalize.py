@@ -58,6 +58,9 @@ MAX_NESTING_DEPTH = 100
 # Pre-computed sorted units list for performance (avoid re-sorting each call)
 _UNITS_BY_LENGTH: list[str] = sorted(UNIT_ALIASES.keys(), key=len, reverse=True)
 
+# Regex alternation for matching any known unit name (for "in"/"into" disambiguation)
+_UNIT_NAMES_ALTERNATION: str = "|".join(re.escape(u) for u in sorted(UNIT_ALIASES.keys(), key=len, reverse=True))
+
 # Lowercase temperature abbreviations that should map to canonical uppercase forms
 _LOWERCASE_TEMP_UNITS: dict[str, str] = {"f": "F", "c": "C", "k": "K", "r": "R"}
 
@@ -943,7 +946,11 @@ def split_at_operators(
     """Split an expression string at operator boundaries."""
     for symbol in operators["symbols"]:
         if symbol != "-":
-            expression = expression.replace(symbol, f"\\{symbol}\\")
+            if symbol == "+":
+                # Use negative lookbehind to preserve "e+" in scientific notation
+                expression = re.sub(r'(?<![eE])\+', f"\\\\{symbol}\\\\", expression)
+            else:
+                expression = expression.replace(symbol, f"\\{symbol}\\")
 
     tokens = [t.strip() for t in expression.split("\\") if t.strip()]
 
@@ -1274,6 +1281,41 @@ def _build_multi_word_numbers() -> dict[str, str]:
                             result[key] = str(
                                 (int(tens_val) + int(ones_val)) * int(scale_val)
                             )
+    # Compound hundreds with larger scales: "X hundred Y thousand" -> (X*100+Y)*1000
+    # E.g., "one hundred twenty one thousand" -> 121000
+    larger_scales = {
+        sv: sw for sv, sw in _NUMBER_SCALES.items() if int(sv) > 100
+    }
+    all_ones = {**_NUMBER_WORDS_SINGLE, **_NUMBER_WORDS_TEENS}
+    for hundred_val, hundred_words in _NUMBER_WORDS_SINGLE.items():
+        for scale_val, scale_words in larger_scales.items():
+            for hundred_word in hundred_words:
+                for scale_word in scale_words:
+                    # "X hundred scale" = X*100*scale (e.g., "one hundred thousand" = 100000)
+                    key = f"{hundred_word} hundred {scale_word}"
+                    result[key] = str(int(hundred_val) * 100 * int(scale_val))
+                    # "X hundred tens scale" for tens only (e.g., "one hundred twenty thousand")
+                    for tens_val, tens_words in _NUMBER_WORDS_TENS.items():
+                        tens_only = int(tens_val)
+                        combined = int(hundred_val) * 100 + tens_only
+                        for tens_word in tens_words:
+                            key = (
+                                f"{hundred_word} hundred "
+                                f"{tens_word} {scale_word}"
+                            )
+                            result[key] = str(combined * int(scale_val))
+                    # "X hundred tens ones scale" for tens+ones (e.g., "one hundred twenty one thousand")
+                    for tens_val, tens_words in _NUMBER_WORDS_TENS.items():
+                        for ones_val, ones_words in all_ones.items():
+                            y_val = int(tens_val) + int(ones_val)
+                            combined = int(hundred_val) * 100 + y_val
+                            for tens_word in tens_words:
+                                for ones_word in ones_words:
+                                    key = (
+                                        f"{hundred_word} hundred "
+                                        f"{tens_word} {ones_word} {scale_word}"
+                                    )
+                                    result[key] = str(combined * int(scale_val))
     return result
 
 
@@ -1315,8 +1357,9 @@ _SORTED_MULTI_WORD_NUMBERS: list[tuple[str, str]] = sorted(
     _MULTI_WORD_NUMBERS.items(), key=lambda x: len(x[0]), reverse=True
 )
 
-# Digit scale words for "N thousand" -> "N*1000" conversion
+# Digit scale words for "N thousand" -> evaluated result conversion
 _DIGIT_SCALES: dict[str, str] = {
+    "hundred": "100",
     "thousand": "1000",
     "million": "1000000",
     "billion": "1000000000",
@@ -1382,17 +1425,17 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     _binary_word_check(expression)
 
     for scale_word, scale_val in _DIGIT_SCALES.items():
-        # Convert "N thousand" to "N*1000" (for later evaluation)
+        # Convert "N thousand" to the evaluated product (e.g., "5 thousand" -> "5000").
+        # Produces a clean digit token so _join_number_parts doesn't insert spurious *.
         expression = re.sub(
-            r"\b(\d+(?:\.\d+)?)\s+" + re.escape(scale_word) + r"\b",
-            lambda m, sv=scale_val: f"{m.group(1)}*{sv}",
+            r"\b(\d+(?:\.\d+)?)\s*" + re.escape(scale_word) + r"\b",
+            lambda m, sv=scale_val: str(float(m.group(1)) * float(sv)),
             expression,
             flags=re.IGNORECASE,
         )
-        # Also handle bare scale words (e.g., "5 thousand" after first sub)
-        # Only replace when preceded by a digit or ')' to avoid invalid "*1000"
+        # Handle "(N) thousand" -> "(N)*1000" (scale word after closing paren)
         expression = re.sub(
-            r"(?<=[\d)])\s*" + re.escape(scale_word) + r"\b",
+            r"(\))\s*" + re.escape(scale_word) + r"\b",
             f"*{scale_val}",
             expression,
             flags=re.IGNORECASE,
