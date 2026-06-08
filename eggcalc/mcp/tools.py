@@ -562,7 +562,7 @@ def _success_response(
         envelope["warnings"] = warnings
     if limits_applied is not None:
         envelope["limits_applied"] = limits_applied
-    if findings:
+    if findings is not None:
         envelope["findings"] = findings
     if machine_code is not None:
         envelope["machine_code"] = machine_code

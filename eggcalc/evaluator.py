@@ -117,8 +117,6 @@ _DIMENSIONLESS_REQUIRED_FUNCTIONS: frozenset[str] = frozenset({
 _UNREACHABLE_CONSTANT_ALIASES: frozenset[str] = frozenset()
 
 
-_COLLISION_WARNING_EMITTED = False  # legacy alias, see Evaluator._COLLISION_WARNING_EMITTED
-
 # Set of child processes that survived terminate+kill in MCP mode.
 # Checked by MCP server's _cleanup_orphaned_processes for defensive cleanup.
 # Bounded to prevent unbounded growth across many timeouts; oldest entries
@@ -607,7 +605,6 @@ def _to_oct(x: int) -> str:
 
 _TEMP_UNIT_FLOAT_MAP: dict[float, str] = {
     1.0: "K",
-    0.017453292519943295: "deg",
 }
 
 
@@ -1540,10 +1537,6 @@ class Evaluator(ast.NodeVisitor):
     Supports arithmetic operators, trig functions, constants,
     logarithms, and unit conversions.
     """
-
-    # Class-level flag, set on first call to _check_constant_unit_collisions().
-    # Shared across the package and the inlined single-file build.
-    _COLLISION_WARNING_EMITTED: bool = False
 
     # Safe mathematical constants
     # Note: inf and nan are intentionally excluded — they cannot be accessed

@@ -212,7 +212,9 @@ class UnitValue:
         if self.unit:
             if self.value == 0:
                 raise ZeroDivisionError("Cannot divide by zero UnitValue")
-            return UnitValue(other // self.value, f"1//{self.unit}")
+            raise ValueError(
+                f"Cannot floor-divide a number by a unit value ('{self.unit}')"
+            )
         if self.value == 0:
             raise ZeroDivisionError("Cannot divide by zero UnitValue")
         return UnitValue(other // self.value, None)
@@ -246,7 +248,9 @@ class UnitValue:
         if self.unit:
             if self.value == 0:
                 raise ZeroDivisionError("Cannot mod by zero UnitValue")
-            return UnitValue(other % self.value, f"1%{self.unit}")
+            raise ValueError(
+                f"Cannot take modulo by a unit value ('{self.unit}')"
+            )
         if self.value == 0:
             raise ZeroDivisionError("Cannot mod by zero UnitValue")
         return UnitValue(other % self.value, None)

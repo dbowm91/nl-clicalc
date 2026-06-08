@@ -1427,9 +1427,15 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     for scale_word, scale_val in _DIGIT_SCALES.items():
         # Convert "N thousand" to the evaluated product (e.g., "5 thousand" -> "5000").
         # Produces a clean digit token so _join_number_parts doesn't insert spurious *.
+        # Use int() when the product is a whole number to avoid ".0" suffix that
+        # would corrupt the decimal merge loop downstream.
+        def _scale_product(m: re.Match[str], sv: str = scale_val) -> str:
+            v = float(m.group(1)) * float(sv)
+            return str(int(v)) if v == int(v) else str(v)
+
         expression = re.sub(
             r"\b(\d+(?:\.\d+)?)\s*" + re.escape(scale_word) + r"\b",
-            lambda m, sv=scale_val: str(float(m.group(1)) * float(sv)),
+            _scale_product,
             expression,
             flags=re.IGNORECASE,
         )
@@ -1466,7 +1472,7 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
             # 1. At end of expression ("5 in" = 5 inches), OR
             # 2. Followed by a conversion keyword ("to"/"as") - e.g., "5 in to cm"
             if re.search(
-                r"\d\s+" + re.escape(word) + r"(?:\s*$|\s+(?:to|as)\b)",
+                r"(?:\d|\))\s+" + re.escape(word) + r"(?:\s*$|\s+(?:to|as)\b)",
                 expression,
                 flags=re.IGNORECASE,
             ):
@@ -1996,7 +2002,7 @@ def _preprocess_units(expression: str) -> str:
                         result.append(num)
             else:
                 result.append(num)
-        elif char == "*" and result and result[-1].isdigit() and i + 1 < len(expression):
+        elif char == "*" and result and (result[-1][-1:].isdigit() or result[-1][-1:] == ")") and i + 1 < len(expression):
             # "*" preceded by a digit. Check if the next alpha-only token is a
             # unit alias. Find the longest prefix that matches a unit alias.
             # (E.g., for "5*inTOcm", find "in" even though "i" alone isn't a unit.)
