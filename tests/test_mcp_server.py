@@ -7627,3 +7627,291 @@ class TestCompactSchemaMode:
         props = te["inputSchema"]["properties"]
         # Full mode should have defaults
         assert "default" in props["normalization"]
+
+
+class TestEditPreflight:
+    """Test edit_preflight composite tool."""
+
+    def test_literal_mode_ok(self):
+        from eggcalc.mcp.tools import edit_preflight
+        result = edit_preflight("hello world", old="world", new="earth")
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["ok_to_apply"] is True
+        assert content["mode"] == "literal"
+        assert content["machine_code"] == "EDIT_OK"
+
+    def test_literal_mode_no_match(self):
+        from eggcalc.mcp.tools import edit_preflight
+        result = edit_preflight("hello world", old="xyz", new="earth")
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["ok_to_apply"] is False
+        assert content["machine_code"] == "AMBIGUOUS_REPLACEMENT"
+
+    def test_patch_mode_ok(self):
+        from eggcalc.mcp.tools import edit_preflight
+        patch = "--- a/test\n+++ b/test\n@@ -1 +1 @@\n-hello\n+world\n"
+        result = edit_preflight("hello\n", replacement_mode="patch", patch=patch)
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["mode"] == "patch"
+        assert content["machine_code"] in ("EDIT_OK", "PATCH_FAILED")
+
+    def test_line_range_mode(self):
+        from eggcalc.mcp.tools import edit_preflight
+        result = edit_preflight("line1\nline2\nline3\n", replacement_mode="line_range", start_line=1, end_line=2)
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["mode"] == "line_range"
+        assert "subresults" in content
+
+    def test_invalid_mode(self):
+        from eggcalc.mcp.tools import edit_preflight
+        result = edit_preflight("hello", replacement_mode="invalid")
+        assert result["ok"] is False
+        assert "replacement_mode" in result["error"]
+
+    def test_literal_requires_old_and_new(self):
+        from eggcalc.mcp.tools import edit_preflight
+        result = edit_preflight("hello", replacement_mode="literal", old="x")
+        assert result["ok"] is False
+
+    def test_fingerprint_mismatch(self):
+        from eggcalc.mcp.tools import edit_preflight
+        # When there's a match but fingerprint doesn't match expected
+        result = edit_preflight("hello", old="hello", new="world", expected_fingerprint="deadbeef")
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["machine_code"] == "FINGERPRINT_MISMATCH"
+
+    def test_fingerprint_mismatch_on_no_match(self):
+        from eggcalc.mcp.tools import edit_preflight
+        # When there's no match, AMBIGUOUS_REPLACEMENT takes precedence
+        result = edit_preflight("hello", old="xyz", new="world", expected_fingerprint="deadbeef")
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["machine_code"] == "AMBIGUOUS_REPLACEMENT"
+
+
+class TestCommandPreflight:
+    """Test command_preflight composite tool."""
+
+    def test_simple_command(self):
+        from eggcalc.mcp.tools import command_preflight
+        result = command_preflight("ls -la")
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["verdict"] == "allow"
+        assert content["machine_code"] == "COMMAND_OK"
+        assert "subresults" in content
+
+    def test_command_with_pipe(self):
+        from eggcalc.mcp.tools import command_preflight
+        result = command_preflight("cat file.txt | grep pattern")
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["verdict"] in ("allow", "review")
+
+    def test_strict_policy(self):
+        from eggcalc.mcp.tools import command_preflight
+        result = command_preflight("ls", policy="strict")
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["policy"] == "strict"
+
+    def test_invalid_platform(self):
+        from eggcalc.mcp.tools import command_preflight
+        result = command_preflight("ls", platform="dos")
+        assert result["ok"] is False
+
+    def test_invalid_policy(self):
+        from eggcalc.mcp.tools import command_preflight
+        result = command_preflight("ls", policy="maybe")
+        assert result["ok"] is False
+
+
+class TestConfigPreflight:
+    """Test config_preflight composite tool."""
+
+    def test_valid_json(self):
+        from eggcalc.mcp.tools import config_preflight
+        result = config_preflight('{"key": "value"}', format="json")
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["valid"] is True
+        assert content["verdict"] == "valid"
+        assert content["format"] == "json"
+
+    def test_invalid_json(self):
+        from eggcalc.mcp.tools import config_preflight
+        result = config_preflight("{broken", format="json")
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["valid"] is False
+        assert content["verdict"] == "invalid"
+
+    def test_auto_detect_json(self):
+        from eggcalc.mcp.tools import config_preflight
+        result = config_preflight('{"a": 1}')
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["format"] == "json"
+
+    def test_auto_detect_toml(self):
+        from eggcalc.mcp.tools import config_preflight
+        result = config_preflight("[package]\nname = \"test\"\nversion = \"0.1.0\"")
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["format"] in ("toml", "dotenv")
+
+    def test_with_schema(self):
+        from eggcalc.mcp.tools import config_preflight
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+        result = config_preflight('{"name": "test"}', format="json", schema=schema)
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["valid"] is True
+
+    def test_invalid_format(self):
+        from eggcalc.mcp.tools import config_preflight
+        result = config_preflight("x = 1", format="yaml")
+        assert result["ok"] is False
+
+
+class TestStructuredDataCompare:
+    """Test structured_data_compare composite tool."""
+
+    def test_equal_json(self):
+        from eggcalc.mcp.tools import structured_data_compare
+        result = structured_data_compare('{"a": 1}', '{"a": 1}')
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["equal"] is True
+        assert content["machine_code"] == "DATA_EQUAL"
+
+    def test_different_json(self):
+        from eggcalc.mcp.tools import structured_data_compare
+        result = structured_data_compare('{"a": 1}', '{"a": 2}')
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["equal"] is False
+        assert content["machine_code"] == "DATA_DIFF"
+
+    def test_invalid_json_a(self):
+        from eggcalc.mcp.tools import structured_data_compare
+        result = structured_data_compare("{bad", '{"a": 1}')
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["equal"] is False
+        assert content["machine_code"] == "INVALID_INPUT"
+
+    def test_non_string_input(self):
+        from eggcalc.mcp.tools import structured_data_compare
+        result = structured_data_compare(123, '{"a": 1}')
+        assert result["ok"] is False
+
+    def test_non_json_format(self):
+        from eggcalc.mcp.tools import structured_data_compare
+        result = structured_data_compare('{"a": 1}', '{"a": 1}', format="toml")
+        assert result["ok"] is False
+
+    def test_with_object_order_ignore(self):
+        from eggcalc.mcp.tools import structured_data_compare
+        result = structured_data_compare(
+            '{"b": 2, "a": 1}',
+            '{"a": 1, "b": 2}',
+            ignore_object_order=True,
+        )
+        assert result["ok"] is True
+        content = result["result"]
+        assert content["equal"] is True
+
+
+class TestProfileSnapshots:
+    """Snapshot tests for all 11 profiles."""
+
+    def test_codegg_core_min_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES
+        tools = TOOL_PROFILES.get("codegg_core_min", [])
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        assert tools == sorted(tools)
+
+    def test_codegg_core_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES
+        tools = TOOL_PROFILES.get("codegg_core", [])
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        assert tools == sorted(tools)
+
+    def test_codegg_preflight_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES
+        tools = TOOL_PROFILES.get("codegg_preflight", [])
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        assert tools == sorted(tools)
+
+    def test_codegg_patch_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES
+        tools = TOOL_PROFILES.get("codegg_patch", [])
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        assert tools == sorted(tools)
+
+    def test_codegg_config_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES
+        tools = TOOL_PROFILES.get("codegg_config", [])
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        assert tools == sorted(tools)
+
+    def test_codegg_unicode_security_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES
+        tools = TOOL_PROFILES.get("codegg_unicode_security", [])
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        assert tools == sorted(tools)
+
+    def test_codegg_shell_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES
+        tools = TOOL_PROFILES.get("codegg_shell", [])
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        assert tools == sorted(tools)
+
+    def test_codegg_repo_audit_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES
+        tools = TOOL_PROFILES.get("codegg_repo_audit", [])
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        assert tools == sorted(tools)
+
+    def test_human_math_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES
+        tools = TOOL_PROFILES.get("human_math", [])
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        assert tools == sorted(tools)
+
+    def test_full_profile_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES, TOOL_METADATA
+        tools = TOOL_PROFILES.get("full", [])
+        expected = sorted(
+            name for name, meta in TOOL_METADATA.items()
+            if meta.get("llm_exposure") != "hidden"
+        )
+        assert tools == expected
+
+    def test_default_profile_exact(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES
+        tools = TOOL_PROFILES.get("default", [])
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+        assert tools == sorted(tools)
+
+    def test_all_11_profiles_exist(self):
+        from eggcalc.mcp.schemas import TOOL_PROFILES, PROFILE_NAMES
+        for name in PROFILE_NAMES:
+            assert name in TOOL_PROFILES, f"Profile '{name}' missing from TOOL_PROFILES"
+            assert len(TOOL_PROFILES[name]) > 0, f"Profile '{name}' has no tools"

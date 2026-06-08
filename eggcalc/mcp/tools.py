@@ -4661,3 +4661,826 @@ def text_security_inspect(
         findings=all_findings or None,
         machine_code=primary_machine_code,
     )
+
+
+# ---------------------------------------------------------------------------
+# Composite: edit_preflight
+# ---------------------------------------------------------------------------
+
+
+def edit_preflight(
+    original: str,
+    replacement_mode: str = "literal",
+    old: str | None = None,
+    new: str | None = None,
+    patch: str | None = None,
+    start_line: int | None = None,
+    end_line: int | None = None,
+    expected_fingerprint: str | None = None,
+    strict: bool = True,
+) -> dict:
+    """Composite: validate a proposed edit before applying it.
+
+    Calls text_replace_check, patch_apply_check, line_range_extract,
+    text_fingerprint, and text_diff_explain as needed.  Returns a
+    single ok_to_apply verdict plus structured findings.
+    """
+    if not isinstance(original, str):
+        return _error_response(
+            "invalid_arguments",
+            "original must be a string",
+            tool="edit_preflight",
+        )
+
+    valid_modes = ("literal", "patch", "line_range")
+    if replacement_mode not in valid_modes:
+        return _error_response(
+            "invalid_arguments",
+            f"replacement_mode must be one of: {', '.join(valid_modes)}",
+            tool="edit_preflight",
+        )
+
+    all_findings: list[dict] = []
+    subresults: dict[str, Any] = {}
+    machine_codes: list[str] = []
+    recommended_next: str | None = None
+
+    # --- Mode: literal (old/new replacement) ---
+    if replacement_mode == "literal":
+        if old is None or new is None:
+            return _error_response(
+                "invalid_arguments",
+                "literal mode requires both 'old' and 'new'",
+                tool="edit_preflight",
+            )
+        try:
+            tr = text_replace_check(original, old, new)
+            if tr.get("ok") is False:
+                return _error_response(
+                    "invalid_arguments",
+                    tr.get("error", "text_replace_check failed"),
+                    tool="edit_preflight",
+                )
+            result = tr.get("result", {})
+            subresults["text_replace_check"] = result
+            matches = result.get("match_count", 0)
+            if matches == 0:
+                machine_codes.append("AMBIGUOUS_REPLACEMENT")
+                all_findings.append({
+                    "code": "NO_MATCH",
+                    "severity": "error",
+                    "message": "old text not found in original",
+                })
+            elif matches > 1 and not result.get("allow_multiple", False):
+                machine_codes.append("AMBIGUOUS_REPLACEMENT")
+                all_findings.append({
+                    "code": "MULTIPLE_MATCHES",
+                    "severity": "warn",
+                    "message": f"Found {matches} matches; use allow_multiple=true",
+                })
+        except Exception as e:
+            all_findings.append({
+                "code": "INTERNAL_ERROR",
+                "severity": "error",
+                "message": str(e),
+            })
+
+    # --- Mode: patch (unified diff) ---
+    elif replacement_mode == "patch":
+        if patch is None:
+            return _error_response(
+                "invalid_arguments",
+                "patch mode requires 'patch'",
+                tool="edit_preflight",
+            )
+        try:
+            pr = patch_apply_check_mcp(original, patch, strict=strict)
+            if pr.get("ok") is False:
+                machine_codes.append("PATCH_FAILED")
+                all_findings.append({
+                    "code": "PATCH_ERROR",
+                    "severity": "error",
+                    "message": pr.get("error", "patch_apply_check failed"),
+                })
+            else:
+                result = pr.get("result", {})
+                subresults["patch_apply_check"] = result
+                if not result.get("applies_cleanly", True):
+                    machine_codes.append("PATCH_FAILED")
+                    all_findings.append({
+                        "code": "PATCH_FAILED",
+                        "severity": "error",
+                        "message": "Patch does not apply cleanly",
+                    })
+                # Check fingerprint if expected
+                if expected_fingerprint and result.get("result_fingerprint"):
+                    if result["result_fingerprint"] != expected_fingerprint:
+                        machine_codes.append("FINGERPRINT_MISMATCH")
+                        all_findings.append({
+                            "code": "FINGERPRINT_MISMATCH",
+                            "severity": "warn",
+                            "message": (
+                                f"Expected {expected_fingerprint}, "
+                                f"got {result['result_fingerprint']}"
+                            ),
+                        })
+        except Exception as e:
+            all_findings.append({
+                "code": "INTERNAL_ERROR",
+                "severity": "error",
+                "message": str(e),
+            })
+
+    # --- Mode: line_range ---
+    elif replacement_mode == "line_range":
+        if start_line is None or end_line is None:
+            return _error_response(
+                "invalid_arguments",
+                "line_range mode requires 'start_line' and 'end_line'",
+                tool="edit_preflight",
+            )
+        try:
+            lr = line_range_extract(
+                original, start_line, end_line,
+                include_fingerprint=True,
+            )
+            if lr.get("ok") is False:
+                machine_codes.append("LINE_RANGE_INVALID")
+                all_findings.append({
+                    "code": "LINE_RANGE_ERROR",
+                    "severity": "error",
+                    "message": lr.get("error", "line_range_extract failed"),
+                })
+            else:
+                result = lr.get("result", {})
+                subresults["line_range_extract"] = result
+                if expected_fingerprint and result.get("fingerprint"):
+                    if result["fingerprint"] != expected_fingerprint:
+                        machine_codes.append("FINGERPRINT_MISMATCH")
+                        all_findings.append({
+                            "code": "FINGERPRINT_MISMATCH",
+                            "severity": "warn",
+                            "message": (
+                                f"Expected {expected_fingerprint}, "
+                                f"got {result['fingerprint']}"
+                            ),
+                        })
+        except Exception as e:
+            all_findings.append({
+                "code": "INTERNAL_ERROR",
+                "severity": "error",
+                "message": str(e),
+            })
+
+    # --- Fingerprint check (if expected_fingerprint given and not already checked) ---
+    if (expected_fingerprint and replacement_mode == "literal"
+            and "FINGERPRINT_MISMATCH" not in [c for c in machine_codes]):
+        try:
+            fp = text_fingerprint_mcp(original)
+            if fp.get("ok") is not False:
+                result_fp = fp.get("result", {}).get("fingerprint", "")
+                if result_fp != expected_fingerprint:
+                    machine_codes.append("FINGERPRINT_MISMATCH")
+                    all_findings.append({
+                        "code": "FINGERPRINT_MISMATCH",
+                        "severity": "warn",
+                        "message": (
+                            f"Expected {expected_fingerprint}, "
+                            f"got {result_fp}"
+                        ),
+                    })
+        except Exception:
+            pass
+
+    # --- Verdict ---
+    severities = {f["severity"] for f in all_findings}
+    ok_to_apply = "error" not in severities
+    if not ok_to_apply:
+        machine_code = machine_codes[0] if machine_codes else "EDIT_FAILED"
+        if machine_code == "AMBIGUOUS_REPLACEMENT":
+            recommended_next = "text_diff_explain"
+    elif machine_codes:
+        machine_code = machine_codes[0]
+        recommended_next = "text_diff_explain"
+    else:
+        machine_code = "EDIT_OK"
+
+    summary_parts: list[str] = []
+    if ok_to_apply:
+        summary_parts.append(f"Edit OK ({replacement_mode} mode)")
+    else:
+        summary_parts.append(f"Edit blocked ({replacement_mode} mode)")
+    if all_findings:
+        summary_parts.append(f"{len(all_findings)} finding(s)")
+
+    result: dict[str, Any] = {
+        "ok_to_apply": ok_to_apply,
+        "mode": replacement_mode,
+        "findings": all_findings,
+        "machine_code": machine_code,
+        "recommended_next_tool": recommended_next,
+        "summary": "; ".join(summary_parts),
+    }
+    if subresults:
+        result["subresults"] = subresults
+
+    return _success_response(
+        result,
+        tool="edit_preflight",
+        findings=all_findings or None,
+        machine_code=machine_code,
+        recommended_next_tool=recommended_next,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Composite: command_preflight
+# ---------------------------------------------------------------------------
+
+
+def command_preflight(
+    command: str,
+    platform: str = "posix",
+    policy: str = "default",
+    working_directory: str | None = None,
+) -> dict:
+    """Composite: analyze a command before user approval or execution.
+
+    Calls shell_split and regex_safety_check (when the command appears
+    to include regex patterns).  Returns parsed argv, shell operators,
+    risk findings, and a verdict.
+    """
+    if not isinstance(command, str):
+        return _error_response(
+            "invalid_arguments",
+            "command must be a string",
+            tool="command_preflight",
+        )
+
+    valid_platforms = ("posix", "windows", "auto")
+    if platform not in valid_platforms:
+        return _error_response(
+            "invalid_arguments",
+            f"platform must be one of: {', '.join(valid_platforms)}",
+            tool="command_preflight",
+        )
+
+    valid_policies = ("default", "strict", "permissive")
+    if policy not in valid_policies:
+        return _error_response(
+            "invalid_arguments",
+            f"policy must be one of: {', '.join(valid_policies)}",
+            tool="command_preflight",
+        )
+
+    all_findings: list[dict] = []
+    subresults: dict[str, Any] = {}
+    machine_codes: list[str] = []
+
+    # 1. shell_split (always)
+    try:
+        ss = shell_split(command)
+        if ss.get("ok") is False:
+            machine_codes.append("SHELL_PARSE_ERROR")
+            all_findings.append({
+                "code": "SHELL_PARSE_ERROR",
+                "severity": "error",
+                "message": ss.get("error", "shell_split failed"),
+            })
+        else:
+            result = ss.get("result", {})
+            subresults["shell_split"] = {
+                "argv": result.get("argv", []),
+                "shell_operators": result.get("shell_operators", []),
+                "features": result.get("features", {}),
+            }
+            # Check for risky features
+            features = result.get("features", {})
+            risky = features.get("risky_features", [])
+            for rf in risky:
+                sev = "error" if policy == "strict" else "warn"
+                all_findings.append({
+                    "code": "RISKY_SHELL_FEATURE",
+                    "severity": sev,
+                    "message": rf,
+                })
+            if risky:
+                machine_codes.append("SHELL_RISK")
+            # Check for shell operators
+            ops = result.get("shell_operators", [])
+            if ops and policy != "permissive":
+                all_findings.append({
+                    "code": "SHELL_OPERATORS",
+                    "severity": "warn",
+                    "message": f"Command contains shell operators: {ops}",
+                })
+                machine_codes.append("SHELL_RISK")
+    except Exception as e:
+        all_findings.append({
+            "code": "INTERNAL_ERROR",
+            "severity": "error",
+            "message": str(e),
+        })
+
+    # 2. regex_safety_check if command looks like it contains a regex
+    looks_like_regex = (
+        "grep" in command or "sed" in command or "awk" in command
+        or "regex" in command.lower()
+    )
+    if looks_like_regex:
+        try:
+            rs = regex_safety_check(command)
+            if rs.get("ok") is not False:
+                rs_findings = rs.get("findings", [])
+                for f in rs_findings:
+                    all_findings.append({
+                        "code": f.get("code", "REGEX_RISK"),
+                        "severity": f.get("severity", "warn"),
+                        "message": f.get("message", ""),
+                    })
+                if any(f.get("severity") in ("warn", "error") for f in rs_findings):
+                    machine_codes.append("REGEX_RISK")
+                subresults["regex_safety_check"] = {
+                    "findings_count": len(rs_findings),
+                }
+        except Exception:
+            pass
+
+    # --- Verdict ---
+    severities = {f["severity"] for f in all_findings}
+    if "error" in severities:
+        verdict = "block"
+    elif "warn" in severities:
+        verdict = "review"
+    else:
+        verdict = "allow"
+
+    unique_codes = list(dict.fromkeys(machine_codes))
+    primary_code = unique_codes[0] if unique_codes else "COMMAND_OK"
+
+    summary = (
+        f"Command {verdict}"
+        f" ({len(all_findings)} finding(s))"
+    )
+
+    result: dict[str, Any] = {
+        "verdict": verdict,
+        "command": command,
+        "platform": platform,
+        "policy": policy,
+        "findings": all_findings,
+        "machine_code": primary_code,
+        "summary": summary,
+    }
+    if working_directory:
+        result["working_directory"] = working_directory
+    if subresults:
+        result["subresults"] = subresults
+
+    return _success_response(
+        result,
+        tool="command_preflight",
+        findings=all_findings or None,
+        machine_code=primary_code,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Composite: config_preflight
+# ---------------------------------------------------------------------------
+
+
+def config_preflight(
+    text: str,
+    format: str = "auto",
+    schema: dict | None = None,
+    strict: bool = False,
+) -> dict:
+    """Composite: validate generated config text.
+
+    Auto-detects format and runs the appropriate validator.  Returns
+    valid/invalid, detected format, parse error location, and machine code.
+    """
+    if not isinstance(text, str):
+        return _error_response(
+            "invalid_arguments",
+            "text must be a string",
+            tool="config_preflight",
+        )
+
+    valid_formats = ("auto", "json", "toml", "dotenv", "ini", "cargo_toml")
+    if format not in valid_formats:
+        return _error_response(
+            "invalid_arguments",
+            f"format must be one of: {', '.join(valid_formats)}",
+            tool="config_preflight",
+        )
+
+    all_findings: list[dict] = []
+    machine_codes: list[str] = []
+    detected_format = format
+    parse_ok = False
+    subresults: dict[str, Any] = {}
+
+    # Auto-detect: try JSON first, then TOML, then dotenv, then INI
+    if format == "auto":
+        # Quick heuristic: starts with { or [ -> json, starts with [package] or [dependencies] -> toml
+        stripped = text.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            # Could be JSON or TOML
+            jr = validate_json(text)
+            if jr.get("ok") is not False and jr.get("result", {}).get("valid"):
+                detected_format = "json"
+            else:
+                detected_format = "toml"
+        elif stripped.startswith("["):
+            detected_format = "toml"
+        elif "=" in stripped and not stripped.startswith("{"):
+            # Could be dotenv or INI
+            detected_format = "dotenv"
+        else:
+            detected_format = "json"
+
+    # Run appropriate validator
+    if detected_format == "json":
+        try:
+            jr = validate_json(text)
+            if jr.get("ok") is False:
+                machine_codes.append("CONFIG_PARSE_FAILED")
+                all_findings.append({
+                    "code": "CONFIG_ERROR",
+                    "severity": "error",
+                    "message": jr.get("error", "validate_json failed"),
+                })
+            else:
+                result = jr.get("result", {})
+                subresults["validate_json"] = result
+                parse_ok = result.get("valid", False)
+                if not parse_ok:
+                    machine_codes.append("CONFIG_PARSE_FAILED")
+                    all_findings.append({
+                        "code": "JSON_PARSE_ERROR",
+                        "severity": "error",
+                        "message": result.get("error", "Invalid JSON"),
+                    })
+                elif schema:
+                    try:
+                        sr = validate_schema_light(text, schema)
+                        if sr.get("ok") is not False:
+                            sr_result = sr.get("result", {})
+                            subresults["validate_schema_light"] = sr_result
+                            if not sr_result.get("valid", True):
+                                machine_codes.append("CONFIG_SCHEMA_MISMATCH")
+                                for err in sr_result.get("errors", []):
+                                    all_findings.append({
+                                        "code": "SCHEMA_ERROR",
+                                        "severity": "error" if strict else "warn",
+                                        "message": err,
+                                    })
+                    except Exception:
+                        pass
+                if parse_ok and not all_findings:
+                    try:
+                        cj = json_canonicalize(text)
+                        if cj.get("ok") is not False:
+                            subresults["json_canonicalize"] = {
+                                "changed": cj.get("result", {}).get("changed", False),
+                            }
+                    except Exception:
+                        pass
+        except Exception as e:
+            all_findings.append({
+                "code": "INTERNAL_ERROR",
+                "severity": "error",
+                "message": str(e),
+            })
+
+    elif detected_format == "toml":
+        try:
+            tr = validate_toml(text)
+            if tr.get("ok") is False:
+                machine_codes.append("CONFIG_PARSE_FAILED")
+                all_findings.append({
+                    "code": "CONFIG_ERROR",
+                    "severity": "error",
+                    "message": tr.get("error", "validate_toml failed"),
+                })
+            else:
+                result = tr.get("result", {})
+                subresults["validate_toml"] = result
+                parse_ok = result.get("valid", False)
+                if not parse_ok:
+                    machine_codes.append("CONFIG_PARSE_FAILED")
+                    all_findings.append({
+                        "code": "TOML_PARSE_ERROR",
+                        "severity": "error",
+                        "message": result.get("error", "Invalid TOML"),
+                    })
+                else:
+                    try:
+                        ts = toml_shape_mcp(text)
+                        if ts.get("ok") is not False:
+                            subresults["toml_shape"] = ts.get("result", {})
+                    except Exception:
+                        pass
+        except Exception as e:
+            all_findings.append({
+                "code": "INTERNAL_ERROR",
+                "severity": "error",
+                "message": str(e),
+            })
+
+    elif detected_format == "dotenv":
+        try:
+            dr = dotenv_validate_mcp(text)
+            if dr.get("ok") is False:
+                machine_codes.append("CONFIG_PARSE_FAILED")
+                all_findings.append({
+                    "code": "CONFIG_ERROR",
+                    "severity": "error",
+                    "message": dr.get("error", "dotenv_validate failed"),
+                })
+            else:
+                result = dr.get("result", {})
+                subresults["dotenv_validate"] = result
+                parse_ok = result.get("valid", False)
+                if not parse_ok:
+                    machine_codes.append("CONFIG_PARSE_FAILED")
+                    for err in result.get("errors", []):
+                        all_findings.append({
+                            "code": "DOTENV_ERROR",
+                            "severity": "error",
+                            "message": err,
+                        })
+        except Exception as e:
+            all_findings.append({
+                "code": "INTERNAL_ERROR",
+                "severity": "error",
+                "message": str(e),
+            })
+
+    elif detected_format == "ini":
+        try:
+            ir = ini_validate_mcp(text)
+            if ir.get("ok") is False:
+                machine_codes.append("CONFIG_PARSE_FAILED")
+                all_findings.append({
+                    "code": "CONFIG_ERROR",
+                    "severity": "error",
+                    "message": ir.get("error", "ini_validate failed"),
+                })
+            else:
+                result = ir.get("result", {})
+                subresults["ini_validate"] = result
+                parse_ok = result.get("valid", False)
+                if not parse_ok:
+                    machine_codes.append("CONFIG_PARSE_FAILED")
+                    for err in result.get("errors", []):
+                        all_findings.append({
+                            "code": "INI_ERROR",
+                            "severity": "error",
+                            "message": err,
+                        })
+        except Exception as e:
+            all_findings.append({
+                "code": "INTERNAL_ERROR",
+                "severity": "error",
+                "message": str(e),
+            })
+
+    elif detected_format == "cargo_toml":
+        try:
+            cr = cargo_toml_inspect_mcp(text)
+            if cr.get("ok") is False:
+                machine_codes.append("CONFIG_PARSE_FAILED")
+                all_findings.append({
+                    "code": "CONFIG_ERROR",
+                    "severity": "error",
+                    "message": cr.get("error", "cargo_toml_inspect failed"),
+                })
+            else:
+                result = cr.get("result", {})
+                subresults["cargo_toml_inspect"] = result
+                parse_ok = result.get("parse_ok", False)
+                if not parse_ok:
+                    machine_codes.append("CONFIG_PARSE_FAILED")
+                    all_findings.append({
+                        "code": "CARGO_PARSE_ERROR",
+                        "severity": "error",
+                        "message": "Cargo.toml parse failed",
+                    })
+                else:
+                    for f in cr.get("findings", []):
+                        all_findings.append({
+                            "code": f.get("code", "CARGO_NOTE"),
+                            "severity": f.get("severity", "info"),
+                            "message": f.get("message", ""),
+                        })
+        except Exception as e:
+            all_findings.append({
+                "code": "INTERNAL_ERROR",
+                "severity": "error",
+                "message": str(e),
+            })
+
+    # --- Verdict ---
+    if not parse_ok:
+        machine_code = machine_codes[0] if machine_codes else "CONFIG_PARSE_FAILED"
+        verdict = "invalid"
+    elif all_findings:
+        machine_code = machine_codes[0] if machine_codes else "CONFIG_HAS_WARNINGS"
+        verdict = "valid_with_warnings"
+    else:
+        machine_code = "CONFIG_OK"
+        verdict = "valid"
+
+    summary = (
+        f"{detected_format} config: {verdict}"
+        f" ({len(all_findings)} finding(s))"
+    )
+
+    result: dict[str, Any] = {
+        "valid": parse_ok,
+        "verdict": verdict,
+        "format": detected_format,
+        "findings": all_findings,
+        "machine_code": machine_code,
+        "summary": summary,
+    }
+    if subresults:
+        result["subresults"] = subresults
+
+    return _success_response(
+        result,
+        tool="config_preflight",
+        findings=all_findings or None,
+        machine_code=machine_code,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Composite: structured_data_compare
+# ---------------------------------------------------------------------------
+
+
+def structured_data_compare(
+    a: str,
+    b: str,
+    format: str = "json",
+    ignore_object_order: bool = True,
+    ignore_array_order: bool = False,
+    max_diffs: int = 50,
+) -> dict:
+    """Composite: compare structured config/data output.
+
+    Calls json_compare, json_canonicalize, and json_shape.  Returns
+    a single equal/not-equal verdict with structured diffs.
+    """
+    for label, val in [("a", a), ("b", b)]:
+        if not isinstance(val, str):
+            return _error_response(
+                "invalid_arguments",
+                f"{label} must be a string",
+                tool="structured_data_compare",
+            )
+
+    if format != "json":
+        return _error_response(
+            "invalid_arguments",
+            f"format must be 'json' (got '{format}')",
+            tool="structured_data_compare",
+        )
+
+    all_findings: list[dict] = []
+    subresults: dict[str, Any] = {}
+
+    # 1. Validate both sides
+    try:
+        va = validate_json(a)
+        vb = validate_json(b)
+        valid_a = va.get("ok") is not False and va.get("result", {}).get("valid", False)
+        valid_b = vb.get("ok") is not False and vb.get("result", {}).get("valid", False)
+        subresults["validate_a"] = {"valid": valid_a}
+        subresults["validate_b"] = {"valid": valid_b}
+        if not valid_a:
+            all_findings.append({
+                "code": "INVALID_JSON_A",
+                "severity": "error",
+                "message": va.get("result", {}).get("error", "Invalid JSON in a"),
+            })
+        if not valid_b:
+            all_findings.append({
+                "code": "INVALID_JSON_B",
+                "severity": "error",
+                "message": vb.get("result", {}).get("error", "Invalid JSON in b"),
+            })
+    except Exception as e:
+        all_findings.append({
+            "code": "INTERNAL_ERROR",
+            "severity": "error",
+            "message": str(e),
+        })
+
+    if not valid_a or not valid_b:
+        return _success_response(
+            {
+                "equal": False,
+                "valid_a": valid_a,
+                "valid_b": valid_b,
+                "findings": all_findings,
+                "machine_code": "INVALID_INPUT",
+                "summary": "One or both inputs are not valid JSON",
+            },
+            tool="structured_data_compare",
+            findings=all_findings or None,
+            machine_code="INVALID_INPUT",
+        )
+
+    # 2. json_compare
+    try:
+        jc = json_compare(
+            a, b,
+            ignore_object_order=ignore_object_order,
+            ignore_array_order=ignore_array_order,
+            max_diffs=max_diffs,
+        )
+        if jc.get("ok") is not False:
+            result = jc.get("result", {})
+            subresults["json_compare"] = {
+                "equal": result.get("equal", False),
+                "diff_count": result.get("diff_count", 0),
+            }
+            if not result.get("equal", False):
+                diffs = result.get("diffs", [])
+                for d in diffs[:max_diffs]:
+                    all_findings.append({
+                        "code": "VALUE_DIFF",
+                        "severity": "info",
+                        "message": f"{d.get('path', '/')}: {d.get('kind', 'unknown')}",
+                    })
+        else:
+            all_findings.append({
+                "code": "COMPARE_ERROR",
+                "severity": "error",
+                "message": jc.get("error", "json_compare failed"),
+            })
+    except Exception as e:
+        all_findings.append({
+            "code": "INTERNAL_ERROR",
+            "severity": "error",
+            "message": str(e),
+        })
+
+    # 3. Shape comparison
+    try:
+        sa = json_shape(a)
+        sb = json_shape(b)
+        if sa.get("ok") is not False and sb.get("ok") is not False:
+            shape_a = sa.get("result", {})
+            shape_b = sb.get("result", {})
+            subresults["shape_a"] = shape_a
+            subresults["shape_b"] = shape_b
+            if shape_a.get("type") != shape_b.get("type"):
+                all_findings.append({
+                    "code": "TYPE_MISMATCH",
+                    "severity": "warn",
+                    "message": (
+                        f"Type mismatch: a={shape_a.get('type')}, "
+                        f"b={shape_b.get('type')}"
+                    ),
+                })
+    except Exception:
+        pass
+
+    # --- Verdict ---
+    # Use json_compare result for equality, not findings severity
+    jc_equal = subresults.get("json_compare", {}).get("equal", True)
+    equal = jc_equal and not any(f["severity"] in ("error", "warn") for f in all_findings)
+    if not equal:
+        machine_code = "DATA_DIFF"
+    else:
+        machine_code = "DATA_EQUAL"
+
+    diff_count = sum(1 for f in all_findings if f["code"] == "VALUE_DIFF")
+    summary = (
+        "Equal" if equal
+        else f"Different ({diff_count} diff(s), {len(all_findings)} finding(s))"
+    )
+
+    result: dict[str, Any] = {
+        "equal": equal,
+        "valid_a": valid_a,
+        "valid_b": valid_b,
+        "findings": all_findings,
+        "machine_code": machine_code,
+        "summary": summary,
+    }
+    if subresults:
+        result["subresults"] = subresults
+
+    return _success_response(
+        result,
+        tool="structured_data_compare",
+        findings=all_findings or None,
+        machine_code=machine_code,
+    )

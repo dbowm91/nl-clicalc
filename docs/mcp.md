@@ -138,7 +138,7 @@ Explain differences between two strings with detailed codepoint information.
 - `include_codepoints` (boolean, optional): Include codepoint details (default true)
 - `include_context` (boolean, optional): Include context notes (default true)
 
-**Tier:** 2
+**Tier:** 1
 **Tags:** `text`, `diff`, `unicode`, `comparison`
 
 **Returns:**
@@ -231,7 +231,7 @@ Truncate a string to a specified number of grapheme clusters (user-perceived cha
 - `text` (string): Input string to truncate
 - `max_graphemes` (integer): Maximum number of grapheme clusters to return
 
-**Tier:** 1
+**Tier:** 3
 **Tags:** `text`, `truncation`, `unicode`
 
 **Returns:**
@@ -419,7 +419,7 @@ Validate TOML configuration files (Cargo.toml, pyproject.toml, etc.) and report 
 - `text` (string): TOML document string to validate
 - `detail` (string, optional): "summary" | "normal" | "full" (default "normal")
 
-**Tier:** 2
+**Tier:** 1
 **Tags:** `validation`, `structured-data`, `toml`, `config`, `rust`, `python`
 
 **Returns:**
@@ -562,7 +562,7 @@ Compare two JSON documents semantically, ignoring formatting and key order.
 - `max_diffs` (integer, optional): Maximum number of differences to report (default 50)
 - `detail` (string, optional): "summary" | "normal" | "full" (default "normal")
 
-**Tier:** 2
+**Tier:** 1
 **Tags:** `json`, `structured-data`, `comparison`, `config`
 
 **Returns:**
@@ -684,7 +684,7 @@ Escape text for various output formats. Safely quote text for shell, JSON, regex
 - `mode` (string): Escape mode
 - `detail` (string, optional): "summary" | "normal" | "full" (default "normal")
 
-**Tier:** 2
+**Tier:** 1
 **Tags:** `text`, `escape`, `encoding`, `shell`, `json`, `regex`
 
 **Available Modes:**
@@ -723,7 +723,7 @@ Unescape text from various formats.
 - `mode` (string): Unescape mode
 - `detail` (string, optional): "summary" | "normal" | "full" (default "normal")
 
-**Tier:** 2
+**Tier:** 1
 **Tags:** `text`, `escape`, `encoding`, `shell`, `json`, `regex`
 
 **Available Modes:**

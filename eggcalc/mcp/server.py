@@ -40,12 +40,14 @@ from .schemas import (
 _mcp_defaults_configured: bool = False
 _mcp_defaults_lock = threading.Lock()
 from .tools import (
-    _sanitize_error,
     canonicalize_text_mcp,
     cargo_toml_inspect_mcp,
     code_fence_extract_mcp,
+    command_preflight,
+    config_preflight,
     constant_lookup,
     dotenv_validate_mcp,
+    edit_preflight,
     escape_text,
     glob_match_mcp,
     identifier_analyze,
@@ -76,6 +78,7 @@ from .tools import (
     shell_argv_compare,
     shell_quote_join,
     shell_split,
+    structured_data_compare,
     text_count,
     text_diff_explain,
     text_equal,
@@ -164,6 +167,10 @@ TOOL_HANDLERS: dict[str, Any] = {
     "canonicalize_text": canonicalize_text_mcp,
     "prompt_input_inspect": prompt_input_inspect_mcp,
     "text_security_inspect": text_security_inspect,
+    "edit_preflight": edit_preflight,
+    "command_preflight": command_preflight,
+    "config_preflight": config_preflight,
+    "structured_data_compare": structured_data_compare,
 }
 
 MAX_REQUEST_BYTES = 1_000_000
