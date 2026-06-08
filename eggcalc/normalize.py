@@ -1570,7 +1570,7 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         return m.group(0)
 
     expression = re.sub(
-        r"^(-)(\d+(?:\+\d+)+)",
+        r"^\s*(-)(\d+(?:\+\d+)+)",
         _wrap_negative_compound,
         expression,
     )

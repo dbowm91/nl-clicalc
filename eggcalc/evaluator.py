@@ -882,6 +882,17 @@ def _lcm(*args: int) -> int:
     return result
 
 
+def _gcd(*args: int) -> int:
+    """Calculate greatest common divisor."""
+    if not args:
+        raise EvaluationError("gcd requires at least one argument")
+    validated = [_require_int(a, "gcd") for a in args]
+    result = abs(validated[0])
+    for arg in validated[1:]:
+        result = math.gcd(result, arg)
+    return result
+
+
 # === Prime functions ===
 
 
@@ -1641,7 +1652,7 @@ class Evaluator(ast.NodeVisitor):
         # Factorial and combinatorics
         "factorial": _safe_factorial,
         "fact": _safe_factorial,
-        "gcd": math.gcd,
+        "gcd": _gcd,
         "lcm": _lcm,
         "perm": _perm,
         "comb": _comb,
