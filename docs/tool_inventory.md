@@ -14,7 +14,7 @@ Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLE
 | 4 | `code_fence_extract` | markdown | 2 | yes | no | yes | yes | Extract fenced code blocks with line ranges and fingerprints |
 | 5 | `command_preflight` | shell | 1 | yes | no | yes | yes | Composite: analyze command before execution |
 | 6 | `config_preflight` | config | 1 | yes | no | yes | yes | Composite: validate config text with format auto-detect |
-| 7 | `constant_lookup` | math | 2 | yes | no | no | yes | Physical constant lookup (avogadro, planck, etc.) |
+| 7 | `constant_lookup` | math | 2 | yes | no | yes | yes | Physical constant lookup (avogadro, planck, etc.) |
 | 8 | `dotenv_validate` | config | 2 | yes | no | yes | yes | Validate .env key=value text with duplicate and expansion detection |
 | 9 | `edit_preflight` | patch | 1 | yes | no | yes | yes | Composite: validate edit before applying (replace/patch/line_range) |
 | 10 | `escape_text` | text | 1 | yes | no | yes | yes | Escape text for various output formats |
@@ -27,7 +27,7 @@ Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLE
 | 17 | `json_compare` | json | 1 | yes | no | yes | yes | Semantic JSON comparison |
 | 18 | `json_extract` | json | 2 | yes | no | yes | yes | JSON Pointer extraction (RFC 6901) |
 | 19 | `json_query` | json | 1 | yes | no | yes | yes | JSON Pointer query (RFC 6901) |
-| 20 | `json_shape` | json | 3 | yes | no | no | yes | Analyze JSON structure without values |
+| 20 | `json_shape` | json | 3 | yes | no | yes | yes | Analyze JSON structure without values |
 | 21 | `line_range_compare` | text | 2 | yes | no | yes | yes | Compare line ranges from two texts |
 | 22 | `line_range_extract` | text | 1 | yes | no | yes | yes | Extract line ranges with offsets and fingerprints |
 | 23 | `list_compare` | list | 2 | yes | yes | yes | yes | List comparison (ordered/set/multiset) |
@@ -42,8 +42,8 @@ Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLE
 | 32 | `path_normalize` | path | 0 | yes | no | yes | yes | Normalize path with platform semantics |
 | 33 | `path_scope_check` | path | 2 | yes | no | yes | yes | Lexical scope check (no symlink resolution) |
 | 34 | `prompt_input_inspect` | text | 2 | yes | no | yes | yes | Detect prompt injection (hidden chars, instruction phrases, ANSI escapes) |
-| 35 | `regex_finditer` | regex | 1 | yes | no | no | yes | Find all regex matches with positions |
-| 36 | `regex_safety_check` | regex | 1 | yes | no | no | yes | Check regex for catastrophic backtracking |
+| 35 | `regex_finditer` | regex | 1 | yes | no | yes | yes | Find all regex matches with positions |
+| 36 | `regex_safety_check` | regex | 1 | yes | no | yes | yes | Check regex for catastrophic backtracking |
 | 37 | `shell_quote_join` | shell | 2 | yes | no | yes | yes | Safely quote argv tokens into shell string |
 | 38 | `shell_split` | shell | 2 | yes | no | yes | yes | Parse shell command into argv with risk detection |
 | 39 | `structured_data_compare` | json | 2 | yes | no | yes | yes | Composite: compare JSON data with diffs and shape analysis |
@@ -63,8 +63,8 @@ Canonical reference for all MCP tools exposed by `eggcalc.mcp.server.TOOL_HANDLE
 | 53 | `toml_shape` | toml | 2 | yes | no | yes | yes | TOML structure analysis |
 | 54 | `unescape_text` | text | 1 | yes | no | yes | yes | Unescape text from various formats |
 | 55 | `unicode_policy_check` | unicode | 2 | yes | no | yes | yes | Apply named Unicode safety policy to text |
-| 56 | `unit_convert` | math | 2 | yes | no | no | yes | Unit conversion with factors |
-| 57 | `unit_info` | math | 2 | yes | no | no | yes | Unit metadata (canonical, category) |
+| 56 | `unit_convert` | math | 2 | yes | no | yes | yes | Unit conversion with factors |
+| 57 | `unit_info` | math | 2 | yes | no | yes | yes | Unit metadata (canonical, category) |
 | 58 | `validate_brackets` | validation | 1 | yes | yes | yes | yes | Bracket balance checking |
 | 59 | `validate_json` | validation | 0 | yes | yes | yes | yes | JSON parsing validation |
 | 60 | `validate_regex` | regex | 1 | yes | yes | yes | yes | Regex pattern testing against samples |

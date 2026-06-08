@@ -9,7 +9,7 @@ import json
 import pathlib
 import re
 
-from eggcalc.mcp.schemas import TOOL_SCHEMAS, TOOL_METADATA
+from eggcalc.mcp.schemas import TOOL_METADATA, TOOL_PROFILES, TOOL_SCHEMAS
 from eggcalc.mcp.server import TOOL_HANDLERS
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -154,6 +154,16 @@ class TestSourceOfTruthConsistency:
         )
 
 
+HARNESS_TASK_PROFILES = {
+    "codegg_preflight", "codegg_patch", "codegg_config",
+    "codegg_shell", "codegg_unicode_security",
+}
+
+MODEL_FACING_PROFILES = {"default", "codegg_core", "codegg_core_min"}
+
+MATH_CATEGORIES = {"math"}
+
+
 class TestToolMetadata:
     """Verify TOOL_METADATA is complete and consistent."""
 
@@ -251,12 +261,10 @@ class TestToolProfiles:
     """Verify TOOL_PROFILES is complete and consistent."""
 
     def test_profiles_dict_exists(self):
-        from eggcalc.mcp.schemas import TOOL_PROFILES
         assert isinstance(TOOL_PROFILES, dict)
         assert len(TOOL_PROFILES) > 0
 
     def test_all_metadata_profile_names_exist_in_profiles_dict(self):
-        from eggcalc.mcp.schemas import TOOL_PROFILES
         all_profile_names = set()
         for meta in TOOL_METADATA.values():
             all_profile_names.update(meta.get("profiles", []))
@@ -264,14 +272,12 @@ class TestToolProfiles:
             assert name in TOOL_PROFILES, f"Profile '{name}' referenced in metadata but not in TOOL_PROFILES"
 
     def test_profile_tool_lists_are_sorted(self):
-        from eggcalc.mcp.schemas import TOOL_PROFILES
         for profile_name, tool_list in TOOL_PROFILES.items():
             assert tool_list == sorted(tool_list), (
                 f"Profile '{profile_name}' tool list is not sorted"
             )
 
     def test_profile_tool_lists_only_contain_known_tools(self):
-        from eggcalc.mcp.schemas import TOOL_PROFILES
         known_tools = set(TOOL_HANDLERS.keys())
         for profile_name, tool_list in TOOL_PROFILES.items():
             unknown = set(tool_list) - known_tools
@@ -280,7 +286,6 @@ class TestToolProfiles:
             )
 
     def test_full_profile_contains_all_non_hidden_tools(self):
-        from eggcalc.mcp.schemas import TOOL_PROFILES
         full_tools = set(TOOL_PROFILES.get("full", []))
         expected = {
             name for name, meta in TOOL_METADATA.items()
@@ -293,7 +298,6 @@ class TestToolProfiles:
         )
 
     def test_codegg_core_min_is_subset_of_codegg_core(self):
-        from eggcalc.mcp.schemas import TOOL_PROFILES
         core_min = set(TOOL_PROFILES.get("codegg_core_min", []))
         core = set(TOOL_PROFILES.get("codegg_core", []))
         assert core_min.issubset(core), (
@@ -309,3 +313,101 @@ class TestToolProfiles:
         from eggcalc.mcp.schemas import TOOL_PROFILES
         for name in PROFILE_NAMES:
             assert name in TOOL_PROFILES, f"PROFILE_NAMES contains '{name}' not in TOOL_PROFILES"
+
+
+class TestProfileInvariants:
+    """Verify cross-profile and metadata/profile consistency invariants."""
+
+    def test_no_harness_only_tool_in_codegg_core_min(self):
+        """Invariant 1: codegg_core_min must not expose harness-only tools to LLM."""
+        core_min_tools = TOOL_PROFILES.get("codegg_core_min", [])
+        violations = []
+        for tool in core_min_tools:
+            meta = TOOL_METADATA.get(tool, {})
+            if meta.get("llm_exposure") == "harness_only":
+                violations.append(tool)
+        assert not violations, (
+            f"harness_only tools in codegg_core_min (should not be exposed to LLM): "
+            f"{sorted(violations)}"
+        )
+
+    def test_no_harness_only_tool_in_codegg_core(self):
+        """Invariant 2: codegg_core must not expose harness-only tools to LLM."""
+        core_tools = TOOL_PROFILES.get("codegg_core", [])
+        violations = []
+        for tool in core_tools:
+            meta = TOOL_METADATA.get(tool, {})
+            if meta.get("llm_exposure") == "harness_only":
+                violations.append(tool)
+        assert not violations, (
+            f"harness_only tools in codegg_core (should not be exposed to LLM): "
+            f"{sorted(violations)}"
+        )
+
+    def test_harness_only_tools_covered_by_harness_profiles(self):
+        """Invariant 3: every harness_only tool appears in at least one harness/task profile."""
+        harness_only_tools = {
+            name for name, meta in TOOL_METADATA.items()
+            if meta.get("llm_exposure") == "harness_only"
+        }
+        uncovered = []
+        for tool in sorted(harness_only_tools):
+            tool_profiles = set(TOOL_METADATA[tool].get("profiles", []))
+            if not tool_profiles.intersection(HARNESS_TASK_PROFILES):
+                uncovered.append(tool)
+        assert not uncovered, (
+            f"harness_only tools missing from all harness/task profiles "
+            f"({sorted(HARNESS_TASK_PROFILES)}): {uncovered}"
+        )
+
+    def test_default_composite_tools_in_model_facing_profile(self):
+        """Invariant 4: composite tools with default exposure appear in a model-facing profile."""
+        default_composites = {
+            name for name, meta in TOOL_METADATA.items()
+            if meta.get("composite") and meta.get("llm_exposure") == "default"
+        }
+        uncovered = []
+        for tool in sorted(default_composites):
+            tool_profiles = set(TOOL_METADATA[tool].get("profiles", []))
+            if not tool_profiles.intersection(MODEL_FACING_PROFILES):
+                uncovered.append(tool)
+        assert not uncovered, (
+            f"composite tools with llm_exposure=default missing from all model-facing profiles "
+            f"({sorted(MODEL_FACING_PROFILES)}): {uncovered}"
+        )
+
+    def test_human_math_contains_only_math_category(self):
+        """Invariant 6a: human_math profile only contains math-category tools."""
+        human_math_tools = TOOL_PROFILES.get("human_math", [])
+        non_math = []
+        for tool in human_math_tools:
+            meta = TOOL_METADATA.get(tool, {})
+            if meta.get("category") not in MATH_CATEGORIES:
+                non_math.append((tool, meta.get("category")))
+        assert not non_math, (
+            f"non-math tools in human_math profile: {sorted(non_math)}"
+        )
+
+    def test_human_math_excludes_preflight_and_composite(self):
+        """Invariant 6b: human_math excludes codegg preflight and composite tools."""
+        human_math_tools = set(TOOL_PROFILES.get("human_math", []))
+        preflight_composites = {
+            name for name in human_math_tools
+            if name.startswith(("edit_preflight", "command_preflight", "config_preflight", "text_security_inspect"))
+            or TOOL_METADATA.get(name, {}).get("composite")
+            or name in {"patch_apply_check", "path_scope_check"}
+        }
+        # Also check that no tool in human_math is a codegg_* profile tool
+        codegg_preflight_tools = set()
+        for profile in HARNESS_TASK_PROFILES:
+            codegg_preflight_tools.update(TOOL_PROFILES.get(profile, []))
+        violations = human_math_tools.intersection(codegg_preflight_tools).union(preflight_composites)
+        # Filter to only tools that are composite or in a harness profile
+        actual_violations = {
+            t for t in violations
+            if TOOL_METADATA.get(t, {}).get("composite")
+            or TOOL_METADATA.get(t, {}).get("llm_exposure") == "harness_only"
+        }
+        assert not actual_violations, (
+            f"composite/harness_only tools in human_math profile: {sorted(actual_violations)}"
+        )

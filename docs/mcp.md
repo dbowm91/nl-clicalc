@@ -1234,6 +1234,48 @@ Tier 0 + Tier 1 + Tier 2 config/validation tools. For agents working with config
 
 **Use when:** Working on Rust projects with Cargo.toml, lockfiles, or package-manager-specific workflows.
 
+### Filtering tools/list
+
+The `tools/list` method supports these filters to narrow the returned tool set:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `profile` | string | Return only tools in the named profile (e.g., `"codegg_core_min"`). Unknown profile names fail closed with a JSON-RPC error. |
+| `tier` | integer | Return only tools at the given tier (0, 1, 2, or 3). |
+| `tags` | array of strings | Return tools that have **all** listed tags. |
+| `names` | array of strings | Return only the listed tool names (subset selection). |
+| `schema_detail` | string | `"compact"`, `"normal"`, or `"full"` — controls schema verbosity per-request. Overrides the global default. |
+
+**Schema detail behavior:**
+
+- `"full"` — Complete schema with descriptions, examples, defaults, and verbose help.
+- `"normal"` — Currently aliases `"full"` (same output). Reserved for future differentiation.
+- `"compact"` — Tool names, types, required fields, and enums only. Removes verbose descriptions and defaults to reduce context overhead.
+
+Unknown `profile` values return a JSON-RPC error code `-32602` (invalid params) rather than silently returning an empty tool list.
+
+### profiles/list
+
+A `profiles/list` request returns all available profile names, their tool lists, and tool counts:
+
+```json
+{"jsonrpc": "2.0", "id": 1, "method": "profiles/list"}
+```
+
+**Response:**
+```json
+{
+  "result": {
+    "active": "full",
+    "profiles": {
+      "full": {"tools": ["math_eval", ...], "tool_count": 63},
+      "codegg_core": {"tools": ["canonicalize_text", ...], "tool_count": 18},
+      ...
+    }
+  }
+}
+```
+
 ---
 
 ## AI Agent Integration Example

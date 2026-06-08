@@ -181,12 +181,12 @@ See [MCP Tool Inventory](tool_inventory.md) for the complete list.
 
 ### Recommended Default Profile
 
-Use `codegg_core` or `codegg_core_min` as the default model-facing profile:
+Use `codegg_core` or `codegg_core_min` as the default model-facing profile.
 
-- **`codegg_core_min`** — Ultra-compact: `validate_json`, `text_diff_explain`, `path_scope_check`, `patch_apply_check`, `text_replace_check`, `shell_split`, `unicode_policy_check`
-- **`codegg_core`** — Practical default: adds `validate_toml`, `text_inspect`, `text_equal`, `path_normalize`, `regex_safety_check`, `identifier_inspect`, `cargo_toml_inspect`
+- `codegg_core_min` — Ultra-compact model-facing profile. Prefer composite workflow tools and a small number of safe reasoning primitives. This is the best default for small-context or high-tool-noise models.
+- `codegg_core` — Practical model-facing profile. Includes `codegg_core_min` plus additional safe reasoning tools for JSON/TOML validation, text inspection, diffing, identifiers, and repository-adjacent checks.
 
-Do not expose all 64 tools by default. The `full` profile is available for debugging but should not be the model-facing default.
+Low-level primitives marked `harness_only` are intentionally kept out of these model-facing profiles. They belong in `codegg_preflight` and task-specific profiles such as `codegg_patch`, `codegg_shell`, and `codegg_unicode_security`.
 
 ### Task-Based Profile Selection
 
@@ -242,21 +242,24 @@ EGGCALC_MCP_SCHEMA_DETAIL=compact calc --mcp
 
 Compact mode preserves tool names, types, and enums while removing verbose descriptions and defaults.
 
+**Note:** `normal` schema detail currently aliases `full` (same output). Use `compact` for reduced context.
+
 ## MCP Profile Selection
 
 ### Model-Facing Profiles (Recommended for Codegg)
 
-Use `codegg_core` for the full model-facing tool surface:
+`codegg_core_min` and `codegg_core` are the primary model-facing profiles. Composite tools are preferred for model-facing workflows — they combine multiple low-level checks into a single call.
 
-```bash
-calc --mcp --mcp-profile codegg_core --mcp-schema-detail compact
-```
-
-Use `codegg_core_min` for minimal model-facing exposure (composite workflow tools only):
+**Launch commands:**
 
 ```bash
 calc --mcp --mcp-profile codegg_core_min --mcp-schema-detail compact
+calc --mcp --mcp-profile codegg_core --mcp-schema-detail compact
 ```
+
+Use `codegg_core_min` for minimal model-facing exposure (composite workflow tools only). This is composite-first and the best default for small-context or high-tool-noise models.
+
+Use `codegg_core` for the full model-facing tool surface. Includes `codegg_core_min` plus additional safe reasoning primitives.
 
 ### Harness/Preflight Profiles (Automatic Checks)
 
