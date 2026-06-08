@@ -91,7 +91,7 @@ def get_version() -> str:
     raise SystemExit(f"ERROR: __version__ not found in {init_path}")
 
 
-def get_module_code(module_name: str) -> tuple[str, list[str]]:
+def get_module_code(module_name: str) -> tuple[str, list[str], list[str]]:
     """Extract code from a module, removing docstring and imports that will be inlined.
 
     Handles nested paths like 'exact/primitives' or 'mcp/tools'.
@@ -135,6 +135,8 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     cleaned: list[str] = []
     in_main_block = False
     in_multiline_import = False
+    exact_import_globals: list[str] = []
+    _skip_exact_names: set[str] = set()
 
     def is_relative_import_stripped(stripped: str) -> bool:
         """Check if a relative import should be skipped because module is inlined."""
@@ -208,6 +210,38 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
                     is_inlined_module = True
                     break
             if not (line and line[0] in " \t"):
+                # Top-level multi-line import
+                # Check if it's from ..exact or .exact — if so, extract aliases as globals
+                if "from ..exact import" in stripped or "from .exact import" in stripped:
+                    # Collect all names from this multi-line import block
+                    _exact_names = []
+                    _first_line = stripped.split("import ", 1)[1] if "import " in stripped else ""
+                    if "(" in _first_line:
+                        _first_part = _first_line.split("(", 1)[1].strip()
+                        if _first_part:
+                            _exact_names.append(_first_part)
+                    i += 1
+                    while i < len(code_lines):
+                        _l = code_lines[i].strip()
+                        if _l.startswith(")"):
+                            i += 1
+                            break
+                        _l = _l.rstrip(",").rstrip(")")
+                        if _l:
+                            _exact_names.append(_l)
+                        i += 1
+                    # Generate global assignments for each alias
+                    for _name in _exact_names:
+                        _name = _name.strip()
+                        if " as " in _name:
+                            _orig, _alias = _name.split(" as ", 1)
+                            exact_import_globals.append(f"{_alias.strip()} = {_orig.strip()}")
+                        elif _name:
+                            exact_import_globals.append(f"{_name} = {_name}")
+                    # Track which lines to skip (the for loop can't be controlled)
+                    _skip_exact_names = set(_exact_names)
+                    _skip_exact_names.add(")")  # Also skip the closing paren
+                    continue
                 in_multiline_import = True
                 continue
             elif is_inlined_module:
@@ -262,6 +296,13 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
 
         # Skip empty lines at start
         if not cleaned and line.strip() == "":
+            continue
+
+        # Skip bare import names and closing paren from ..exact imports
+        _check_name = stripped.rstrip(",").rstrip(")").strip()
+        if _skip_exact_names and (_check_name in _skip_exact_names or stripped.strip() in _skip_exact_names):
+            _skip_exact_names.discard(_check_name)
+            _skip_exact_names.discard(stripped.strip())
             continue
 
         cleaned.append(line)
@@ -341,6 +382,11 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     code = code.replace(
         "_evaluator._mcp_mode = True",
         "_mcp_mode = True",
+    )
+    # In single file, configure_default_evaluator is a module-level function
+    code = code.replace(
+        "_evaluator.configure_default_evaluator(",
+        "configure_default_evaluator(",
     )
 
     # Synthesis imports from exact submodules
@@ -490,7 +536,7 @@ def get_module_code(module_name: str) -> tuple[str, list[str]]:
     code = code.replace("_first_diff(", "first_diff(")
     code = code.replace("_levenshtein_distance(", "levenshtein_distance(")
 
-    return code, imports
+    return code, imports, exact_import_globals
 
 
 def build_single_file(output_path: str | None = None) -> str:
@@ -506,10 +552,11 @@ def build_single_file(output_path: str | None = None) -> str:
     # Collect all imports from all modules
     all_imports: list[str] = []
     all_module_code: list[str] = []
+    all_exact_globals: list[str] = []
 
     # Core calculator modules
     for mod in MODULES_CALC:
-        code, imports = get_module_code(mod)
+        code, imports, _ = get_module_code(mod)
         all_module_code.append(f"\n# === {mod}.py ===\n")
         all_module_code.append(code)
         all_imports.extend(imports)
@@ -517,7 +564,7 @@ def build_single_file(output_path: str | None = None) -> str:
     # Exact text tools
     all_module_code.append("\n# === Exact text tools ===\n")
     for mod in MODULES_EXACT:
-        code, imports = get_module_code(mod)
+        code, imports, _ = get_module_code(mod)
         all_module_code.append(f"\n# === {mod}.py ===\n")
         all_module_code.append(code)
         all_imports.extend(imports)
@@ -557,7 +604,8 @@ def build_single_file(output_path: str | None = None) -> str:
     ]
     all_module_code.append("\n# === MCP server ===\n")
     for mod in MODULES_MCP:
-        code, imports = get_module_code(mod)
+        code, imports, exact_globals = get_module_code(mod)
+        all_exact_globals.extend(exact_globals)
         # Rename conflicting MCP wrapper functions so exact versions aren't overwritten
         for fn_name in MCP_CONFLICT_FUNCTIONS:
             code = code.replace(f"def {fn_name}(", f"def _mcp_{fn_name}(", 1)
@@ -585,6 +633,13 @@ def build_single_file(output_path: str | None = None) -> str:
 
     # Add module code
     content.extend(all_module_code)
+
+    # Add exact module global aliases (from ..exact import ... as _xxx)
+    # These are needed because the top-level imports were stripped during processing
+    if all_exact_globals:
+        content.append("\n# === Exact module global aliases ===\n")
+        for g in all_exact_globals:
+            content.append(g + "\n")
 
     # Combined entry point
     content.append("\n# === Entry point ===\n")
@@ -675,7 +730,6 @@ if __name__ == "__main__":
                 # Extract module name
                 mod_name = stripped.split()[1].lstrip(".")
                 if mod_name in EXACT_MODULE_NAMES:
-                    indent = line[: len(line) - len(line.lstrip())]
                     indent = line[: len(line) - len(line.lstrip())]
                     after_from = stripped[len("from "):]
                     mod_and_import = after_from.split(" import ", 1)

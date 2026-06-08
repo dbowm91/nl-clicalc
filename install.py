@@ -67,7 +67,7 @@ def create_executable(source_path: str, install_dir: str) -> str:
             pass
         raise
 
-    os.chmod(dest_path, os.stat(dest_path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    os.chmod(dest_path, 0o755)
 
     return dest_path
 
@@ -205,10 +205,10 @@ def install_calc(install_dir: str, no_path: bool = False) -> bool:
     if added:
         print("calc is ready to use!")
         new_path = f"{install_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-        shell = os.path.expanduser("~/.zshrc") if os.path.exists(os.path.expanduser("~/.zshrc")) else os.path.expanduser("~/.bashrc")
+        shell_bin = "zsh" if os.path.exists(os.path.expanduser("~/.zshrc")) else "bash"
         print(f"\nSpawning shell with calc available...")
         subprocess.run(
-            ["bash", "-i"],
+            [shell_bin, "-i"],
             env={**os.environ, "PATH": new_path}
         )
 
@@ -244,7 +244,7 @@ def update_calc(install_dir: str) -> bool:
             pass
         raise
 
-    os.chmod(calc_path, os.stat(calc_path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    os.chmod(calc_path, 0o755)
 
     print(f"Updated calc at: {calc_path}")
     return True

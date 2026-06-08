@@ -1,8 +1,8 @@
 """
-User-defined configuration for clicalc.
+User-defined configuration for eggcalc.
 
 This file allows you to add custom units, constants, and functions.
-Edit this file to extend clicalc's functionality.
+Edit this file to extend eggcalc's functionality.
 
 Examples:
 ---------
