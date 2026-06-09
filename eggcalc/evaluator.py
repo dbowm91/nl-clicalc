@@ -2157,6 +2157,10 @@ class Evaluator(ast.NodeVisitor):
 
         result = self.UNARYOPS[op_class](operand)
 
+        # If the operation already returned a UnitValue (e.g., negating a UnitValue),
+        # return it directly to avoid nesting UnitValue inside UnitValue.
+        if isinstance(result, UnitValue):
+            return result
         if isinstance(operand, UnitValue):
             return UnitValue(result, operand.unit)
         return result

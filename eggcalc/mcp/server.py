@@ -909,6 +909,8 @@ def _handle_list_tools(request: dict) -> dict:
         return _invalid_request(request_id, "Invalid 'tier' parameter: expected integer")
     if tags_filter is not None and not isinstance(tags_filter, list):
         return _invalid_request(request_id, "Invalid 'tags' parameter: expected array")
+    if tags_filter is not None and not all(isinstance(t, str) for t in tags_filter):
+        return _invalid_request(request_id, "Invalid 'tags' parameter: all items must be strings")
     if names_filter is not None and not isinstance(names_filter, list):
         return _invalid_request(request_id, "Invalid 'names' parameter: expected array")
     if names_filter is not None and not all(isinstance(n, str) for n in names_filter):
