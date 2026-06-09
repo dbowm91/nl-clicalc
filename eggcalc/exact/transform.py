@@ -327,7 +327,16 @@ def _escape_json_string(text: str) -> str:
 
 def _escape_python_string(text: str) -> str:
     """Escape text as Python string literal."""
-    return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+    return (
+        "'"
+        + text.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+        .replace("\x00", "\\0")
+        + "'"
+    )
 
 
 def _escape_rust_string(text: str) -> str:

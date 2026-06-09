@@ -1544,9 +1544,9 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         expression = re.sub(pattern, replacement_fn, expression, flags=re.IGNORECASE)
 
     # Convert percentages (e.g., 50% -> 0.5, but not 5%3 which is modulo)
-    # Match % directly attached to a number or with optional space, NOT followed by a digit
-    # (negative lookahead ensures "5%3" stays as modulo, not "0.05" + "3")
-    expression = re.sub(r"(\d+(?:\.\d+)?)\s*%(?!\d)", lambda m: str(float(m.group(1)) / 100), expression)
+    # Match % directly attached to a number or with optional space, NOT followed by optional whitespace + digit
+    # (negative lookahead ensures "5%3" and "10 % 3" stay as modulo, not "0.05" + "3")
+    expression = re.sub(r"(\d+(?:\.\d+)?)\s*%(?!\s*\d)", lambda m: str(float(m.group(1)) / 100), expression)
 
     # Convert 'i' suffix to 'j' for complex numbers (e.g., 3+4i -> 3+4j)
     # Match: number followed by 'i' (not preceded by another letter)

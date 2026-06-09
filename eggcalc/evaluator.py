@@ -171,6 +171,9 @@ def _check_result_size(result: Any) -> Any:
                 raise EvaluationError("Result too large")
             if abs(result.value) > MAX_RESULT_VALUE:
                 raise EvaluationError("Result too large")
+        elif isinstance(result.value, int) and not isinstance(result.value, bool):
+            # Int values: skip float-specific checks, rely on digit count below
+            pass
         else:
             try:
                 if not math.isfinite(result.value):
@@ -462,7 +465,12 @@ def _safe_pow(base: float, exp: float) -> float:
                     "Cannot raise negative number to non-integer power"
                 )
     try:
-        result = pow(base, exp)
+        # For float base with large integer exponent, use int arithmetic
+        # to avoid float overflow (e.g., pow(5.0, 500) overflows but 5**500 is exact)
+        if isinstance(base, float) and isinstance(exp, int) and abs(exp) > 300:
+            result = pow(int(base), exp)
+        else:
+            result = pow(base, exp)
     except ZeroDivisionError:
         raise EvaluationError("Cannot raise zero to a negative power") from None
     except OverflowError:

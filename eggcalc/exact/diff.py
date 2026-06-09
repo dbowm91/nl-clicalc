@@ -107,7 +107,7 @@ def common_prefix_suffix(a: str, b: str) -> CommonPrefixSuffix:
         >>> common_prefix_suffix("hello world", "hello there")
         {'common_prefix_len': 6, 'common_suffix_len': 0}
         >>> common_prefix_suffix("testing", "ing")
-        {'common_prefix_len': 0, 'common_suffix_len': 0}
+        {'common_prefix_len': 0, 'common_suffix_len': 3}
     """
     # Find common prefix
     prefix_len = 0
@@ -173,18 +173,26 @@ def levenshtein_distance(a: str, b: str, max_len: int = MAX_LEVENSHTEIN_LEN) -> 
     return prev_row[len(b)]
 
 
-def longest_common_subsequence(a: str, b: str) -> str:
+def longest_common_subsequence(a: str, b: str, max_len: int = MAX_LEVENSHTEIN_LEN) -> str:
     """Find the longest common subsequence of two strings.
 
     Args:
         a: First string.
         b: Second string.
+        max_len: Maximum allowed length for either input string.
 
     Returns:
         The longest common subsequence as a string.
+
+    Raises:
+        ValueError: If either string exceeds max_len.
     """
     if not a or not b:
         return ""
+    if len(a) > max_len or len(b) > max_len:
+        raise ValueError(
+            f"Input strings too long ({len(a)}, {len(b)}); max {max_len}"
+        )
 
     m, n = len(a), len(b)
     dp = [[0] * (n + 1) for _ in range(m + 1)]
