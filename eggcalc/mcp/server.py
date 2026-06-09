@@ -1077,7 +1077,7 @@ def handle_request(request: Any) -> dict | None:
             )
 
     if "method" not in request:
-        return _invalid_request(request.get("id"), "Invalid Request: missing 'method'")
+        return _invalid_request(request_id, "Invalid Request: missing 'method'")
 
     method = request["method"]
     if not isinstance(method, str):
