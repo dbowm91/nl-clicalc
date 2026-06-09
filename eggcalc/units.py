@@ -44,6 +44,10 @@ class UnitValue:
         # limit for arbitrary-precision ints (enforced by _check_result_size).
 
     def __init__(self, value: float, unit: str | None = None) -> None:
+        # Normalize complex values with zero imaginary part to float
+        # to maintain hash contract (complex(5,0) == 5.0 but different hashes)
+        if isinstance(value, complex) and value.imag == 0:
+            value = value.real
         self.value = value
         self.unit = unit
         if isinstance(value, complex):
@@ -259,7 +263,8 @@ class UnitValue:
         if self.unit:
             if self.value == 0:
                 raise ZeroDivisionError("Cannot divide by zero UnitValue")
-            return UnitValue(other / self.value, f"1/{self.unit}")
+            simplified = _simplify_unit_string(f"1/{self.unit}") or f"1/{self.unit}"
+            return UnitValue(other / self.value, simplified)
         if self.value == 0:
             raise ZeroDivisionError("Cannot divide by zero UnitValue")
         return UnitValue(other / self.value, None)

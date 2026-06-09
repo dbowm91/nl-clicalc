@@ -1416,6 +1416,7 @@ def validate_regex(
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
     proc: multiprocessing.Process | None = None
+    acquired = False
     released = False
     try:
         if not _SPAWN_SEMAPHORE.acquire(timeout=_SPAWN_ACQUIRE_TIMEOUT):
@@ -1424,6 +1425,7 @@ def validate_regex(
                 f"Could not acquire spawn slot after {_SPAWN_ACQUIRE_TIMEOUT}s (all {MAX_CONCURRENT_SPAWNED} slots busy)",
                 tool="validate_regex",
             )
+        acquired = True
         try:
             proc = ctx.Process(
                 target=_regex_test_worker,
@@ -1453,7 +1455,7 @@ def validate_regex(
     except Exception as e:
         return _error_response("internal_error", str(e), tool="validate_regex")
     finally:
-        if not released:
+        if acquired and not released:
             _SPAWN_SEMAPHORE.release()
 
 
@@ -1705,6 +1707,7 @@ def regex_finditer(
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
     proc: multiprocessing.Process | None = None
+    acquired = False
     released = False
     try:
         if not _SPAWN_SEMAPHORE.acquire(timeout=_SPAWN_ACQUIRE_TIMEOUT):
@@ -1713,6 +1716,7 @@ def regex_finditer(
                 f"Could not acquire spawn slot after {_SPAWN_ACQUIRE_TIMEOUT}s (all {MAX_CONCURRENT_SPAWNED} slots busy)",
                 tool="regex_finditer",
             )
+        acquired = True
         try:
             proc = ctx.Process(
                 target=_regex_finditer_worker,
@@ -1742,7 +1746,7 @@ def regex_finditer(
     except Exception as e:
         return _error_response("internal_error", str(e), tool="regex_finditer")
     finally:
-        if not released:
+        if acquired and not released:
             _SPAWN_SEMAPHORE.release()
 
 
@@ -3826,6 +3830,7 @@ def dotenv_validate_mcp(
     ctx = multiprocessing.get_context("spawn")
     queue: multiprocessing.Queue = ctx.Queue()
     proc: multiprocessing.Process | None = None
+    acquired = False
     released = False
     try:
         if not _SPAWN_SEMAPHORE.acquire(timeout=_SPAWN_ACQUIRE_TIMEOUT):
@@ -3834,6 +3839,7 @@ def dotenv_validate_mcp(
                 f"Could not acquire spawn slot after {_SPAWN_ACQUIRE_TIMEOUT}s (all {MAX_CONCURRENT_SPAWNED} slots busy)",
                 tool="dotenv_validate",
             )
+        acquired = True
         try:
             proc = ctx.Process(
                 target=_dotenv_validate_worker,
@@ -3863,7 +3869,7 @@ def dotenv_validate_mcp(
     except Exception as e:
         return _error_response("internal_error", str(e), tool="dotenv_validate")
     finally:
-        if not released:
+        if acquired and not released:
             _SPAWN_SEMAPHORE.release()
 
 
