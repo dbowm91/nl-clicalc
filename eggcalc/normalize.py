@@ -2178,7 +2178,7 @@ def _add_same_unit_division_parens(expression: str) -> str:
         # "((5*m)/3)*s" = "1.666... m*s".
         return f"{left_unit}/({denom}*{right_unit})"
 
-    return re.sub(r'\b([a-zA-Z]+)/(\d+)\*([a-zA-Z]+)\b', _replace, expression)
+    return re.sub(r'\b([a-zA-Z]+)/(\d+(?:\.\d+)?)\*([a-zA-Z]+)\b', _replace, expression)
 
 
 def _handle_unit_conversion_from_tokens(tokens: list) -> list:

@@ -1060,9 +1060,7 @@ def handle_request(request: Any) -> dict | None:
             f"Invalid Request: jsonrpc must be '2.0', got '{jsonrpc_version}'",
         )
 
-    if "method" not in request:
-        return _invalid_request(request.get("id"), "Invalid Request: missing 'method'")
-
+    # Validate 'id' type before checking 'method' (per JSON-RPC 2.0 spec)
     request_id = request.get("id")
     if request_id is not None:
         # bool is a subclass of int in Python, so exclude it explicitly
@@ -1077,6 +1075,9 @@ def handle_request(request: Any) -> dict | None:
                 None,
                 f"Invalid Request: 'id' exceeds maximum length of {MAX_REQUEST_ID_LENGTH}",
             )
+
+    if "method" not in request:
+        return _invalid_request(request.get("id"), "Invalid Request: missing 'method'")
 
     method = request["method"]
     if not isinstance(method, str):

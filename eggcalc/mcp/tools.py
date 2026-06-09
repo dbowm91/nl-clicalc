@@ -16,7 +16,7 @@ import threading
 from collections import deque
 from typing import Any
 
-from .. import EvaluationError, evaluate_raw
+from .. import EvaluationError
 from ..evaluator import evaluate_with_timeout
 from ..exact import (
     check_brackets as _check_brackets,

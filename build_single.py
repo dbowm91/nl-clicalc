@@ -211,8 +211,11 @@ def get_module_code(module_name: str) -> tuple[str, list[str], list[str]]:
                     break
             if not (line and line[0] in " \t"):
                 # Top-level multi-line import
-                # Check if it's from ..exact or .exact — if so, extract aliases as globals
-                if "from ..exact import" in stripped or "from .exact import" in stripped:
+                # Check if it's from ..exact (with or without submodule) —
+                # if so, extract aliases as globals
+                if (stripped.startswith("from ..exact ") or
+                    stripped.startswith("from .exact ") or
+                    stripped.startswith("from ..exact.")):
                     # Collect all names from this multi-line import block
                     _exact_names = []
                     _first_line = stripped.split("import ", 1)[1] if "import " in stripped else ""
@@ -643,6 +646,14 @@ def build_single_file(output_path: str | None = None) -> str:
         for g in all_exact_globals:
             content.append(g + "\n")
 
+    # Add patch function aliases needed by MCP tools.
+    # The lazy imports in tools.py use "as _patch_apply_check" / "as _patch_summary"
+    # but build_single.py strips those import blocks. The unprefixed functions are
+    # globals from the inlined patch.py, so we create the aliases at module level.
+    content.append("\n# === Patch function aliases for MCP tools ===\n")
+    content.append("_patch_apply_check = patch_apply_check\n")
+    content.append("_patch_summary = patch_summary\n")
+
     # Combined entry point
     content.append("\n# === Entry point ===\n")
     content.append("""
@@ -663,10 +674,17 @@ def _main():
     parser.add_argument("-i", "--interactive", action="store_true", help="Start interactive REPL mode")
     parser.add_argument("-s", "--show", action="store_true", help="Show expression in output (default for interactive)")
     parser.add_argument("--verbose", action="store_true", help="Show expression in output")
+    parser.add_argument("--mcp-profile", metavar="<profile>", help="MCP server tool profile filter")
+    parser.add_argument("--mcp-schema-detail", action="store_true", help="Show full JSON Schema in MCP tools/list")
     args = parser.parse_args()
 
     if args.mcp:
-        return mcp_main()
+        sys.argv = ["eggcalc", "--mcp"]
+        if args.mcp_profile:
+            sys.argv.extend(["--mcp-profile", args.mcp_profile])
+        if args.mcp_schema_detail:
+            sys.argv.append("--mcp-schema-detail")
+        return normalize_main()
     elif args.usage:
         print_help()
         return 0
@@ -686,6 +704,10 @@ def _main():
             sys.argv.append("-i")
         if args.show:
             sys.argv.append("-s")
+        if args.mcp_profile:
+            sys.argv.extend(["--mcp-profile", args.mcp_profile])
+        if args.mcp_schema_detail:
+            sys.argv.append("--mcp-schema-detail")
         return normalize_main()
     else:
         # No expression given - forward recognized flags to normalize_main
@@ -698,6 +720,14 @@ def _main():
             sys.argv.append("-s")
         if args.verbose:
             sys.argv.append("--verbose")
+        if args.json:
+            sys.argv.append("--json")
+        if args.quiet:
+            sys.argv.append("-q")
+        if args.mcp_profile:
+            sys.argv.extend(["--mcp-profile", args.mcp_profile])
+        if args.mcp_schema_detail:
+            sys.argv.append("--mcp-schema-detail")
         if len(sys.argv) > 1:
             return normalize_main()
         parser.print_help()
