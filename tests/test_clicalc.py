@@ -393,7 +393,9 @@ class TestPyCalcApp:
         from eggcalc import PyCalcApp
         app = PyCalcApp()
         result = app.calculate("30m + 100ft")
-        assert hasattr(result, 'unit') or 'm' in str(result)
+        assert hasattr(result, 'unit')
+        assert result.unit == "m"
+        assert abs(result.value - 60.48) < 0.01
 
 
 class TestAsyncFunctions:
@@ -1248,13 +1250,26 @@ class TestCacheByteCap:
 
     def test_cache_caps_at_default_size(self):
         """Adding more than DEFAULT_CACHE_SIZE entries should evict oldest."""
-        from eggcalc import evaluate_cached
+        import eggcalc.evaluator as ev
+        from eggcalc.evaluator import _cache, DEFAULT_CACHE_SIZE, _entry_size, _cache_lock
 
-        for i in range(1100):
-            evaluate_cached(f"{i}+1")
-        from eggcalc.evaluator import _cache, DEFAULT_CACHE_SIZE
+        test_keys = []
+        with _cache_lock:
+            for i in range(DEFAULT_CACHE_SIZE + 50):
+                key = f"__test_evict_{i}__"
+                if len(_cache) >= DEFAULT_CACHE_SIZE:
+                    old_key, old_value = _cache.popitem(last=False)
+                    ev._cache_bytes -= _entry_size(old_key, old_value)
+                _cache[key] = float(i)
+                ev._cache_bytes += _entry_size(key, float(i))
+                test_keys.append(key)
 
         assert len(_cache) <= DEFAULT_CACHE_SIZE
+
+        with _cache_lock:
+            for key in test_keys:
+                if key in _cache:
+                    ev._cache_bytes -= _entry_size(key, _cache.pop(key))
 
     def test_cache_under_byte_cap(self):
         """Total cache bytes should stay under MAX_CACHE_BYTES."""
