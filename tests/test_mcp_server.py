@@ -138,9 +138,10 @@ class TestToolsCall:
                 "arguments": {"text": "Hello world"},
             },
         })
-        if "result" in response:
-            content = json.loads(response["result"]["content"][0]["text"])
-            assert "result" in content
+        assert "result" in response
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert "result" in content
 
     def test_call_text_equal_valid_input(self):
         response = handle_request({
@@ -5948,7 +5949,7 @@ class TestMathEvalEdgeCases:
         })
         content = json.loads(response["result"]["content"][0]["text"])
         # Should return error, not crash
-        assert "ok" in content
+        assert content["ok"] is False
 
     def test_extremely_long_expression(self):
         """Extremely long expression should succeed or return clean error."""

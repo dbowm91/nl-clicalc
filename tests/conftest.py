@@ -6,6 +6,28 @@ from eggcalc import UnitValue, evaluate, evaluate_raw
 from eggcalc.normalize import NORMALIZE, PATTERNS
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _restore_evaluator_defaults():
+    """Save and restore the default evaluator state after each test module.
+
+    handle_request() in mcp/server.py permanently sets _mcp_mode=True and
+    configure_default_evaluator(allow_random=False, allow_side_effects=False)
+    on first call. This fixture saves the original state before each module
+    runs and restores it after, so that non-MCP modules (e.g. test_clicalc)
+    are not affected by MCP state changes.
+    """
+    from eggcalc import evaluator as _evaluator
+    from eggcalc import get_default_evaluator
+    ev = get_default_evaluator()
+    orig_mcp_mode = _evaluator._mcp_mode
+    orig_allow_random = ev._allow_random
+    orig_allow_side_effects = ev._allow_side_effects
+    yield
+    _evaluator._mcp_mode = orig_mcp_mode
+    ev._allow_random = orig_allow_random
+    ev._allow_side_effects = orig_allow_side_effects
+
+
 @pytest.fixture
 def eval_result():
     """Optional helper: wraps evaluate result, extracting value from UnitValue if needed.

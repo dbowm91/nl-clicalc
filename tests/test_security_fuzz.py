@@ -150,20 +150,24 @@ class TestSecurityFuzz:
         """Test that large exponents are rejected."""
         from eggcalc import EvaluationError, evaluate
 
-        large_exp_inputs = [
+        large_exp_inputs_should_fail = [
             "2**100000",
             "2**999999",
-            "10**10000",  # Exactly MAX_EXPONENT
             "10**10001",  # Over MAX_EXPONENT
             "2**-100000",
             "2**999999999",
         ]
 
-        for test_input in large_exp_inputs:
-            try:
-                result = evaluate(test_input)
-            except EvaluationError:
-                pass  # Expected - exponent too large or invalid
+        for test_input in large_exp_inputs_should_fail:
+            with pytest.raises(EvaluationError):
+                evaluate(test_input)
+
+        # Exactly MAX_EXPONENT may succeed or fail on result size
+        try:
+            result = evaluate("10**10000")
+            assert result is not None
+        except EvaluationError:
+            pass  # May fail on MAX_RESULT_DIGITS, which is also expected
 
     def test_wide_expressions(self):
         """Test expressions with many operations don't cause memory issues."""
@@ -219,7 +223,7 @@ class TestSecurityFuzz:
                 # Try both evaluate (pre-normalized) and evaluate_raw
                 try:
                     result = evaluate(test_input)
-                except:
+                except Exception:
                     result = evaluate_raw(test_input)
 
                 # If we get here without exception, check result is safe
@@ -581,7 +585,7 @@ class TestMemorySafety:
         for i in range(1000):
             try:
                 evaluate_raw("5 + 3")
-            except:
+            except Exception:
                 pass
 
         gc.collect()

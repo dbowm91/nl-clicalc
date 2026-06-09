@@ -1920,6 +1920,7 @@ _DERIVED_CATEGORIES: dict[str, str] = {
     "mm**3": "volume",
     "km**3": "volume",
     "mi**3": "volume",
+    "yd**3": "volume",
     # Speed / velocity
     "m/s": "speed",
     "km/h": "speed",

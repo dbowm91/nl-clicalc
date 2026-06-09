@@ -2203,7 +2203,12 @@ class Evaluator(ast.NodeVisitor):
             if isinstance(node.func.value, ast.Name) and node.func.value.id == "math":
                 func_name = node.func.attr
 
-        if func_name is None or func_name not in self.FUNCTIONS:
+        if func_name is None:
+            raise EvaluationError(
+                "Only simple function calls are supported "
+                "(e.g. sin(x), sqrt(y))"
+            )
+        if func_name not in self.FUNCTIONS:
             raise EvaluationError(f"Function '{func_name}' is not allowed")
 
         if not self._allow_random and func_name in _RANDOM_FUNCTIONS:
