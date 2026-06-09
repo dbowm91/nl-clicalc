@@ -72,8 +72,21 @@ def create_executable(source_path: str, install_dir: str) -> str:
     return dest_path
 
 
+_SHELL_UNSAFE_CHARS = set('"$`\\!')
+
+
+def _validate_shell_path(path: str) -> None:
+    """Raise ValueError if path contains characters unsafe for shell config interpolation."""
+    bad = _SHELL_UNSAFE_CHARS & set(path)
+    if bad:
+        raise ValueError(
+            f"Path contains shell-unsafe characters: {''.join(sorted(bad))!r}"
+        )
+
+
 def add_to_path(install_dir: str) -> bool:
     """Add install directory to PATH. Returns True if successful."""
+    _validate_shell_path(install_dir)
     if sys.platform == "win32":
         current_path = os.environ.get("PATH", "")
         if install_dir not in current_path:
@@ -111,6 +124,7 @@ def add_to_path(install_dir: str) -> bool:
 
 def remove_from_path(install_dir: str) -> bool:
     """Remove install directory from PATH. Returns True if successful."""
+    _validate_shell_path(install_dir)
     if sys.platform == "win32":
         print("To remove from PATH on Windows, manually remove the entry from your PATH.")
         return False

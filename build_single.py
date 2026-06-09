@@ -330,6 +330,8 @@ def get_module_code(module_name: str) -> tuple[str, list[str], list[str]]:
         code = code.replace("    import eggcalc\n", "")
         code = code.replace("eggcalc.__version__", "__version__")
         code = code.replace("        from eggcalc.mcp.server import mcp_main\n", "")
+        code = code.replace("            from eggcalc.mcp.server import set_active_profile\n", "")
+        code = code.replace("            from eggcalc.mcp.server import set_schema_detail\n", "")
 
     # Exact module internal references (within exact package)
     # These are relative imports that now become direct

@@ -442,7 +442,7 @@ def load_user_config_extended() -> None:
         pass
 
 
-def _safe_pow(base: float, exp: float) -> float:
+def _safe_pow(base: float, exp: float) -> float | int | complex:
     """Safe power function with exponent limits to prevent DoS."""
     if abs(exp) > MAX_EXPONENT:
         raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
