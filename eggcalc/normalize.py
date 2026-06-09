@@ -1546,7 +1546,17 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # Convert percentages (e.g., 50% -> 0.5, but not 5%3 which is modulo)
     # Match % directly attached to a number or with optional space, NOT followed by optional whitespace + digit
     # (negative lookahead ensures "5%3" and "10 % 3" stay as modulo, not "0.05" + "3")
-    expression = re.sub(r"(\d+(?:\.\d+)?)\s*%(?!\s*\d)", lambda m: str(float(m.group(1)) / 100), expression)
+    # Use a lookahead to add a space after % when followed by * (from "of" conversion)
+    # to prevent "100%*200" from becoming "1.0**200" (exponentiation) instead of "1.0*200" (multiplication)
+    def _pct_replace(m: re.Match) -> str:
+        val = str(float(m.group(1)) / 100)
+        # Check what follows the % match
+        end = m.end()
+        if end < len(expression) and expression[end] == '*':
+            return val + ' '
+        return val
+
+    expression = re.sub(r"(\d+(?:\.\d+)?)\s*%(?!\s*\d)", _pct_replace, expression)
 
     # Convert 'i' suffix to 'j' for complex numbers (e.g., 3+4i -> 3+4j)
     # Match: number followed by 'i' (not preceded by another letter)
@@ -1775,9 +1785,10 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     prev = None
     while prev != expression:
         prev = expression
-        # Match: number!, (expr)!, or factorial(...)!
+        # Match: number!, (expr)!, or func(args)!
+        # The func(args) pattern matches any function call before !
         expression = re.sub(
-            r"(\d+(?:\.\d+)?|\((?:[^()]*|\([^()]*\))*\)|factorial\((?:[^()]*|\([^()]*\))*\))(\!+)",
+            r"(\d+(?:\.\d+)?|\((?:[^()]*|\([^()]*\))*\)|[a-zA-Z_]\w*\((?:[^()]*|\([^()]*\))*\))(\!+)",
             _replace_factorial,
             expression,
         )

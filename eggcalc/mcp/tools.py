@@ -249,10 +249,16 @@ def _cleanup_child_process(
             pass
     if proc is not None:
         if proc.is_alive():
-            proc.terminate()
+            try:
+                proc.terminate()
+            except Exception:
+                pass
             proc.join(timeout=2)
         if proc.is_alive():
-            proc.kill()
+            try:
+                proc.kill()
+            except Exception:
+                pass
             proc.join(timeout=1)
         # If process survived terminate+kill, register for defensive cleanup.
         # Do NOT close the handle here — it will be closed by

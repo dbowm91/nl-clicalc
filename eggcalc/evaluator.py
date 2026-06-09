@@ -467,7 +467,8 @@ def _safe_pow(base: float, exp: float) -> float:
     try:
         # For float base with large integer exponent, use int arithmetic
         # to avoid float overflow (e.g., pow(5.0, 500) overflows but 5**500 is exact)
-        if isinstance(base, float) and isinstance(exp, int) and abs(exp) > 300:
+        # Only apply when base is an exact integer (5.0, not 5.1) to avoid truncation.
+        if isinstance(base, float) and isinstance(exp, int) and abs(exp) > 300 and base.is_integer():
             result = pow(int(base), exp)
         else:
             result = pow(base, exp)
@@ -1606,8 +1607,8 @@ class Evaluator(ast.NodeVisitor):
         "protonmass": 1.67262192369e-27,
         "mn": 1.67493e-27,
         "neutronmass": 1.67493e-27,
-        "re": 2.817952326e-15,
-        "electronradius": 2.817952326e-15,
+        "re": 2.8179403262e-15,
+        "electronradius": 2.8179403262e-15,
         "alpha": 7.2973525693e-3,
         "finestructure": 7.2973525693e-3,
         "wien": 2.897771955e-3,
