@@ -7,12 +7,12 @@ eggcalc converts natural language expressions into mathematical operations. Unde
 The parser splits input by operator boundaries, then converts each segment:
 
 1. **Split by operators** (`+`, `-`, `*`, `/`, `**`, `^`, `%`, `&`, `|`, `~`, `<<`, `>>`, `(`, `)`, spaces) into tokens
-2. **Convert number words** to digits ("twenty five" → "20+5")
+2. **Convert compound number phrases** to digits ("twenty five" → "25", "one hundred forty four" → "144")
 3. **Convert operator words** to symbols ("plus" → "+")
 4. **Strip filler phrases** ("what is", "calculate the")
 5. **Handle special patterns** like "point" for decimals
 
-**Why this matters:** "twenty five" becomes "20+5" not "25" because the parser splits on spaces and operator words. This is intentional—it allows expressions like "twenty one" (21) to parse correctly.
+**Why this matters:** Multi-word number phrases like "twenty five" are recognized and converted directly to "25" by the multi-word number dictionary. Individual number words that don't form recognized phrases are converted to separate digits and joined with `+` as a fallback.
 
 ## Number Words
 
@@ -93,7 +93,7 @@ calc "three million two hundred thousand"
 # 3200000
 ```
 
-**Important:** The parser treats consecutive number words as either addition or multiplication based on the scale. "twenty five" = 20 + 5, but "five million" = 5 × 1,000,000.
+**Important:** Compound number phrases are recognized and converted directly. "twenty five" = 25, "one hundred forty four" = 144. Scale words like "million" multiply: "five million" = 5,000,000.
 
 ### Special Cases
 

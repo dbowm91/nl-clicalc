@@ -967,6 +967,7 @@ def _handle_list_tools(request: dict) -> dict:
                 "name": name,
                 "description": schema["description"],
                 "inputSchema": schema["inputSchema"],
+                "outputSchema": schema.get("outputSchema"),
                 "tier": schema.get("tier"),
                 "tags": schema.get("tags", []),
                 "deprecated": schema.get("deprecated", False),

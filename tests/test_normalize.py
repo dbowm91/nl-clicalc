@@ -464,9 +464,8 @@ class TestNumberWordSubstringBoundary:
     def test_compound_number_word_still_converts(self):
         from eggcalc.normalize import NORMALIZE, PATTERNS, normalize_expression
         normalized, code = normalize_expression("twenty one", NORMALIZE, PATTERNS)
-        # "twenty one" composes to 20+1; the important point is that both
-        # number words are still recognized and converted.
-        assert normalized == "20+1"
+        # "twenty one" is now recognized as a compound number -> 21
+        assert normalized == "21"
         assert code == 0
 
 

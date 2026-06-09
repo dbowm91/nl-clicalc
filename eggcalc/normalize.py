@@ -1307,6 +1307,34 @@ def _build_multi_word_numbers() -> dict[str, str]:
                                         f"{tens_word} {ones_word} {scale_word}"
                                     )
                                     result[key] = str(combined * int(scale_val))
+    # Standalone compound numbers (tens + ones, no scale word)
+    # E.g., "twenty one" -> 21, "forty two" -> 42
+    for tens_val, tens_words in _NUMBER_WORDS_TENS.items():
+        for ones_val, ones_words in all_ones.items():
+            combined = int(tens_val) + int(ones_val)
+            for tens_word in tens_words:
+                for ones_word in ones_words:
+                    key = f"{tens_word} {ones_word}"
+                    result[key] = str(combined)
+    # Standalone compound hundreds (X hundred Y, no trailing scale word)
+    # E.g., "one hundred forty four" -> 144, "two hundred" -> 200
+    for hundred_val, hundred_words in _NUMBER_WORDS_SINGLE.items():
+        for hundred_word in hundred_words:
+            # "X hundred" alone is already handled by the basic scale section
+            # "X hundred tens" (e.g., "one hundred forty")
+            for tens_val, tens_words in _NUMBER_WORDS_TENS.items():
+                combined = int(hundred_val) * 100 + int(tens_val)
+                for tens_word in tens_words:
+                    key = f"{hundred_word} hundred {tens_word}"
+                    result[key] = str(combined)
+            # "X hundred tens ones" (e.g., "one hundred forty four")
+            for tens_val, tens_words in _NUMBER_WORDS_TENS.items():
+                for ones_val, ones_words in all_ones.items():
+                    combined = int(hundred_val) * 100 + int(tens_val) + int(ones_val)
+                    for tens_word in tens_words:
+                        for ones_word in ones_words:
+                            key = f"{hundred_word} hundred {tens_word} {ones_word}"
+                            result[key] = str(combined)
     return result
 
 
@@ -1443,7 +1471,8 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         )
 
     # Replace single number words with digits BEFORE _join_number_parts runs
-    # This ensures "forty four" → "40 4" → "40+4" (correct) instead of remaining as words
+    # This ensures unrecognized number words are converted to digits for the fallback path.
+    # Compound numbers like "twenty one" are already resolved by _MULTI_WORD_NUMBERS above.
     for word, replacement in _SORTED_ALL_NUMBER_WORDS:
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
 
@@ -1630,14 +1659,16 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
         flags=re.IGNORECASE,
     )
 
-    # Join space-separated number sequences with + for proper evaluation
-    # This must happen BEFORE whitespace removal so we get "3+100+20+2" instead of "3100202"
+    # Join space-separated number sequences with + for proper evaluation.
+    # Compound numbers like "twenty one" are already resolved by _MULTI_WORD_NUMBERS,
+    # but fallback sequences (e.g., from unrecognized patterns) still need joining.
     expression = _join_number_parts(expression)
 
-    # Fix: "negative twenty one" → "-(20+1)" instead of "-20+1" = -19
-    # After _join_number_parts joins compound numbers with +, detect patterns like
-    # "-20+1" (from "negative twenty one") and wrap in parentheses so negation
-    # applies to the whole sum: "-(20+1)" = -21.
+    # Fix: "negative one hundred one" → "-(100+1)" instead of "-100+1" = -99.
+    # After _join_number_parts joins fallback compound numbers with +, detect patterns
+    # like "-100+1" and wrap in parentheses so negation applies to the whole sum.
+    # (Compound numbers resolved by _MULTI_WORD_NUMBERS don't need this since they
+    # become single tokens like "-21".)
     def _wrap_negative_compound(m: re.Match) -> str:
         compound = m.group(2)
         # Only wrap if there's a + in the compound (multiple numbers joined)
@@ -1806,8 +1837,9 @@ def _join_number_parts(expression: str) -> str:
 
     Detects sequences of space-separated tokens that are all numbers
     (or simple expressions evaluating to numbers) and joins them with +.
-    This ensures "three hundred twenty two" -> 3+100+20+2 -> 125,
-    not 3100202.
+    This ensures fallback number sequences like "3 100 20 2" -> "3+100+20+2",
+    not "3100202". (Compound numbers like "twenty one" are typically resolved
+    earlier by _MULTI_WORD_NUMBERS and never reach this function.)
 
     Also inserts implicit '*' between adjacent number and non-number non-operator
     tokens (e.g., "sqrt 144" -> "sqrt*144", "2 sqrt 9" -> "2*sqrt*9").
