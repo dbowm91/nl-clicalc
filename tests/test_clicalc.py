@@ -207,8 +207,12 @@ class TestCLI:
         import sys
 
         from eggcalc.normalize import main
-        sys.argv = ["eggcalc"]
-        main()
+        old_argv = sys.argv
+        try:
+            sys.argv = ["eggcalc"]
+            main()
+        finally:
+            sys.argv = old_argv
 
 
 class TestUnitValue:

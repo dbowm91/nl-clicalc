@@ -231,7 +231,7 @@ class TestIniValidate:
         text = "; comment\n# hash comment\n[section]\nkey = value"
         result = ini_validate(text)
         assert result["parse_ok"] is True
-        assert len(result["entries"]) if "entries" in result else True
+        assert len(result["sections"]) >= 1
         assert "key" in result["keys_by_section"]["section"]
 
     def test_colon_separator(self):

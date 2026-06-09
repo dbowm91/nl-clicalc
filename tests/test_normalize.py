@@ -188,18 +188,18 @@ class TestCompoundSpeedUnits:
 
     def test_km_h_basic(self):
         result, code, _out, _err = _run("5km/h")
-        # Value will be wrong (Planck's h collision) but unit should be km/h.
         assert code == 0
-        # Compound unit detection at minimum yields the unit string.
-        # (See report: requires evaluator change for correct numeric value.)
+        assert isinstance(result, UnitValue)
+        assert result.value == 5
+        assert result.unit == "km/h"
 
     def test_km_h_in_mph(self):
         """30 km/h in mph should be ~18.64 mph."""
         result, code, _out, _err = _run("30 km/h in mph")
         assert code == 0
-        # Compound unit conversion path
-        # The result value is wrong due to Planck's h collision, but the unit
-        # string should be mph.
+        assert isinstance(result, UnitValue)
+        assert result.value == pytest.approx(18.641135767120023)
+        assert result.unit == "mph"
 
     def test_m_per_s(self):
         """5m/s should be a recognized compound speed (no Planck collision)."""

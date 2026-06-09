@@ -462,6 +462,8 @@ class TestValidate:
 
     def test_validate_json_trailing_comma(self):
         result = validate_json('{"name": "test",}')
+        assert result["valid"] is False
+        assert result["error"] is not None
 
 
 class TestRegexTest:
