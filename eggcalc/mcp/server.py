@@ -693,7 +693,7 @@ def _handle_call_tool(request: dict) -> dict:
             "jsonrpc": "2.0",
             "id": request.get("id"),
             "error": {
-                "code": -32602,
+                "code": -32601,
                 "message": msg,
             },
         }

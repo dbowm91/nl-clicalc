@@ -169,7 +169,8 @@ class TestToolsCall:
             },
         })
         assert "error" in response
-        assert response["error"]["code"] == -32602
+        # JSON-RPC 2.0: -32601 = Method not found (correct for unknown tool)
+        assert response["error"]["code"] == -32601
 
     def test_call_tool_missing_name_returns_error(self):
         response = handle_request({
@@ -6452,7 +6453,8 @@ class TestHandleCallToolErrors:
             },
         })
         assert "error" in response
-        assert response["error"]["code"] == -32602
+        # JSON-RPC 2.0: -32601 = Method not found (correct for unknown tool)
+        assert response["error"]["code"] == -32601
         assert "nonexistent_tool_xyz" in response["error"]["message"]
 
     def test_arguments_not_dict(self):
@@ -8877,3 +8879,118 @@ class TestSchemaDetailProtocol:
         content = json.loads(response_call["result"]["content"][0]["text"])
         assert content["ok"] is True
         assert content["result"]["value"] == "5.0"
+
+
+class TestMCPSecurityGuards:
+    """Test that MCP mode correctly rejects side-effect and random functions."""
+
+    def test_random_functions_rejected_in_mcp_mode(self):
+        """Functions like random() and seed() should be rejected when allow_random=False."""
+        from eggcalc import evaluator as ev_module
+        from eggcalc import get_default_evaluator
+
+        evaluator = get_default_evaluator()
+        # Save original state
+        orig_allow_random = evaluator._allow_random
+        try:
+            # Ensure MCP mode is set (allow_random=False)
+            evaluator._allow_random = False
+            # Initialize the evaluator in MCP mode
+            handle_request({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {},
+            })
+
+            # Test that random functions are rejected
+            for func in ("random()", "seed(42)", "randint(1, 10)"):
+                response = handle_request({
+                    "jsonrpc": "2.0",
+                    "id": 10,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "math_eval",
+                        "arguments": {"expression": func},
+                    },
+                })
+                content = json.loads(response["result"]["content"][0]["text"])
+                assert content["ok"] is False, f"Expected rejection for {func}"
+                assert "non-deterministic" in content["error"]
+        finally:
+            evaluator._allow_random = orig_allow_random
+
+    def test_side_effect_functions_rejected_in_mcp_mode(self):
+        """Functions like store() and setvar() should be rejected when allow_side_effects=False."""
+        from eggcalc import get_default_evaluator
+
+        evaluator = get_default_evaluator()
+        # Save original state
+        orig_allow_side_effects = evaluator._allow_side_effects
+        try:
+            # Ensure MCP mode is set (allow_side_effects=False)
+            evaluator._allow_side_effects = False
+            # Initialize the evaluator in MCP mode
+            handle_request({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {},
+            })
+
+            # Test that side-effect functions are rejected
+            for func in ("store(5)", "recall()", "setvar('x', 10)", "getvar('x')"):
+                response = handle_request({
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "math_eval",
+                        "arguments": {"expression": func},
+                    },
+                })
+                content = json.loads(response["result"]["content"][0]["text"])
+                assert content["ok"] is False, f"Expected rejection for {func}"
+                assert "mutates evaluator state" in content["error"]
+        finally:
+            evaluator._allow_side_effects = orig_allow_side_effects
+
+    def test_deterministic_functions_work_in_mcp_mode(self):
+        """Normal math functions should still work in MCP mode."""
+        # Initialize the evaluator in MCP mode
+        handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {},
+        })
+
+        # Test that normal math functions work
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "math_eval",
+                "arguments": {"expression": "sqrt(144) + 2**10"},
+            },
+        })
+        content = json.loads(response["result"]["content"][0]["text"])
+        assert content["ok"] is True
+        assert content["result"]["value"] == "1036.0"
+
+    def test_unknown_tool_returns_method_not_found(self):
+        """Unknown tool should return error code -32601 (Method not found)."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "nonexistent_tool",
+                "arguments": {},
+            },
+        })
+        assert "error" in response
+        # JSON-RPC 2.0: -32601 = Method not found
+        assert response["error"]["code"] == -32601
+        assert "Unknown tool" in response["error"]["message"]

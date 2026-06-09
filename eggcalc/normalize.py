@@ -1415,12 +1415,16 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # that "2 to the 10" doesn't become "2 TO 10". Long forms like
     # "to the power of" and "raised to" are handled by the word_to_all
     # loop below; this catches the abbreviated form "N to the M".
+    # Also handles word numbers like "three to the ten" by matching both
+    # digit and word number patterns.
     expression = re.sub(
         r"(\d+(?:\.\d+)?)\s+to\s+the\s+(\d+(?:\.\d+)?)",
         r"\1**\2",
         expression,
         flags=re.IGNORECASE,
     )
+    # Also handle mixed digit/word: "3 to the ten", "three to the 10"
+    # by running a second pass after word replacement (see below)
 
     _binary_word_check(expression)
 
@@ -1451,6 +1455,16 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # This ensures "forty four" → "40 4" → "40+4" (correct) instead of remaining as words
     for word, replacement in _SORTED_ALL_NUMBER_WORDS:
         expression = re.sub(r"\b" + re.escape(word) + r"\b", replacement, expression, flags=re.IGNORECASE)
+
+    # Handle short-form power phrases AFTER word replacement to support
+    # word numbers like "three to the ten" → "3**10". This must run after
+    # number word replacement but before word_to_all replaces "to" with "TO".
+    expression = re.sub(
+        r"(\d+(?:\.\d+)?)\s+to\s+the\s+(\d+(?:\.\d+)?)",
+        r"\1**\2",
+        expression,
+        flags=re.IGNORECASE,
+    )
 
     # Strip longer filler phrases before word-to-operator conversion so that
     # "the value of pi" → "pi" (not "value * pi" after "of" → "*").
