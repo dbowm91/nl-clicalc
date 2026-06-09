@@ -1307,6 +1307,24 @@ def _build_multi_word_numbers() -> dict[str, str]:
                                         f"{tens_word} {ones_word} {scale_word}"
                                     )
                                     result[key] = str(combined * int(scale_val))
+                    # "X hundred teen scale" for teens (e.g., "one hundred twelve thousand")
+                    for teen_val, teen_words in _NUMBER_WORDS_TEENS.items():
+                        combined = int(hundred_val) * 100 + int(teen_val)
+                        for teen_word in teen_words:
+                            key = (
+                                f"{hundred_word} hundred "
+                                f"{teen_word} {scale_word}"
+                            )
+                            result[key] = str(combined * int(scale_val))
+                    # "X hundred ones scale" for ones (e.g., "one hundred one thousand")
+                    for ones_val, ones_words in _NUMBER_WORDS_SINGLE.items():
+                        combined = int(hundred_val) * 100 + int(ones_val)
+                        for ones_word in ones_words:
+                            key = (
+                                f"{hundred_word} hundred "
+                                f"{ones_word} {scale_word}"
+                            )
+                            result[key] = str(combined * int(scale_val))
     # Standalone compound numbers (tens + ones, no scale word)
     # E.g., "twenty one" -> 21, "forty two" -> 42
     for tens_val, tens_words in _NUMBER_WORDS_TENS.items():
@@ -1335,6 +1353,18 @@ def _build_multi_word_numbers() -> dict[str, str]:
                         for ones_word in ones_words:
                             key = f"{hundred_word} hundred {tens_word} {ones_word}"
                             result[key] = str(combined)
+            # "X hundred teen" (e.g., "one hundred twelve" -> 112)
+            for teen_val, teen_words in _NUMBER_WORDS_TEENS.items():
+                combined = int(hundred_val) * 100 + int(teen_val)
+                for teen_word in teen_words:
+                    key = f"{hundred_word} hundred {teen_word}"
+                    result[key] = str(combined)
+            # "X hundred ones" (e.g., "one hundred one" -> 101)
+            for ones_val, ones_words in _NUMBER_WORDS_SINGLE.items():
+                combined = int(hundred_val) * 100 + int(ones_val)
+                for ones_word in ones_words:
+                    key = f"{hundred_word} hundred {ones_word}"
+                    result[key] = str(combined)
     return result
 
 
@@ -1664,24 +1694,6 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # but fallback sequences (e.g., from unrecognized patterns) still need joining.
     expression = _join_number_parts(expression)
 
-    # Fix: "negative one hundred one" → "-(100+1)" instead of "-100+1" = -99.
-    # After _join_number_parts joins fallback compound numbers with +, detect patterns
-    # like "-100+1" and wrap in parentheses so negation applies to the whole sum.
-    # (Compound numbers resolved by _MULTI_WORD_NUMBERS don't need this since they
-    # become single tokens like "-21".)
-    def _wrap_negative_compound(m: re.Match) -> str:
-        compound = m.group(2)
-        # Only wrap if there's a + in the compound (multiple numbers joined)
-        if "+" in compound:
-            return f"-({compound})"
-        return m.group(0)
-
-    expression = re.sub(
-        r"^\s*(-)(\d+(?:\+\d+)+)",
-        _wrap_negative_compound,
-        expression,
-    )
-
     # Replace whitespace outside parentheses with nothing
     # Preserve whitespace inside parentheses to separate function args
     # Also insert * between function names and following digits (e.g., "sqrt 144" -> "sqrt*144")
@@ -1890,7 +1902,16 @@ def _join_number_parts(expression: str) -> str:
         if len(current_number_seq) == 1:
             result.append(current_number_seq[0])
         else:
-            result.append('+'.join(current_number_seq))
+            joined = '+'.join(current_number_seq)
+            # If this compound is preceded by a leading '-' (from "negative"
+            # word conversion), wrap so negation applies to the whole sum:
+            # "-(100+1)" not "-100+1". Only triggers when '-' is the sole
+            # preceding token (i.e., the compound starts at expression start).
+            if len(result) == 1 and result[0] == '-':
+                result.pop()
+                result.append(f'-({joined})')
+            else:
+                result.append(joined)
         current_number_seq.clear()
 
     prev_kind: str | None = None
