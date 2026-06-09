@@ -4491,12 +4491,8 @@ def text_security_inspect(
     prompt_input_inspect, and identifier_inspect depending on the
     chosen policy.  Returns a single verdict plus structured findings.
     """
-    if not isinstance(text, str):
-        return _error_response(
-            "invalid_arguments",
-            "text must be a string",
-            tool="text_security_inspect",
-        )
+    if (err := _require_str(text, "text", "text_security_inspect")) is not None:
+        return err
 
     valid_policies = ("default", "source_code", "prompt", "markdown", "identifier")
     if policy not in valid_policies:
@@ -4697,12 +4693,8 @@ def edit_preflight(
     text_fingerprint, and text_diff_explain as needed.  Returns a
     single ok_to_apply verdict plus structured findings.
     """
-    if not isinstance(original, str):
-        return _error_response(
-            "invalid_arguments",
-            "original must be a string",
-            tool="edit_preflight",
-        )
+    if (err := _require_str(original, "original", "edit_preflight")) is not None:
+        return err
 
     valid_modes = ("literal", "patch", "line_range")
     if replacement_mode not in valid_modes:
@@ -4743,7 +4735,7 @@ def edit_preflight(
                     "severity": "error",
                     "message": "old text not found in original",
                 })
-            elif matches > 1 and not result.get("allow_multiple", False):
+            elif matches > 1:
                 machine_codes.append("AMBIGUOUS_REPLACEMENT")
                 all_findings.append({
                     "code": "MULTIPLE_MATCHES",
@@ -4922,12 +4914,8 @@ def command_preflight(
     to include regex patterns).  Returns parsed argv, shell operators,
     risk findings, and a verdict.
     """
-    if not isinstance(command, str):
-        return _error_response(
-            "invalid_arguments",
-            "command must be a string",
-            tool="command_preflight",
-        )
+    if (err := _require_str(command, "command", "command_preflight")) is not None:
+        return err
 
     valid_platforms = ("posix", "windows", "auto")
     if platform not in valid_platforms:
@@ -5078,12 +5066,8 @@ def config_preflight(
     Auto-detects format and runs the appropriate validator.  Returns
     valid/invalid, detected format, parse error location, and machine code.
     """
-    if not isinstance(text, str):
-        return _error_response(
-            "invalid_arguments",
-            "text must be a string",
-            tool="config_preflight",
-        )
+    if (err := _require_str(text, "text", "config_preflight")) is not None:
+        return err
 
     valid_formats = ("auto", "json", "toml", "dotenv", "ini", "cargo_toml")
     if format not in valid_formats:
@@ -5355,12 +5339,8 @@ def structured_data_compare(
     a single equal/not-equal verdict with structured diffs.
     """
     for label, val in [("a", a), ("b", b)]:
-        if not isinstance(val, str):
-            return _error_response(
-                "invalid_arguments",
-                f"{label} must be a string",
-                tool="structured_data_compare",
-            )
+        if (err := _require_str(val, label, "structured_data_compare")) is not None:
+            return err
 
     if format != "json":
         return _error_response(

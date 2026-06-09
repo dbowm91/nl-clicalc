@@ -4536,6 +4536,28 @@ class TestMCPSecurityAndValidation:
         assert "error" in response
         assert response["error"]["code"] == -32600
 
+    def test_tools_list_rejects_non_object_params(self):
+        """tools/list must return JSON-RPC error for non-object params."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 40041,
+            "method": "tools/list",
+            "params": [],
+        })
+        assert response["error"]["code"] == -32600
+        assert "Invalid params" in response["error"]["message"]
+
+    def test_profiles_list_rejects_non_object_params(self):
+        """profiles/list must return JSON-RPC error for non-object params."""
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "id": 40042,
+            "method": "profiles/list",
+            "params": [],
+        })
+        assert response["error"]["code"] == -32600
+        assert "Invalid params" in response["error"]["message"]
+
     def test_unknown_tool_with_suggestion(self):
         """Test that unknown tool returns suggestion."""
         response = handle_request({
@@ -6206,6 +6228,19 @@ class TestCancelledRequests:
             "method": "notifications/cancelled",
             "params": {"requestId": {"id": "test"}},
         })
+        assert len(_cancelled_requests) == 0
+
+    def test_non_object_cancelled_params_ignored(self):
+        """Cancelled notifications with non-object params are ignored."""
+        from eggcalc.mcp.server import _cancelled_requests
+
+        _cancelled_requests.clear()
+        response = handle_request({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": [],
+        })
+        assert response is None
         assert len(_cancelled_requests) == 0
 
     def test_non_cancelled_id_not_affected(self):

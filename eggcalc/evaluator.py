@@ -106,6 +106,11 @@ _DIMENSIONLESS_REQUIRED_FUNCTIONS: frozenset[str] = frozenset({
     "abs", "floor", "ceil", "trunc", "round", "sign",
     "factorial", "fact", "gcd", "lcm", "perm", "comb", "nPr", "nCr",
     "pow", "expm1",
+    "bin", "hex", "oct",
+    "bitand", "bitor", "bitxor", "bitnot", "bitlshift", "bitrshift",
+    "isprime", "is_prime", "primefactors", "prime_factors", "nextprime",
+    "next_prime", "prevprime", "prev_prime",
+    "randint", "randrange",
 })
 
 # Historical note: some one-letter constant names (e.g., 'c', 'k', 'r') are
@@ -448,7 +453,7 @@ def _safe_pow(base: float, exp: float) -> float | int | complex:
         raise EvaluationError(f"Exponent too large (max {MAX_EXPONENT})")
     if not isinstance(base, complex) and base < 0:
         if isinstance(exp, complex):
-            if exp.imag != 0 or not math.isclose(exp.real, round(exp.real), rel_tol=1e-9):
+            if abs(exp.imag) > 1e-9 or not math.isclose(exp.real, round(exp.real), rel_tol=1e-9):
                 raise EvaluationError(
                     "Cannot raise negative number to non-integer power"
                 )
@@ -587,28 +592,19 @@ def _min(*args: float) -> float:
 
 def _to_bin(x: int) -> str:
     """Convert integer to binary string."""
-    if isinstance(x, float):
-        if not x.is_integer():
-            raise EvaluationError("bin() requires integer input")
-        x = int(x)
+    x = _require_int(x, "bin")
     return bin(x)
 
 
 def _to_hex(x: int) -> str:
     """Convert integer to hexadecimal string."""
-    if isinstance(x, float):
-        if not x.is_integer():
-            raise EvaluationError("hex() requires integer input")
-        x = int(x)
+    x = _require_int(x, "hex")
     return hex(x)
 
 
 def _to_oct(x: int) -> str:
     """Convert integer to octal string."""
-    if isinstance(x, float):
-        if not x.is_integer():
-            raise EvaluationError("oct() requires integer input")
-        x = int(x)
+    x = _require_int(x, "oct")
     return oct(x)
 
 
@@ -782,28 +778,28 @@ def _variance_sample(*args: float) -> float:
 
 def _bitand(a: int, b: int) -> int:
     """Bitwise AND."""
-    return int(a) & int(b)
+    return _require_int(a, "bitand") & _require_int(b, "bitand")
 
 
 def _bitor(a: int, b: int) -> int:
     """Bitwise OR."""
-    return int(a) | int(b)
+    return _require_int(a, "bitor") | _require_int(b, "bitor")
 
 
 def _bitxor(a: int, b: int) -> int:
     """Bitwise XOR."""
-    return int(a) ^ int(b)
+    return _require_int(a, "bitxor") ^ _require_int(b, "bitxor")
 
 
 def _bitnot(a: int) -> int:
     """Bitwise NOT (inverts all bits)."""
-    return ~int(a)
+    return ~_require_int(a, "bitnot")
 
 
 def _bitlshift_safe(a: int, b: int) -> int:
     """Left shift with bounds checks."""
-    a = int(a)
-    b = int(b)
+    a = _require_int(a, "bitlshift")
+    b = _require_int(b, "bitlshift")
     if b < 0:
         raise EvaluationError("Shift count must be non-negative")
     if b > MAX_SHIFT_COUNT:
@@ -821,10 +817,11 @@ def _bitlshift_safe(a: int, b: int) -> int:
 
 def _bitrshift_safe(a: int, b: int) -> int:
     """Right shift with non-negative check."""
-    b = int(b)
+    a = _require_int(a, "bitrshift")
+    b = _require_int(b, "bitrshift")
     if b < 0:
         raise EvaluationError("Shift count must be non-negative")
-    return int(a) >> b
+    return a >> b
 
 
 # === Combinatorics ===
@@ -905,7 +902,7 @@ def _gcd(*args: int) -> int:
 
 def _is_prime(n: int) -> bool:
     """Check if a number is prime using deterministic Miller-Rabin for large n."""
-    n = int(n)
+    n = _require_int(n, "isprime")
     if n > 10**12:
         raise EvaluationError("primality test not available for numbers > 10^12")
     if n < 2:
@@ -951,7 +948,7 @@ def _prime_factors(n: int) -> str:
     itself (e.g. "3"), while factors with higher exponents include the
     exponent (e.g. "2^2"). For n < 2, returns the number as a string.
     """
-    n = int(n)
+    n = _require_int(n, "primefactors")
     if n > 10**12:
         raise EvaluationError("factorization not available for numbers > 10^12")
     if n < 2:
@@ -980,7 +977,7 @@ def _prime_factors(n: int) -> str:
 
 def _next_prime(n: int) -> int:
     """Return the next prime after n."""
-    n = int(n)
+    n = _require_int(n, "nextprime")
     if n > 10**12:
         raise EvaluationError("primality test not available for numbers > 10^12")
     candidate = n + 1
@@ -996,7 +993,7 @@ def _next_prime(n: int) -> int:
 
 def _prev_prime(n: int) -> int:
     """Return the previous prime before n."""
-    n = int(n)
+    n = _require_int(n, "prevprime")
     if n <= 2:
         raise EvaluationError("No prime less than 2")
     if n > 10**12:
@@ -1028,14 +1025,14 @@ def _random() -> float:
 
 def _randint(a: int, b: int) -> int:
     """Return random integer in [a, b]."""
-    return _random_generator.randint(int(a), int(b))
+    return _random_generator.randint(_require_int(a, "randint"), _require_int(b, "randint"))
 
 
 def _randrange(a: int, b: int | None = None) -> int:
     """Return random integer in [a, b) or [0, a) if b is None."""
     if b is None:
-        return _random_generator.randrange(int(a))
-    return _random_generator.randrange(int(a), int(b))
+        return _random_generator.randrange(_require_int(a, "randrange"))
+    return _random_generator.randrange(_require_int(a, "randrange"), _require_int(b, "randrange"))
 
 
 def _uniform(a: float, b: float) -> float:
@@ -1081,7 +1078,7 @@ def _as_percent(x: float, total: float) -> float:
 
 def _round(x: float, ndigits: int = 0) -> float:
     """Round to ndigits decimal places."""
-    return round(float(x), int(ndigits))
+    return round(float(x), _require_int(ndigits, "round"))
 
 
 def _sign(x: float) -> int:
@@ -1639,7 +1636,7 @@ class Evaluator(ast.NodeVisitor):
         "log2": _log2,
         "log1p": _complex_aware(math.log1p, lambda x: cmath.log(1 + x), use_complex_for_negative=True),
         "exp": _exp,
-        "expm1": math.expm1,
+        "expm1": _complex_aware(math.expm1, lambda x: cmath.exp(x) - 1),
         # Power and root (complex-aware)
         "sqrt": _sqrt,
         "pow": _safe_pow,

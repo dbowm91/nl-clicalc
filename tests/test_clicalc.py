@@ -651,6 +651,17 @@ class TestPrimes:
 
         assert evaluate_raw("nextprime(17)") == 19
 
+    @pytest.mark.parametrize("expr", [
+        "isprime(5.5)",
+        "nextprime(5.5)",
+        "prevprime(5.5)",
+        "primefactors(12.5)",
+        "isprime(5*m)",
+    ])
+    def test_prime_functions_reject_non_integer_or_unit_inputs(self, expr):
+        with pytest.raises(EvaluationError):
+            evaluate(expr)
+
 
 class TestStatistics:
     """Tests for statistical functions."""
@@ -711,6 +722,16 @@ class TestRandom:
         evaluate_raw("seed(42)")
         result = evaluate_raw("randint(1, 100)")
         assert 1 <= result <= 100
+
+    @pytest.mark.parametrize("expr", [
+        "randint(1.5, 10)",
+        "randrange(10.5)",
+        "randrange(1, 10.5)",
+        "randint(1*m, 10)",
+    ])
+    def test_random_integer_functions_reject_non_integer_or_unit_inputs(self, expr):
+        with pytest.raises(EvaluationError):
+            evaluate(expr)
 
 
 class TestMemory:
@@ -1129,6 +1150,11 @@ class TestUntestedMathFunctions:
         val = result.value if isinstance(result, UnitValue) else result
         assert val == 3
 
+    def test_round_rejects_non_integer_digits(self):
+        """round(x, ndigits) should not truncate fractional ndigits."""
+        with pytest.raises(EvaluationError):
+            evaluate("round(3.14159, 1.5)")
+
     def test_ceil(self):
         """Test ceiling function."""
         result = evaluate("ceil(3.2)")
@@ -1481,6 +1507,19 @@ class TestBitShiftSafety:
         result = evaluate("bitrshift(8, 2)")
         assert result == 2
 
+    @pytest.mark.parametrize("expr", [
+        "bitand(1.5, 3)",
+        "bitor(1.5, 2)",
+        "bitxor(1.5, 3)",
+        "bitnot(1.5)",
+        "bitlshift(1, 1.5)",
+        "bitrshift(8, 1.5)",
+        "bitand(1*m, 3)",
+    ])
+    def test_bitwise_functions_reject_non_integer_or_unit_inputs(self, expr):
+        with pytest.raises(EvaluationError):
+            evaluate(expr)
+
 
 class TestEvaluatorEdgeCases:
     """Tests for evaluator edge cases identified in production readiness review."""
@@ -1755,6 +1794,15 @@ class TestReviewerEdgeCases:
         """mean() with no args should raise error."""
         with pytest.raises(EvaluationError):
             evaluate("mean()")
+
+    @pytest.mark.parametrize("expr", [
+        "bin(3*m)",
+        "hex(3*m)",
+        "oct(3*m)",
+    ])
+    def test_base_conversion_rejects_unit_inputs(self, expr):
+        with pytest.raises(EvaluationError):
+            evaluate(expr)
 
     def test_std_single_arg(self):
         """std(1) with single arg should raise error."""

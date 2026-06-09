@@ -898,6 +898,8 @@ def _handle_list_tools(request: dict) -> dict:
     """Handle a tools/list MCP request with optional filtering."""
     params = request.get("params", {})
     request_id = request.get("id")
+    if not isinstance(params, dict):
+        return _invalid_request(request_id, "Invalid params: expected object")
 
     tier_filter = params.get("tier")
     tags_filter = params.get("tags")
@@ -1005,6 +1007,9 @@ def _handle_initialize(request: dict) -> dict:
 def _handle_list_profiles(request: dict) -> dict:
     """Handle a profiles/list MCP request."""
     params = request.get("params", {})
+    if not isinstance(params, dict):
+        return _invalid_request(request.get("id"), "Invalid params: expected object")
+
     active = get_active_profile()
 
     profiles_info = {}
@@ -1091,7 +1096,10 @@ def handle_request(request: Any) -> dict | None:
     elif method == "notifications/initialized":
         return None
     elif method == "notifications/cancelled":
-        cancelled_id = request.get("params", {}).get("requestId")
+        params = request.get("params", {})
+        if not isinstance(params, dict):
+            return None
+        cancelled_id = params.get("requestId")
         if (
             cancelled_id is not None
             and isinstance(cancelled_id, (str, int))

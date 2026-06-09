@@ -1448,9 +1448,14 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
 
     # Insert implicit multiplication between a number and a following "("
     # so "3(4+5)" parses as "3*(4+5)" = 27 instead of a syntax error.
-    # The whitespace-removal loop below only inserts '*' when there's
-    # whitespace, so we must do this earlier as a regex.
-    expression = re.sub(r"(\d)(?=\()", r"\1*", expression)
+    # Do not split function names ending in digits, such as log10(100).
+    def _implicit_digit_paren(m: re.Match) -> str:
+        token = m.group(1)
+        if token in operators["functions"]:
+            return token
+        return token + "*"
+
+    expression = re.sub(r"([A-Za-z_][A-Za-z0-9_]*\d|\d)(?=\()", _implicit_digit_paren, expression)
 
     # Replace multi-word number phrases to prevent incorrect joining
     # e.g., "one hundred" -> "100", "two thousand" -> "2000"
@@ -1614,10 +1619,8 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
     # to prevent "100%*200" from becoming "1.0**200" (exponentiation) instead of "1.0*200" (multiplication)
     def _pct_replace(m: re.Match) -> str:
         val = str(float(m.group(1)) / 100)
-        # Check what follows the % match
-        end = m.end()
-        if end < len(expression) and expression[end] == '*':
-            return val + ' '
+        # Leave any following operator in the original expression. Including
+        # it here would duplicate "100%*200" into "1.0**200".
         return val
 
     expression = re.sub(r"(\d+(?:\.\d+)?)\s*%(?!\s*\d)", _pct_replace, expression)
@@ -1784,7 +1787,11 @@ def normalize(expression: str, operators: dict, patterns: Mapping[str, Pattern[s
             if result and result[-1].isdigit() and char == "(":
                 # Implicit multiplication: "<digit>(" -> "<digit>*("
                 # (e.g., "3(4+5)" -> "3*(4+5)", "2(3+4)" -> "2*(3+4)")
-                result.append("*")
+                # Do not split function names ending in digits, such as
+                # log10(100), log2(8), or expm1(1).
+                prev_alnum_token = _peek_alnum_token_back(result)
+                if prev_alnum_token not in operators["functions"]:
+                    result.append("*")
             result.append(char)
             # Check if we just completed a function name. Only mark
             # prev_was_func_end if the current char is alphanumeric AND
@@ -2131,6 +2138,17 @@ def _peek_alpha_token_back(result_list: list[str]) -> str:
     trail: list[str] = []
     for c in reversed(result_list):
         if c.isalpha():
+            trail.append(c)
+        else:
+            break
+    return "".join(reversed(trail))
+
+
+def _peek_alnum_token_back(result_list: list[str]) -> str:
+    """Return the trailing identifier-like alnum run from a character list."""
+    trail: list[str] = []
+    for c in reversed(result_list):
+        if c.isalnum() or c == "_":
             trail.append(c)
         else:
             break

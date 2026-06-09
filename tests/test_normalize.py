@@ -31,6 +31,7 @@ from eggcalc.normalize import (
     apply_math_functions,
     check_if_number,
     normalize,
+    normalize_expression,
     run,
 )
 
@@ -82,6 +83,15 @@ class TestLeadingZeros:
         assert code == 0
         assert _val(result) == pytest.approx(0.015)
 
+    def test_percent_followed_by_star_is_multiplication(self):
+        """100%*200 must remain multiplication, not exponentiation."""
+        normalized, code = normalize_expression("100%*200", NORMALIZE, PATTERNS)
+        assert code == 0
+        assert normalized == "1.0*200"
+        result, code, _out, _err = _run("100%*200")
+        assert code == 0
+        assert _val(result) == pytest.approx(200.0)
+
 
 # ---------------------------------------------------------------------------
 # Group B: N-func implicit multiplication
@@ -104,6 +114,19 @@ class TestNFuncPatterns:
         assert _val(result) == pytest.approx(expected), (
             f"Expected {expected} for {expr!r}, got {_val(result)}"
         )
+
+    @pytest.mark.parametrize("expr,expected_normalized,expected", [
+        ("log10(100)", "log10(100)", 2.0),
+        ("log2(8)", "log2(8)", 3.0),
+        ("expm1(1)", "expm1(1)", 1.718281828459045),
+    ])
+    def test_function_names_ending_in_digits_before_paren(self, expr, expected_normalized, expected):
+        normalized, code = normalize_expression(expr, NORMALIZE, PATTERNS)
+        assert code == 0
+        assert normalized == expected_normalized
+        result, code, _out, _err = _run(expr)
+        assert code == 0
+        assert _val(result) == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------
